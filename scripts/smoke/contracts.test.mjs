@@ -29,6 +29,26 @@ test('manifests have unique ids and filenames and only in-memory preparation', a
   }
 });
 
+test('app manifest captures the functional locks and exact bundled documentation surfaces', async () => {
+  const manifest = JSON.parse(await readFile(join(repo, 'scripts', 'smoke', 'app-manifest.json'), 'utf8'));
+  const offlineBundle = JSON.parse(await readFile(join(repo, 'dist', 'offline-docs', 'bundle.json'), 'utf8'));
+  const captures = new Map(manifest.captures.map((capture) => [capture.id, capture]));
+
+  assert.equal(captures.has('locks-unavailable'), false);
+  assert.match(captures.get('locks-manager-empty')?.prepare ?? '', /state\.locks\.phase='list'/u);
+  assert.match(captures.get('locks-support-local')?.prepare ?? '', /state\.locks\.phase='support'/u);
+
+  assert.equal(captures.has('docs-index'), false);
+  assert.equal(captures.has('docs-article'), false);
+  assert.equal(offlineBundle.articles.length, 18);
+  assert.equal(captures.get('docs-bundle-18-index')?.view, 'docs');
+  assert.equal(
+    captures.get('docs-bundle-article-release-boundary')?.prepare,
+    "openOfflineArticle('docs/features/release-boundary.md')",
+  );
+  assert.doesNotMatch(JSON.stringify([...captures.values()]), /openDetail\('Release boundary'/u);
+});
+
 test('single-target isolation rejects extra or unexpected targets', () => {
   const page = { type: 'page', url: 'https://example.test/', webSocketDebuggerUrl: 'ws://127.0.0.1/one' };
   assert.equal(assertSingleTarget([page], (target) => target.url === page.url, 'fixture'), page);

@@ -6,9 +6,11 @@ import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import squirrelStartup from 'electron-squirrel-startup';
 import type {
+  AuthenticatorBeginRequest, AuthenticatorCodes, AuthenticatorEntry, AuthenticatorRegistration,
   CommandResult, ExportFormat, HistoryEntry, Preferences, RunKind, UpdateStatus, WinutilCatalog,
 } from '../shared/types';
 import { resolvePackageRequest, validateCatalog, wingetArgs } from './package-policy';
+import { AuthenticatorService } from './authenticator-service';
 
 const ROOT = path.join(__dirname, '..', '..');
 const CONFIG_DIR = path.join(__dirname, '..', 'config');
@@ -22,6 +24,7 @@ let win: BrowserWindow | null = null;
 let catalogCache: WinutilCatalog | null = null;
 let packageMutationActive = false;
 let historyWriteQueue: Promise<void> = Promise.resolve();
+let authenticatorService: AuthenticatorService | null = null;
 const UPDATE_FEED = 'https://github.com/Ding-Ding-Projects/material-winutil/releases/latest/download/';
 const COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_TEXT_PAYLOAD = 2 * 1024 * 1024;
@@ -424,6 +427,32 @@ ipcMain.handle('history:append', async (_e, entry: Omit<HistoryEntry, 'id' | 'at
 ipcMain.handle('update:status', (event): UpdateStatus => { requireTrustedSender(event); return updateStatus; });
 ipcMain.handle('update:check', async (event): Promise<UpdateStatus> => { requireTrustedSender(event); return checkForUpdates(); });
 ipcMain.on('update:restart', (event) => { if (trustedSender(event) && updateStatus.state === 'ready') autoUpdater.quitAndInstall(); });
+
+function authenticator(): AuthenticatorService {
+  if (!authenticatorService) authenticatorService = new AuthenticatorService({ appDataDirectory: USER_DIR() });
+  return authenticatorService;
+}
+
+ipcMain.handle('authenticator:begin', async (event, request: AuthenticatorBeginRequest): Promise<AuthenticatorRegistration> => {
+  requireTrustedSender(event);
+  return authenticator().begin(request);
+});
+ipcMain.handle('authenticator:confirm', async (event, registrationId: string, code: string): Promise<AuthenticatorEntry> => {
+  requireTrustedSender(event);
+  return authenticator().confirm(registrationId, code);
+});
+ipcMain.handle('authenticator:list', async (event): Promise<AuthenticatorEntry[]> => {
+  requireTrustedSender(event);
+  return authenticator().list();
+});
+ipcMain.handle('authenticator:codes', async (event, id: string): Promise<AuthenticatorCodes> => {
+  requireTrustedSender(event);
+  return authenticator().codes(id);
+});
+ipcMain.handle('authenticator:remove', async (event, id: string): Promise<boolean> => {
+  requireTrustedSender(event);
+  return authenticator().remove(id);
+});
 
 app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));

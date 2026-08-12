@@ -1,0 +1,362 @@
+import { randomBytes, randomUUID } from 'node:crypto';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import QRCode from 'qrcode';
+import type {
+  AuthenticatorBeginRequest, AuthenticatorCodes, AuthenticatorEntry,
+  AuthenticatorRegistration,
+} from '../shared/types';
+import {
+  base32Encode, buildTotpUri, generateTotp, parseTotpUri, verifyTotp,
+  type TotpAlgorithm,
+} from '../shared/totp';
+import { deleteCredential, readCredential, writeCredential } from './credential-vault';
+import { LocalHistory, type JsonValue } from './local-history';
+
+interface MetadataDocument {
+  schemaVersion: 1;
+  entries: AuthenticatorEntry[];
+}
+
+interface PendingRegistration {
+  expiresAt: number;
+  entry: AuthenticatorEntry;
+  secret: Buffer;
+  imported: boolean;
+  timer: NodeJS.Timeout;
+}
+
+interface AuthenticatorDependencies {
+  now(): number;
+  randomBytes(size: number): Buffer;
+  randomUUID(): string;
+  qrDataUrl(uri: string): Promise<string>;
+  writeCredential(target: string, account: string, secret: Uint8Array): Promise<void>;
+  readCredential(target: string, account: string): Promise<Buffer | null>;
+  deleteCredential(target: string, account: string): Promise<boolean>;
+  recordHistory(action: 'created' | 'deleted' | 'imported', snapshot: JsonValue): Promise<void>;
+}
+
+export interface AuthenticatorServiceOptions {
+  appDataDirectory: string;
+  dependencies?: Partial<AuthenticatorDependencies>;
+  pendingLifetimeMs?: number;
+}
+
+const METADATA_FILE = 'authenticator-metadata.json';
+const MAX_ENTRIES = 256;
+const MAX_PENDING = 16;
+const PENDING_LIFETIME_MS = 5 * 60 * 1000;
+const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ALGORITHMS = new Set<TotpAlgorithm>(['SHA1', 'SHA256', 'SHA512']);
+
+function boundedText(value: unknown, field: string, maximum: number, optional = false): string | undefined {
+  if (optional && (value === undefined || value === '')) return undefined;
+  if (typeof value !== 'string') throw new Error(`${field} must be text.`);
+  const normalized = value.trim();
+  if (!normalized || normalized.length > maximum || /[\u0000-\u001f\u007f]/u.test(normalized)) {
+    throw new Error(`${field} is empty, too long, or contains control characters.`);
+  }
+  return normalized;
+}
+
+function projectEntry(value: unknown): AuthenticatorEntry {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Authenticator metadata is invalid.');
+  const input = value as Record<string, unknown>;
+  const keys = Object.keys(input).sort().join(',');
+  if (keys !== 'account,algorithm,createdAt,digits,id,issuer,label,period'
+    && keys !== 'account,algorithm,createdAt,digits,id,label,period') throw new Error('Authenticator metadata has unexpected fields.');
+  const id = boundedText(input.id, 'id', 64)!;
+  const label = boundedText(input.label, 'label', 256)!;
+  const account = boundedText(input.account, 'account', 128)!;
+  const issuer = boundedText(input.issuer, 'issuer', 128, true);
+  const algorithm = input.algorithm;
+  const digits = input.digits;
+  const period = input.period;
+  const createdAt = input.createdAt;
+  if (!ID_PATTERN.test(id) || !ALGORITHMS.has(algorithm as TotpAlgorithm)
+    || !Number.isInteger(digits) || Number(digits) < 6 || Number(digits) > 8
+    || !Number.isInteger(period) || Number(period) < 1 || Number(period) > 86_400
+    || typeof createdAt !== 'string' || !Number.isFinite(Date.parse(createdAt))) {
+    throw new Error('Authenticator metadata is invalid.');
+  }
+  return {
+    id, label, account, issuer, algorithm: algorithm as TotpAlgorithm,
+    digits: Number(digits), period: Number(period), createdAt: new Date(createdAt).toISOString(),
+  };
+}
+
+function parseMetadata(text: string): MetadataDocument {
+  const raw: unknown = JSON.parse(text);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Authenticator metadata is invalid.');
+  const input = raw as Record<string, unknown>;
+  if (Object.keys(input).sort().join(',') !== 'entries,schemaVersion' || input.schemaVersion !== 1
+    || !Array.isArray(input.entries) || input.entries.length > MAX_ENTRIES) {
+    throw new Error('Authenticator metadata is invalid.');
+  }
+  const entries = input.entries.map(projectEntry);
+  if (new Set(entries.map((entry) => entry.id)).size !== entries.length) throw new Error('Authenticator metadata contains duplicate entries.');
+  return { schemaVersion: 1, entries };
+}
+
+function vaultTarget(id: string): string {
+  return `totp-${id}`;
+}
+
+function redactedSnapshot(entries: readonly AuthenticatorEntry[], changedId: string): JsonValue {
+  return {
+    schemaVersion: 1,
+    changedId,
+    entries: entries.map((entry) => ({
+      id: entry.id,
+      label: entry.label,
+      account: entry.account,
+      issuer: entry.issuer ?? null,
+      algorithm: entry.algorithm,
+      digits: entry.digits,
+      period: entry.period,
+      createdAt: entry.createdAt,
+    })),
+    excluded: 'Authenticator secrets, current codes, registration URIs, and QR payloads are omitted.',
+  };
+}
+
+export class AuthenticatorService {
+  private readonly metadataPath: string;
+  private readonly dependencies: AuthenticatorDependencies;
+  private readonly pendingLifetimeMs: number;
+  private readonly pending = new Map<string, PendingRegistration>();
+  private operation: Promise<unknown> = Promise.resolve();
+
+  constructor(options: AuthenticatorServiceOptions) {
+    if (!path.isAbsolute(options.appDataDirectory)) throw new Error('appDataDirectory must be an absolute path.');
+    this.metadataPath = path.join(options.appDataDirectory, METADATA_FILE);
+    this.pendingLifetimeMs = options.pendingLifetimeMs ?? PENDING_LIFETIME_MS;
+    if (!Number.isInteger(this.pendingLifetimeMs) || this.pendingLifetimeMs < 10 || this.pendingLifetimeMs > PENDING_LIFETIME_MS) {
+      throw new Error(`pendingLifetimeMs must be between 10 and ${PENDING_LIFETIME_MS}.`);
+    }
+    const history = new LocalHistory({ appDataDirectory: options.appDataDirectory, repositoryDirectoryName: 'authenticator-history' });
+    this.dependencies = {
+      now: Date.now,
+      randomBytes,
+      randomUUID,
+      qrDataUrl: (uri) => QRCode.toDataURL(uri, { errorCorrectionLevel: 'M', margin: 4, width: 320 }),
+      writeCredential,
+      readCredential,
+      deleteCredential,
+      recordHistory: async (action, snapshot) => { await history.recordRedactedSnapshot(action, snapshot); },
+      ...options.dependencies,
+    };
+  }
+
+  async begin(request: AuthenticatorBeginRequest): Promise<AuthenticatorRegistration> {
+    return this.enqueue(async () => {
+      this.expirePending();
+      if (this.pending.size >= MAX_PENDING) throw new Error('Too many authenticator registrations are awaiting confirmation.');
+
+      let account: string;
+      let issuer: string | undefined;
+      let label: string;
+      let algorithm: TotpAlgorithm;
+      let digits: number;
+      let period: number;
+      let secret: Buffer;
+      let imported = false;
+
+      if (!request || typeof request !== 'object') throw new Error('Authenticator registration request is invalid.');
+      if (request.mode === 'import') {
+        if (typeof request.uri !== 'string' || request.uri.length > 4096) throw new Error('The otpauth URI is invalid.');
+        try {
+          const parsed = parseTotpUri(request.uri);
+          account = parsed.account;
+          issuer = parsed.issuer;
+          label = parsed.label;
+          algorithm = parsed.algorithm;
+          digits = parsed.digits;
+          period = parsed.period;
+          secret = Buffer.from(parsed.secret);
+          imported = true;
+        } catch {
+          throw new Error('The otpauth URI is invalid.');
+        }
+      } else if (request.mode === 'generate') {
+        account = boundedText(request.account, 'account', 128)!;
+        issuer = boundedText(request.issuer, 'issuer', 128, true);
+        label = boundedText(request.label ?? (issuer ? `${issuer}:${account}` : account), 'label', 256)!;
+        algorithm = request.algorithm ?? 'SHA1';
+        digits = request.digits ?? 6;
+        period = request.period ?? 30;
+        if (!ALGORITHMS.has(algorithm) || !Number.isInteger(digits) || digits < 6 || digits > 8
+          || !Number.isInteger(period) || period < 1 || period > 86_400) throw new Error('Authenticator parameters are invalid.');
+        secret = this.dependencies.randomBytes(20);
+      } else {
+        throw new Error('Authenticator registration mode is invalid.');
+      }
+
+      const registrationId = this.dependencies.randomUUID();
+      const entry: AuthenticatorEntry = {
+        id: registrationId, label, account, issuer, algorithm, digits, period,
+        createdAt: new Date(this.dependencies.now()).toISOString(),
+      };
+      const manualSecret = base32Encode(secret);
+      const uri = buildTotpUri({ account, issuer, label, secret, algorithm, digits, period });
+      let qrDataUrl: string;
+      try {
+        qrDataUrl = await this.dependencies.qrDataUrl(uri);
+      } catch {
+        secret.fill(0);
+        throw new Error('The authenticator QR code could not be rendered locally.');
+      }
+      if (!qrDataUrl.startsWith('data:image/png;base64,') || qrDataUrl.length > 256_000) {
+        secret.fill(0);
+        throw new Error('The authenticator QR code renderer returned invalid output.');
+      }
+      const expiresAt = this.dependencies.now() + this.pendingLifetimeMs;
+      const timer = setTimeout(() => {
+        const pending = this.pending.get(registrationId);
+        if (pending) {
+          pending.secret.fill(0);
+          this.pending.delete(registrationId);
+        }
+      }, this.pendingLifetimeMs);
+      timer.unref();
+      this.pending.set(registrationId, { entry, secret, imported, expiresAt, timer });
+      return { registrationId, entry, manualSecret, uri, qrDataUrl, imported, expiresAt: new Date(expiresAt).toISOString() };
+    });
+  }
+
+  async confirm(registrationId: string, code: string): Promise<AuthenticatorEntry> {
+    return this.enqueue(async () => {
+      this.expirePending();
+      if (typeof registrationId !== 'string' || !ID_PATTERN.test(registrationId) || typeof code !== 'string') {
+        throw new Error('Authenticator confirmation is invalid.');
+      }
+      const pending = this.pending.get(registrationId);
+      if (!pending) throw new Error('Authenticator registration expired or was not found.');
+      const matched = verifyTotp(code, pending.secret, {
+        timestampMs: this.dependencies.now(), algorithm: pending.entry.algorithm,
+        digits: pending.entry.digits, period: pending.entry.period, window: 1,
+      });
+      if (matched === null) throw new Error('The confirmation code did not match.');
+      clearTimeout(pending.timer);
+      this.pending.delete(registrationId);
+
+      let document: MetadataDocument | undefined;
+      let next: AuthenticatorEntry[] | undefined;
+      const target = vaultTarget(pending.entry.id);
+      let vaultWritten = false;
+      try {
+        document = await this.readMetadata();
+        if (document.entries.length >= MAX_ENTRIES) throw new Error('The authenticator entry limit has been reached.');
+        if (document.entries.some((entry) => entry.id === pending.entry.id)) throw new Error('Authenticator metadata contains a duplicate entry.');
+        next = [...document.entries, pending.entry];
+        await this.dependencies.writeCredential(target, pending.entry.id, pending.secret);
+        vaultWritten = true;
+        await this.writeMetadata(next);
+        await this.dependencies.recordHistory(pending.imported ? 'imported' : 'created', redactedSnapshot(next, pending.entry.id));
+      } catch (error) {
+        if (vaultWritten) await this.dependencies.deleteCredential(target, pending.entry.id).catch(() => false);
+        if (document && next) await this.writeMetadata(document.entries).catch(() => undefined);
+        if (error instanceof Error && (error.message.includes('entry limit') || error.message.includes('duplicate entry'))) throw error;
+        throw new Error('The authenticator entry could not be saved safely.');
+      } finally {
+        pending.secret.fill(0);
+      }
+      return pending.entry;
+    });
+  }
+
+  async list(): Promise<AuthenticatorEntry[]> {
+    return this.enqueue(async () => (await this.readMetadata()).entries.map((entry) => ({ ...entry })));
+  }
+
+  async codes(id: string): Promise<AuthenticatorCodes> {
+    return this.enqueue(async () => {
+      if (typeof id !== 'string' || !ID_PATTERN.test(id)) throw new Error('Authenticator entry identifier is invalid.');
+      const entry = (await this.readMetadata()).entries.find((candidate) => candidate.id === id);
+      if (!entry) throw new Error('Authenticator entry was not found.');
+      const secret = await this.dependencies.readCredential(vaultTarget(id), id);
+      if (!secret) throw new Error('The authenticator credential is unavailable.');
+      try {
+        const now = this.dependencies.now();
+        const elapsed = Math.floor(now / 1000) % entry.period;
+        return {
+          id,
+          current: generateTotp(secret, { timestampMs: now, algorithm: entry.algorithm, digits: entry.digits, period: entry.period }),
+          next: generateTotp(secret, { timestampMs: now + (entry.period - elapsed) * 1000, algorithm: entry.algorithm, digits: entry.digits, period: entry.period }),
+          secondsRemaining: entry.period - elapsed,
+          period: entry.period,
+          digits: entry.digits,
+        };
+      } finally {
+        secret.fill(0);
+      }
+    });
+  }
+
+  async remove(id: string): Promise<boolean> {
+    return this.enqueue(async () => {
+      if (typeof id !== 'string' || !ID_PATTERN.test(id)) throw new Error('Authenticator entry identifier is invalid.');
+      const document = await this.readMetadata();
+      const entry = document.entries.find((candidate) => candidate.id === id);
+      if (!entry) return false;
+      const target = vaultTarget(id);
+      const secret = await this.dependencies.readCredential(target, id);
+      if (!secret) throw new Error('The authenticator credential is unavailable; metadata was retained.');
+      const next = document.entries.filter((candidate) => candidate.id !== id);
+      let deleted = false;
+      try {
+        deleted = await this.dependencies.deleteCredential(target, id);
+        if (!deleted) throw new Error('Credential deletion failed.');
+        await this.writeMetadata(next);
+        await this.dependencies.recordHistory('deleted', redactedSnapshot(next, id));
+        return true;
+      } catch {
+        if (deleted) await this.dependencies.writeCredential(target, id, secret).catch(() => undefined);
+        await this.writeMetadata(document.entries).catch(() => undefined);
+        throw new Error('The authenticator entry could not be removed safely.');
+      } finally {
+        secret.fill(0);
+      }
+    });
+  }
+
+  private async enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.operation.then(operation, operation);
+    this.operation = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  private expirePending(): void {
+    const now = this.dependencies.now();
+    for (const [id, pending] of this.pending) {
+      if (pending.expiresAt <= now) {
+        clearTimeout(pending.timer);
+        pending.secret.fill(0);
+        this.pending.delete(id);
+      }
+    }
+  }
+
+  private async readMetadata(): Promise<MetadataDocument> {
+    try {
+      return parseMetadata(await readFile(this.metadataPath, 'utf8'));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { schemaVersion: 1, entries: [] };
+      throw error;
+    }
+  }
+
+  private async writeMetadata(entries: readonly AuthenticatorEntry[]): Promise<void> {
+    if (entries.length > MAX_ENTRIES) throw new Error('The authenticator entry limit has been reached.');
+    const projected = entries.map(projectEntry);
+    await mkdir(path.dirname(this.metadataPath), { recursive: true });
+    const temporary = `${this.metadataPath}.${process.pid}.${this.dependencies.randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, JSON.stringify({ schemaVersion: 1, entries: projected }, null, 2) + '\n', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      await rename(temporary, this.metadataPath);
+    } finally {
+      await rm(temporary, { force: true });
+    }
+  }
+}

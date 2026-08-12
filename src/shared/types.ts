@@ -146,6 +146,42 @@ export interface TotpSecret {
   secret: string;
 }
 
+export type TotpAlgorithm = 'SHA1' | 'SHA256' | 'SHA512';
+
+export interface AuthenticatorEntry {
+  id: string;
+  label: string;
+  account: string;
+  issuer?: string;
+  algorithm: TotpAlgorithm;
+  digits: number;
+  period: number;
+  createdAt: string;
+}
+
+export type AuthenticatorBeginRequest =
+  | { mode: 'generate'; account: string; issuer?: string; label?: string; algorithm?: TotpAlgorithm; digits?: number; period?: number }
+  | { mode: 'import'; uri: string };
+
+export interface AuthenticatorRegistration {
+  registrationId: string;
+  entry: AuthenticatorEntry;
+  manualSecret: string;
+  uri: string;
+  qrDataUrl: string;
+  imported: boolean;
+  expiresAt: string;
+}
+
+export interface AuthenticatorCodes {
+  id: string;
+  current: string;
+  next: string;
+  secondsRemaining: number;
+  period: number;
+  digits: number;
+}
+
 export type RunKind = 'install' | 'upgrade' | 'uninstall' | 'tweak' | 'undo' | 'feature' | 'update-profile';
 
 /** The surface exposed on `window.winutil` by the preload bridge. */
@@ -169,6 +205,11 @@ export interface Bridge {
   checkForUpdates(): Promise<UpdateStatus>;
   restartToUpdate(): void;
   onUpdateStatus(cb: (status: UpdateStatus) => void): void;
+  authenticatorBegin(request: AuthenticatorBeginRequest): Promise<AuthenticatorRegistration>;
+  authenticatorConfirm(registrationId: string, code: string): Promise<AuthenticatorEntry>;
+  authenticatorList(): Promise<AuthenticatorEntry[]>;
+  authenticatorCodes(id: string): Promise<AuthenticatorCodes>;
+  authenticatorRemove(id: string): Promise<boolean>;
 }
 
 declare global {

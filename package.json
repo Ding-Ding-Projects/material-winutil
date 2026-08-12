@@ -23,13 +23,15 @@
   },
   "devDependencies": {
     "@types/node": "22.15.30",
+    "@types/qrcode": "1.5.5",
     "electron": "39.8.10",
     "electron-builder": "26.15.3",
     "electron-builder-squirrel-windows": "26.15.3",
     "typescript": "5.8.3"
   },
   "dependencies": {
-    "electron-squirrel-startup": "1.0.1"
+    "electron-squirrel-startup": "1.0.1",
+    "qrcode": "1.5.4"
   },
   "build": {
     "appId": "org.dingdingprojects.materialsystemutility",

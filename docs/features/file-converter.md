@@ -35,6 +35,8 @@ The source file is never modified. Full paths, file bytes, and document contents
 
 `scripts/tests/file-converter.test.mjs` covers the eight required categories, unavailable/bundled-proof policy, magic-byte detection, storage preflight, paged queue backpressure/pause/resume/recovery, cancellation without retaining file bytes, renderer path redaction, and the real destination/search/control wiring.
 
+![The real v0.1.10501 packaged converter catalog, showing its exact unavailable-adapter reason and disabled conversion control](../screenshots/smoke/app/app-file-converter-catalog-unavailable-dark-en-1440x940.png)
+
 The smoke manifest captures the categorized disabled catalog and the empty persistent queue from the built application. It performs no conversion and reads no user file.
 
 ## Suggested articles

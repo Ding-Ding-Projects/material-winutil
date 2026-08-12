@@ -22,6 +22,8 @@ The renderer receives only validated derived assets and presentation metadata th
 
 `scripts/tests/app-logo.test.mjs`, `scripts/tests/app-logo-service.test.mjs`, and `scripts/tests/app-logo-surface-integration.test.mjs` cover presets, structural/decode limits, spoofing/animation/bomb rejection, transforms and all output sizes, derived-only persistence, corrupt-state recovery, export omission, IPC parity, Settings/search/palette/title-bar wiring, and stable identity. The smoke manifest declares a deterministic logo Settings state for packaged hidden-desktop capture.
 
+![The real v0.1.10501 packaged app-logo Settings surface with derived 20, 24, 48, 64, 128, and 256 pixel previews](../screenshots/smoke/app/app-settings-logo-presets-preview-dark-en.png)
+
 ## Suggested articles
 
 - [Appearance controls](appearance-controls.md)

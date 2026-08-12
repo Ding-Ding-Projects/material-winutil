@@ -26,6 +26,8 @@ Failure is fail-closed: invalid inventories, unofficial sources, incomplete pagi
 
 `scripts/tests/ollama-suite.test.mjs` covers strict loopback routing, official catalogue validation and pagination, offline stale fallback, evidence-driven fit, local health, bounded pull API behavior, streaming chat, cancellation, export redaction, attachment capability rejection, and allowlisted rollback plans. Negative regressions reject cloud URLs, URL aliases, arbitrary paths, uncatalogued models, unsupported parameters, arbitrary shell fields, and custom executable profiles.
 
+![The real v0.1.10501 packaged local Ollama manager in a controlled missing-service state, with bilingual recovery copy and no fabricated models](../screenshots/smoke/app/app-ollama-status-missing-bilingual-1440x940.png)
+
 ## Suggested articles
 
 - [Workspace and search](workspace-and-search.md)

@@ -31,6 +31,29 @@ and the application running without touching the operator's visible desktop.
 </details>
 
 <details>
+<summary>Release v0.1.10501 local-workspace captures</summary>
+
+The eight frames below come from the published unsigned `v0.1.10501` Squirrel full package at commit `4a7db224f2ff43b21978627281bf68264abeb5bf`, captured on an isolated hidden desktop. They show the app-logo studio, the fail-closed converter inventory and queue, and the local Ollama manager's unavailable states without inventing catalog, hardware, or local-service facts.
+
+![The app-logo studio showing six consumed output sizes, preset, crop, fit, focal, background, and local PNG controls](docs/screenshots/smoke/app/app-settings-logo-presets-preview-dark-en.png)
+
+![The local file converter showing its Documents and PDF category, anchored search, exact adapter boundary, and disabled conversion action](docs/screenshots/smoke/app/app-file-converter-catalog-unavailable-dark-en-1440x940.png)
+
+![The local file converter empty queue in bilingual mode](docs/screenshots/smoke/app/app-file-converter-queue-empty-bilingual-1440x940.png)
+
+![The local Ollama manager missing-service state in bilingual mode with a truthful recovery path](docs/screenshots/smoke/app/app-ollama-status-missing-bilingual-1440x940.png)
+
+![The local Ollama Model Store unavailable state without an invented official catalog](docs/screenshots/smoke/app/app-ollama-model-store-unavailable-dark-en-1440x940.png)
+
+![The empty local Ollama pull cart](docs/screenshots/smoke/app/app-ollama-pull-cart-empty-dark-en-1440x940.png)
+
+![The local Ollama chat unavailable state when no verified installed model is selected](docs/screenshots/smoke/app/app-ollama-chat-unavailable-dark-en-1440x940.png)
+
+![The local Ollama harness preflight in bilingual mode, showing the fixed profile picker and disabled launch boundary](docs/screenshots/smoke/app/app-ollama-harness-preflight-bilingual-1440x940.png)
+
+</details>
+
+<details>
 <summary>Release v0.1.8601 real capture gallery</summary>
 
 All six captures below are genuine frames from the published unsigned Squirrel full

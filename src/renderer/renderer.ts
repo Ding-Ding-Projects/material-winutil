@@ -328,10 +328,88 @@ const ISO_STEPS = [
   { n: 4, title: 'Output: what would you like to do with the modified image?', body: 'Write a new bootable ISO, keep the working directory for inspection, or reset the interface back to Step 1.', warn: '', field: '', button: '', options: [{ icon: 'save', label: 'Create a new bootable ISO' }, { icon: 'folder_open', label: 'Keep the working directory' }, { icon: 'restart_alt', label: 'Clean up and reset to Step 1' }] },
 ];
 
-const STRINGS: Record<LanguageMode, Record<string, string>> = {
-  English: { run: 'Run selected', clear: 'Clear selection', installed: 'Get installed', ready: 'Everything is local, searchable and reversible.' },
-  Yue: { run: '執行揀咗嘅', clear: '清走揀嘅', installed: '睇下裝咗乜', ready: '全部都喺本機，搵得返，撤得返。' },
-  Bilingual: { run: 'Run selected · 執行', clear: 'Clear · 清走', installed: 'Get installed · 睇已裝', ready: 'Local, searchable, reversible · 本機、可搜尋、可還原' },
+const COPY_EN = {
+  run: 'Run selected', clear: 'Clear selection', installed: 'Get installed',
+  ready: 'Everything is local, searchable and reversible.',
+  mainMenu: 'Main menu', notificationCentre: 'Notification centre', theme: 'Theme', settings: 'Settings',
+  minimize: 'Minimize', maximize: 'Maximize', close: 'Close', search: 'Search', clearSearch: 'Clear search',
+  regexForSearch: 'Open the regex builder for this search', searchDestinations: 'Search destinations',
+  system: 'System', install: 'Install', tweaks: 'Tweaks', config: 'Config', updates: 'Updates',
+  creator: 'Win11 Creator', history: 'History', docs: 'Docs',
+  installSearch: 'Search 227 applications, winget ids and descriptions',
+  tweakSearch: 'Search tweaks, categories and registry effects',
+  configSearch: 'Search features, fixes, legacy panels and remote access',
+  updateSearch: 'Search update profiles', creatorSearch: 'Search image customization steps',
+  historySearch: 'Search history actions and details', docsSearch: 'Search the built-in documentation',
+  settingsSearch: 'Search settings, descriptions and current values',
+  installSelectedPackages: 'Install the selected packages', readOnlyView: 'Read-only view',
+  adapterUnavailable: 'Unavailable until the reviewed system adapter is installed',
+  openWorkspaceTabs: 'Open workspace tabs', pinned: 'pinned', locked: 'locked', openTab: 'Open a tab',
+  tabManager: 'Tabs, groups and safe closing', selectAll: 'Select all', deselectAll: 'Deselect all',
+  refresh: 'Refresh', moreActions: '{count} more action(s)', selectionColour: 'Selection colour',
+  saveSelection: 'Save this selection as a profile', selectionProfiles: 'Selection profiles ({count})',
+  exportView: 'Export this view ({format})', installSelected: 'Install selected', upgradeAll: 'Upgrade all',
+  uninstallSelected: 'Uninstall selected', nothingSelected: 'Nothing is selected.',
+  installCount: '{visible} of {total} · {selected} selected', searchCategories: 'Search categories',
+  noApplications: 'No application matches this filter.', installedChip: 'INSTALLED',
+  noCategories: 'No category matches this search.',
+  selectItem: 'Select {name}', showEntry: 'Show the catalogue entry', copyWinget: 'Copy the winget id',
+  copiedWinget: 'Copied {id}', installOne: 'Install just this package', editAppearance: 'Edit appearance',
+  installPackage: 'Install {name}', installPackages: 'Install {count} package(s)',
+  upgradePackages: 'Upgrade every installed package', uninstallPackages: 'Uninstall {count} package(s)',
+  chipHint: 'Click to filter, Ctrl+click to combine several', filterOnly: 'Filter to {category} only',
+  addFilter: 'Add {category} to the current filter', selectCategory: 'Select every app in {category}',
+  installCategory: 'Install every selected app in {category}', editChip: 'Edit this chip’s appearance…',
+  lockFilter: 'Lock the {category} filter…',
+} as const;
+type CopyKey = keyof typeof COPY_EN;
+
+const COPY_YUE: Record<CopyKey, string> = {
+  run: '執行揀咗嘅', clear: '清除選擇', installed: '查看已安裝',
+  ready: '全部都喺本機，可搜尋，亦可以還原。',
+  mainMenu: '主選單', notificationCentre: '通知中心', theme: '主題', settings: '設定',
+  minimize: '最小化', maximize: '最大化', close: '關閉', search: '搜尋', clearSearch: '清除搜尋',
+  regexForSearch: '開啟呢個搜尋欄嘅正規表示式建構器', searchDestinations: '搜尋目的地',
+  system: '系統', install: '安裝', tweaks: '調校', config: '設定功能', updates: '更新',
+  creator: 'Win11 映像製作器', history: '歷史', docs: '說明文件',
+  installSearch: '搜尋 227 個應用程式、winget 識別碼同描述',
+  tweakSearch: '搜尋調校、分類同登錄效果',
+  configSearch: '搜尋功能、修正、傳統面板同遙距存取',
+  updateSearch: '搜尋更新設定檔', creatorSearch: '搜尋映像自訂步驟',
+  historySearch: '搜尋歷史動作同詳情', docsSearch: '搜尋內置說明文件',
+  settingsSearch: '搜尋設定、說明同目前值',
+  installSelectedPackages: '安裝已選套件', readOnlyView: '唯讀檢視',
+  adapterUnavailable: '要等經審核嘅系統配接器安裝好先可以用',
+  openWorkspaceTabs: '已開啟嘅工作區分頁', pinned: '已釘選', locked: '已鎖定', openTab: '開新分頁',
+  tabManager: '分頁、群組同安全關閉', selectAll: '全部選取', deselectAll: '全部取消選取',
+  refresh: '重新整理', moreActions: '另外 {count} 個動作', selectionColour: '選擇項目顏色',
+  saveSelection: '將目前選擇儲存為設定檔', selectionProfiles: '選擇設定檔（{count}）',
+  exportView: '匯出呢個檢視（{format}）', installSelected: '安裝已選項目', upgradeAll: '全部升級',
+  uninstallSelected: '解除安裝已選項目', nothingSelected: '未有揀任何項目。',
+  installCount: '顯示 {visible} / {total} · 已選 {selected}', searchCategories: '搜尋分類',
+  noApplications: '冇應用程式符合呢個篩選條件。', installedChip: '已安裝',
+  noCategories: '冇分類符合呢個搜尋。',
+  selectItem: '選取 {name}', showEntry: '顯示目錄項目', copyWinget: '複製 winget 識別碼',
+  copiedWinget: '已複製 {id}', installOne: '只安裝呢個套件', editAppearance: '編輯外觀',
+  installPackage: '安裝 {name}', installPackages: '安裝 {count} 個套件',
+  upgradePackages: '升級所有已安裝套件', uninstallPackages: '解除安裝 {count} 個套件',
+  chipHint: '按一下篩選；按住 Ctrl 再按可合併多個分類', filterOnly: '只篩選 {category}',
+  addFilter: '將 {category} 加入目前篩選', selectCategory: '選取 {category} 入面所有應用程式',
+  installCategory: '安裝 {category} 入面所有已選應用程式', editChip: '編輯呢個分類籤嘅外觀…',
+  lockFilter: '鎖定 {category} 篩選…',
+};
+
+const VIEW_COPY: Record<ViewId, { title: CopyKey; search: CopyKey }> = {
+  install: { title: 'install', search: 'installSearch' }, tweaks: { title: 'tweaks', search: 'tweakSearch' },
+  config: { title: 'config', search: 'configSearch' }, updates: { title: 'updates', search: 'updateSearch' },
+  iso: { title: 'creator', search: 'creatorSearch' }, history: { title: 'history', search: 'historySearch' },
+  docs: { title: 'docs', search: 'docsSearch' }, settings: { title: 'settings', search: 'settingsSearch' },
+};
+
+const CATEGORY_YUE: Record<string, string> = {
+  All: '全部', Browsers: '瀏覽器', Communications: '通訊', Development: '開發', Document: '文件',
+  Games: '遊戲', 'Microsoft Tools': 'Microsoft 工具', 'Multimedia Tools': '多媒體工具',
+  'Pro Tools': '專業工具', 'Selfhosted Tools': '自託管工具', Utilities: '實用工具',
 };
 
 /* ----------------------------------------------------------------- state -- */
@@ -670,7 +748,21 @@ function applyPrefs(): void {
   try { localStorage.setItem('winutil.profiles', JSON.stringify(state.profiles)); } catch { /* profiles stay in memory */ }
 }
 
-const t = (key: string): string => STRINGS[state.prefs.language][key] ?? STRINGS.English[key] ?? key;
+function t(key: CopyKey, values: Record<string, string | number> = {}): string {
+  const english = COPY_EN[key];
+  const yue = COPY_YUE[key];
+  const source = state.prefs.language === 'English' ? english
+    : state.prefs.language === 'Yue' ? yue : `${english} · ${yue}`;
+  return source.replace(/\{(\w+)\}/g, (_, name: string) => String(values[name] ?? `{${name}}`));
+}
+
+function viewTitle(view: ViewId): string { return t(VIEW_COPY[view].title); }
+function viewSearch(view: ViewId): string { return t(VIEW_COPY[view].search); }
+function categoryLabel(category: string): string {
+  const yue = CATEGORY_YUE[category];
+  if (!yue || state.prefs.language === 'English') return category;
+  return state.prefs.language === 'Yue' ? yue : `${category} · ${yue}`;
+}
 
 /* ------------------------------------------------------------ derivation -- */
 
@@ -721,35 +813,35 @@ function render(): void {
 function appBar(): HTMLElement {
   const unread = state.notifications.filter((n) => !n.read).length;
   return h('header', { class: 'appbar' },
-    h('button', { class: 'icon-btn', title: 'Main menu', onclick: () => { state.drawerCollapsed = !state.drawerCollapsed; render(); } }, icon('menu')),
+    h('button', { class: 'icon-btn', title: t('mainMenu'), onclick: () => { state.drawerCollapsed = !state.drawerCollapsed; render(); } }, icon('menu')),
     h('div', { class: 'brand' },
       h('div', { class: 'brand-mark' }, 'W'),
       h('div', { class: 'brand-name' }, 'Material System Utility')),
     searchField(),
     h('div', { style: 'flex:1' }),
-    h('button', { class: 'icon-btn', title: 'Notification centre', style: 'position:relative', onclick: () => openDialog('notifications') },
+    h('button', { class: 'icon-btn', title: t('notificationCentre'), style: 'position:relative', onclick: () => openDialog('notifications') },
       icon('notifications'), unread ? h('span', { class: 'badge-dot' }) : null),
-    h('button', { class: 'icon-btn', title: 'Theme', onclick: () => { state.prefs.theme = state.prefs.theme === 'dark' ? 'light' : 'dark'; render(); } },
+    h('button', { class: 'icon-btn', title: t('theme'), onclick: () => { state.prefs.theme = state.prefs.theme === 'dark' ? 'light' : 'dark'; render(); } },
       icon(state.prefs.theme === 'dark' ? 'light_mode' : 'dark_mode')),
-    h('button', { class: 'icon-btn', title: 'Settings', onclick: () => go('settings') }, icon('settings')),
+    h('button', { class: 'icon-btn', title: t('settings'), onclick: () => go('settings') }, icon('settings')),
     h('div', { class: 'win-controls' },
-      h('button', { title: 'Minimize', onclick: () => bridge().window('minimize') }, icon('remove')),
-      h('button', { title: 'Maximize', onclick: () => bridge().window('maximize') }, icon('crop_square')),
-      h('button', { class: 'close', title: 'Close', onclick: () => bridge().window('close') }, icon('close'))));
+      h('button', { title: t('minimize'), onclick: () => bridge().window('minimize') }, icon('remove')),
+      h('button', { title: t('maximize'), onclick: () => bridge().window('maximize') }, icon('crop_square')),
+      h('button', { class: 'close', title: t('close'), onclick: () => bridge().window('close') }, icon('close'))));
 }
 
 function searchField(): HTMLElement {
   const input = h('input', {
-    value: state.search.text, placeholder: VIEW_META[state.view].search,
-    'aria-label': VIEW_META[state.view].search, spellcheck: 'false',
+    value: state.search.text, placeholder: viewSearch(state.view),
+    'aria-label': viewSearch(state.view), spellcheck: 'false',
     oninput: (e: Event) => { state.search.text = (e.target as HTMLInputElement).value; renderKeepFocus(); },
   });
   return h('div', { class: 'searchbar' },
-    h('button', { class: 'icon-btn', title: 'Search' }, icon('search')),
+    h('button', { class: 'icon-btn', title: t('search') }, icon('search')),
     input,
-    state.search.text ? h('button', { class: 'icon-btn small', title: 'Clear', onclick: () => { state.search.text = ''; render(); } }, icon('close')) : null,
+    state.search.text ? h('button', { class: 'icon-btn small', title: t('clearSearch'), onclick: () => { state.search.text = ''; render(); } }, icon('close')) : null,
     h('button', {
-      class: `regex-btn${state.search.regex ? ' on' : ''}`, title: 'Open the regex builder for this search',
+      class: `regex-btn${state.search.regex ? ' on' : ''}`, title: t('regexForSearch'),
       onclick: () => { state.regexDraft.target = 'main'; state.regexDraft.pattern = state.search.text || state.regexDraft.pattern; openDialog('regex'); },
     }, '.*'));
 }
@@ -766,20 +858,21 @@ function drawer(): HTMLElement {
   const nodes: HTMLElement[] = [
     h('button', {
       class: 'fab-extended', onclick: () => primaryAction(), disabled: state.view !== 'install',
-      title: state.view === 'install' ? 'Install the selected packages' : 'Unavailable until the reviewed system adapter is installed',
+      title: state.view === 'install' ? t('installSelectedPackages') : t('adapterUnavailable'),
     },
-      icon(state.view === 'install' ? 'play_arrow' : 'info'), h('span', {}, state.view === 'install' ? t('run') : 'Read-only view')),
-    searchLine('nav', 'Search destinations'),
+      icon(state.view === 'install' ? 'play_arrow' : 'info'), h('span', {}, state.view === 'install' ? t('run') : t('readOnlyView'))),
+    searchLine('nav', t('searchDestinations')),
   ];
   for (const item of NAV) {
     if ('heading' in item) {
-      if (item.heading && !s.text) nodes.push(h('div', { class: 'drawer-heading' }, item.heading));
+      if (item.heading && !s.text) nodes.push(h('div', { class: 'drawer-heading' }, item.heading === 'System' ? t('system') : item.heading));
       continue;
     }
-    if (!match(item.label)) continue;
+    const label = viewTitle(item.id);
+    if (!match(`${item.label} ${label}`)) continue;
     const count = countFor(item.id);
     nodes.push(h('button', {
-      class: `nav-item${state.view === item.id ? ' active' : ''}`, title: item.label, onclick: () => go(item.id),
+      class: `nav-item${state.view === item.id ? ' active' : ''}`, title: label, onclick: () => go(item.id),
       oncontextmenu: ctx(`nav-${item.id}`, () => [
         { icon: 'open_in_new', label: `Open ${item.label}`, act: () => go(item.id) },
         { icon: 'tab', label: 'Open in a new tab', act: () => { go(item.id); newTab(); } },
@@ -788,7 +881,7 @@ function drawer(): HTMLElement {
         { icon: 'palette', label: 'Edit this destination’s appearance…', act: () => openAppearance(`nav-${item.id}`, item.label) },
         { icon: 'lock', label: `Lock ${item.label}…`, act: () => openLockWizard(`nav-${item.id}`, `Destination · ${item.label}`) },
       ], item.label),
-    }, icon(item.icon), h('b', {}, item.label), count ? h('span', { class: 'nav-count' }, count) : null));
+    }, icon(item.icon), h('b', {}, label), count ? h('span', { class: 'nav-count' }, count) : null));
   }
   return h('nav', { class: 'drawer' }, ...nodes);
 }
@@ -813,11 +906,11 @@ function workspacePanels(): HTMLElement {
 function tabStrip(): HTMLElement {
   const vertical = state.prefs.tabDock === 'left' || state.prefs.tabDock === 'right';
   const strip = h('div', {
-    class: 'tabstrip', role: 'tablist', 'aria-label': 'Open workspace tabs',
+    class: 'tabstrip', role: 'tablist', 'aria-label': t('openWorkspaceTabs'),
     'aria-orientation': vertical ? 'vertical' : 'horizontal',
   });
   const activate = (tab: WorkspaceTab, focus = false): void => {
-    if (tab.locked) { openLockWizard(`tab-${tab.id}`, `Tab · ${VIEW_META[tab.view].title}`, 'unlock'); return; }
+    if (tab.locked) { openLockWizard(`tab-${tab.id}`, `Tab · ${viewTitle(tab.view)}`, 'unlock'); return; }
     state.activeTab = tab.id;
     state.view = tab.view;
     state.reading = null;
@@ -826,14 +919,14 @@ function tabStrip(): HTMLElement {
     if (focus) window.setTimeout(() => document.getElementById(`workspace-tab-${tab.id}`)?.focus(), 0);
   };
   for (const tab of state.tabs) {
-    const meta = VIEW_META[tab.view];
+    const label = viewTitle(tab.view);
     const navItem = NAV.find((n) => 'id' in n && n.id === tab.view) as { icon: string } | undefined;
     strip.appendChild(h('button', {
       type: 'button', id: `workspace-tab-${tab.id}`, 'aria-controls': `workspace-panel-${tab.id}`,
-      class: `wtab${state.activeTab === tab.id ? ' active' : ''}`, title: meta.title,
+      class: `wtab${state.activeTab === tab.id ? ' active' : ''}`, title: label,
       role: 'tab', tabindex: state.activeTab === tab.id ? '0' : '-1',
       'aria-selected': state.activeTab === tab.id ? 'true' : 'false',
-      'aria-label': `${meta.title}${tab.pinned ? ', pinned' : ''}${tab.locked ? ', locked' : ''}`,
+      'aria-label': `${label}${tab.pinned ? `, ${t('pinned')}` : ''}${tab.locked ? `, ${t('locked')}` : ''}`,
       onclick: () => activate(tab),
       onkeydown: (e: KeyboardEvent) => {
         const previous = vertical ? 'ArrowUp' : 'ArrowLeft';
@@ -852,12 +945,12 @@ function tabStrip(): HTMLElement {
       icon(navItem?.icon ?? 'tab'),
       tab.pinned ? icon('push_pin', 'pin') : null,
       tab.locked ? icon('lock', 'pin') : null,
-      h('b', {}, meta.title),
+      h('b', {}, label),
       tab.group ? h('span', { class: 'group-chip' }, tab.group) : null,
       h('span', { class: 'tab-close-mark', 'aria-hidden': 'true' }, '×')));
   }
-  strip.appendChild(h('button', { class: 'icon-btn tabstrip-action', title: 'Open a tab', onclick: () => newTab() }, icon('add')));
-  strip.appendChild(h('button', { class: 'icon-btn tabstrip-action', title: 'Tabs, groups and safe closing', onclick: () => openDialog('tabs') }, icon('menu_open')));
+  strip.appendChild(h('button', { class: 'icon-btn tabstrip-action', title: t('openTab'), onclick: () => newTab() }, icon('add')));
+  strip.appendChild(h('button', { class: 'icon-btn tabstrip-action', title: t('tabManager'), onclick: () => openDialog('tabs') }, icon('menu_open')));
   strip.appendChild(h('div', {
     class: 'tabstrip-spacer',
     oncontextmenu: ctx('tabstrip', () => [
@@ -903,10 +996,10 @@ function actionToolbar(): HTMLElement {
     const all = allIdsInView();
     const every = all.length > 0 && all.every((id) => state.selected.has(id));
     left.appendChild(h('button', {
-      class: 'icon-btn', title: every ? 'Deselect all' : 'Select all',
+      class: 'icon-btn', title: every ? t('deselectAll') : t('selectAll'),
       onclick: () => { if (every) all.forEach((id) => state.selected.delete(id)); else all.forEach((id) => { state.selected.add(id); state.rowColors[id] = state.selectionColor; }); render(); },
     }, icon(every ? 'check_box' : state.selected.size ? 'indeterminate_check_box' : 'check_box_outline_blank')));
-    left.appendChild(h('button', { class: 'icon-btn', title: 'Refresh', onclick: () => refresh() }, icon('refresh')));
+    left.appendChild(h('button', { class: 'icon-btn', title: t('refresh'), onclick: () => refresh() }, icon('refresh')));
     left.appendChild(h('div', { class: 'divider-v' }));
   }
 
@@ -923,7 +1016,7 @@ function actionToolbar(): HTMLElement {
   }
   if (overflow.length) {
     left.appendChild(h('button', {
-      class: 'icon-btn', title: `${overflow.length} more action(s)`,
+      class: 'icon-btn', title: t('moreActions', { count: overflow.length }),
       onclick: (e: MouseEvent) => {
         const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
         contextMenu('toolbar-overflow', r.left, r.bottom + 4,
@@ -942,7 +1035,7 @@ function actionToolbar(): HTMLElement {
   }
   if (listy) {
     right.appendChild(h('button', {
-      class: 'swatch', style: `--sw:${state.selectionColor}`, title: 'Selection colour',
+      class: 'swatch', style: `--sw:${state.selectionColor}`, title: t('selectionColour'),
       onclick: (e: MouseEvent) => {
         const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
         contextMenu('selcolor', r.left - 200, r.bottom + 4, [
@@ -956,20 +1049,20 @@ function actionToolbar(): HTMLElement {
         ], 'Selection colour');
       },
     }));
-    right.appendChild(h('button', { class: 'icon-btn', title: 'Save this selection as a profile', onclick: () => openDialog('saveselection') }, icon('bookmark_add')));
-    right.appendChild(h('button', { class: 'icon-btn', title: `Selection profiles (${state.profiles.length})`, onclick: () => openDialog('profiles') }, icon('bookmarks')));
+    right.appendChild(h('button', { class: 'icon-btn', title: t('saveSelection'), onclick: () => openDialog('saveselection') }, icon('bookmark_add')));
+    right.appendChild(h('button', { class: 'icon-btn', title: t('selectionProfiles', { count: state.profiles.length }), onclick: () => openDialog('profiles') }, icon('bookmarks')));
   }
   right.appendChild(h('span', { class: 'count' }, statusLine()));
-  right.appendChild(h('button', { class: 'icon-btn', title: `Export this view (${state.prefs.exportFormat})`, onclick: () => openDialog('export') }, icon('download')));
+  right.appendChild(h('button', { class: 'icon-btn', title: t('exportView', { format: state.prefs.exportFormat }), onclick: () => openDialog('export') }, icon('download')));
   return bar;
 }
 
 function toolbarActions(): Array<{ label: string; variant: string; icon?: string; act: () => void; disabled?: boolean; title?: string }> {
   switch (state.view) {
     case 'install': return [
-      { label: 'Install selected', variant: 'filled', icon: 'download', act: () => { const ids = selectedPackageIds(); if (!ids.length) snack('Nothing is selected.'); else gate(`Install ${ids.length} package(s)`, 'install', ids); } },
-      { label: 'Upgrade all', variant: 'tonal', icon: 'upgrade', act: () => gate('Upgrade every installed package', 'upgrade') },
-      { label: 'Uninstall selected', variant: 'outlined', icon: 'delete', act: () => { const ids = selectedPackageIds(); if (!ids.length) snack('Nothing is selected.'); else gate(`Uninstall ${ids.length} package(s)`, 'uninstall', ids); } },
+      { label: t('installSelected'), variant: 'filled', icon: 'download', act: () => { const ids = selectedPackageIds(); if (!ids.length) snack(t('nothingSelected')); else gate(t('installPackages', { count: ids.length }), 'install', ids); } },
+      { label: t('upgradeAll'), variant: 'tonal', icon: 'upgrade', act: () => gate(t('upgradePackages'), 'upgrade') },
+      { label: t('uninstallSelected'), variant: 'outlined', icon: 'delete', act: () => { const ids = selectedPackageIds(); if (!ids.length) snack(t('nothingSelected')); else gate(t('uninstallPackages', { count: ids.length }), 'uninstall', ids); } },
       { label: t('installed'), variant: 'text', act: () => void loadInstalled() },
     ];
     case 'tweaks': return [
@@ -991,7 +1084,7 @@ function toolbarActions(): Array<{ label: string; variant: string; icon?: string
 
 function statusLine(): string {
   switch (state.view) {
-    case 'install': return `${visibleApps().length} of ${state.catalog.apps.length} · ${state.selected.size} selected`;
+    case 'install': return t('installCount', { visible: visibleApps().length, total: state.catalog.apps.length, selected: state.selected.size });
     case 'tweaks': return `${tweakGroups(state.catalog.tweaks).reduce((n, g) => n + g.items.length, 0)} of ${state.catalog.tweaks.length} · ${state.selected.size} selected`;
     case 'config': return `${tweakGroups(state.catalog.features).reduce((n, g) => n + g.items.length, 0)} of ${state.catalog.features.length} · ${state.selected.size} selected`;
     case 'history': return `${filteredHistory().length} of ${state.history.length} revisions`;
@@ -1126,7 +1219,7 @@ function rowNode(opts: {
     actions.appendChild(h('button', { class: 'icon-btn small', title, onclick: (e: MouseEvent) => { e.stopPropagation(); act(); } }, icon(ic)));
   }
   actions.appendChild(h('button', {
-    class: 'icon-btn small', title: 'Edit appearance',
+    class: 'icon-btn small', title: t('editAppearance'),
     onclick: (e: MouseEvent) => { e.stopPropagation(); openAppearance(`row-${opts.id}`, opts.primary); },
   }, icon('palette')));
   row.appendChild(actions);
@@ -1137,38 +1230,38 @@ function installPane(): HTMLElement {
   const chipMatch = makeMatcher(sq('install-cats'));
   const list = h('div', { class: 'rowlist' });
   const apps = visibleApps();
-  if (!apps.length) list.appendChild(emptyState('No application matches this filter.'));
+  if (!apps.length) list.appendChild(emptyState(t('noApplications')));
   for (const app of apps) {
     const installed = state.installedIds.has(app.id);
     list.appendChild(rowNode({
       id: app.id, primary: app.name, snippet: app.desc, meta: app.winget || app.choco,
-      chip: installed ? 'INSTALLED' : app.foss ? 'FOSS' : undefined, lead: 'inventory_2',
+      chip: installed ? t('installedChip') : app.foss ? 'FOSS' : undefined, lead: 'inventory_2',
       onOpen: () => openDetail(app.name, `catalogue/${app.id}`, `${app.desc}\n\nCategory   ${app.cat}\nwinget     ${app.winget || '—'}\nchoco      ${app.choco || '—'}\nLicence    ${app.foss ? 'FOSS' : 'proprietary'}\nHomepage   ${app.link}\n\nInstalling this entry runs winget silently with the ids above. The homepage is shown for reference only — this app never opens a browser.`),
       actions: [
-        ['info', 'Show the catalogue entry', () => openDetail(app.name, `catalogue/${app.id}`, `${app.desc}\n\nCategory   ${app.cat}\nwinget     ${app.winget || '—'}\nchoco      ${app.choco || '—'}\nHomepage   ${app.link}`)],
-        ['content_copy', 'Copy the winget id', () => { void navigator.clipboard?.writeText(app.winget); snack(`Copied ${app.winget}`); }],
-        ['download', 'Install just this package', () => gate(`Install ${app.name}`, 'install', [app.id])],
+        ['info', t('showEntry'), () => openDetail(app.name, `catalogue/${app.id}`, `${app.desc}\n\nCategory   ${app.cat}\nwinget     ${app.winget || '—'}\nchoco      ${app.choco || '—'}\nHomepage   ${app.link}`)],
+        ['content_copy', t('copyWinget'), () => { void navigator.clipboard?.writeText(app.winget); snack(t('copiedWinget', { id: app.winget })); }],
+        ['download', t('installOne'), () => gate(t('installPackage', { name: app.name }), 'install', [app.id])],
       ],
     }));
   }
   return h('div', { class: 'pane' },
     h('div', { class: 'pane-head' },
-      searchLine('install-cats', 'Search categories'),
+      searchLine('install-cats', t('searchCategories')),
       h('div', { class: 'chips' },
         ...APP_CATS.filter(chipMatch).map((c) => h('button', {
           class: `chip${state.chips.has(c) ? ' on' : ''}`,
-          title: 'Click to filter, Ctrl+click to combine several',
+          title: t('chipHint'),
           onclick: (e: MouseEvent) => toggleChip(c, e.ctrlKey || e.metaKey),
           oncontextmenu: ctx(`chip-${c}`, () => [
-            { icon: 'filter_alt', label: `Filter to ${c} only`, act: () => toggleChip(c, false) },
-            { icon: 'add', label: `Add ${c} to the current filter`, act: () => toggleChip(c, true) },
-            { icon: 'select_all', label: `Select every app in ${c}`, act: () => { state.catalog.apps.filter((a) => c === 'All' || a.cat === c).forEach((a) => state.selected.add(a.id)); } },
-            { icon: 'download', label: `Install every selected app in ${c}`, act: () => { const ids = selectedPackageIds(); if (!ids.length) snack('Nothing is selected.'); else gate(`Install the selected ${c} apps`, 'install', ids); } },
+            { icon: 'filter_alt', label: t('filterOnly', { category: categoryLabel(c) }), act: () => toggleChip(c, false) },
+            { icon: 'add', label: t('addFilter', { category: categoryLabel(c) }), act: () => toggleChip(c, true) },
+            { icon: 'select_all', label: t('selectCategory', { category: categoryLabel(c) }), act: () => { state.catalog.apps.filter((a) => c === 'All' || a.cat === c).forEach((a) => state.selected.add(a.id)); } },
+            { icon: 'download', label: t('installCategory', { category: categoryLabel(c) }), act: () => { const ids = selectedPackageIds(); if (!ids.length) snack(t('nothingSelected')); else gate(t('installPackages', { count: ids.length }), 'install', ids); } },
             'divider',
-            { icon: 'palette', label: 'Edit this chip’s appearance…', act: () => openAppearance(`chip-${c}`, `Chip · ${c}`) },
-            { icon: 'lock', label: `Lock the ${c} filter…`, act: () => openLockWizard(`chip-${c}`, `Filter chip · ${c}`) },
+            { icon: 'palette', label: t('editChip'), act: () => openAppearance(`chip-${c}`, `Chip · ${c}`) },
+            { icon: 'lock', label: t('lockFilter', { category: categoryLabel(c) }), act: () => openLockWizard(`chip-${c}`, `Filter chip · ${c}`) },
           ], c),
-        }, state.chips.has(c) ? icon('check') : null, c)))),
+        }, state.chips.has(c) ? icon('check') : null, categoryLabel(c))))),
     list);
 }
 

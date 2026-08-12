@@ -112,7 +112,7 @@ async function waitForApp(client) {
 async function waitForSite(client) {
   const deadline = Date.now() + 20000;
   while (Date.now() < deadline) {
-    const ready = await client.evaluate("document.readyState==='complete' && ['language','theme','density','dock','documentation-tab-list'].every((id)=>Boolean(document.getElementById(id)))");
+    const ready = await client.evaluate("document.readyState==='complete' && Boolean(document.getElementById('documentation-tab-list')) && ['language','preset','dock'].every((name)=>Boolean(document.querySelector(`input[name=\"${name}\"]`))) && Boolean(document.getElementById('density-scale'))");
     if (ready) return;
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 150));
   }
@@ -154,12 +154,16 @@ async function prepareSite(client, capture, defaults) {
   await client.setViewport(viewport.width, viewport.height, viewport.scale ?? 1);
   const requestedPage = capture.page ?? 'home';
   const applied = await client.evaluate(`(()=>{
-    ['capability-regex','settings-regex','command-palette','scrim','snackbar'].forEach((id)=>{const node=document.getElementById(id);if(node)node.hidden=true});
-    ['capability-regex-button','settings-regex-button'].forEach((id)=>document.getElementById(id)?.setAttribute('aria-expanded','false'));
-    ['capability-filter','capability-pattern','settings-search','settings-pattern','palette-search'].forEach((id)=>{const input=document.getElementById(id);if(input){input.value='';input.dispatchEvent(new Event('input',{bubbles:true}))}});
+    document.querySelectorAll('[data-builder]').forEach((node)=>{node.hidden=true});
+    document.querySelectorAll('[data-builder-for]').forEach((node)=>node.setAttribute('aria-expanded','false'));
+    ['capability-search','settings-search','palette-search'].forEach((id)=>{const input=document.getElementById(id);if(input){input.value='';input.dispatchEvent(new Event('input',{bubbles:true}))}});
+    document.querySelectorAll('[data-pattern-for]').forEach((input)=>{input.value='';input.dispatchEvent(new Event('input',{bubbles:true}))});
+    document.getElementById('snackbar-stack')?.replaceChildren();
     document.getElementById('tab-rail')?.classList.remove('open');document.body.style.overflow='';
-    const set=(id,value)=>{const control=document.getElementById(id);if(!control)return false;control.value=value;control.dispatchEvent(new Event('change',{bubbles:true}));return true};
-    const ok=set('language',${literal(capture.language ?? 'en')})&&set('theme',${literal(capture.theme ?? 'dark')})&&set('density','comfortable')&&set('dock',${literal(capture.dock ?? 'left')});
+    const choose=(name,value)=>{const control=document.querySelector('input[name="'+name+'"][value="'+value+'"]');if(!control)return false;control.checked=true;control.dispatchEvent(new Event('change',{bubbles:true}));return true};
+    const density=document.getElementById('density-scale');if(density){density.value='100';density.dispatchEvent(new Event('input',{bubbles:true}));}
+    const preset=${literal(capture.theme ?? 'dark')}==='light'?'light':${literal(capture.theme ?? 'dark')}==='dark'?'dark':'system';
+    const ok=choose('language',${literal(capture.language ?? 'en')})&&choose('preset',preset)&&choose('dock',${literal(capture.dock ?? 'left')})&&Boolean(density);
     document.querySelector('[data-page=${literal(requestedPage)}]')?.click();
     return ok;
   })()`);

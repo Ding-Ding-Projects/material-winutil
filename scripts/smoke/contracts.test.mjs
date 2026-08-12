@@ -50,6 +50,12 @@ test('app manifest captures the functional locks and exact bundled documentation
   assert.match(captures.get('color-picker')?.prepare ?? '', /state\.selectionColor='#6750A4';openColorPicker\('selection','Smoke selection'\)/u);
 });
 
+test('reduced-motion capture keeps the enabled preference visibly inspectable', async () => {
+  const manifest = JSON.parse(await readFile(join(repo, 'scripts', 'smoke', 'app-manifest.json'), 'utf8'));
+  const capture = manifest.captures.find((entry) => entry.id === 'reduced-motion');
+  assert.deepEqual(capture && { view: capture.view, reducedMotion: capture.reducedMotion }, { view: 'settings', reducedMotion: true });
+});
+
 test('single-target isolation rejects extra or unexpected targets', () => {
   const page = { type: 'page', url: 'https://example.test/', webSocketDebuggerUrl: 'ws://127.0.0.1/one' };
   assert.equal(assertSingleTarget([page], (target) => target.url === page.url, 'fixture'), page);
@@ -175,23 +181,31 @@ test('capture verifier distinguishes live deployment provenance from packaged ap
   assert.throws(() => assertCaptureArtifactProvenance({ id: 'site', surface: 'live documentation site', artifact: { ...site, deployedCommit: 'd'.repeat(40) } }, commit), /live documentation deployment/u);
 });
 
-test('site preparation drives the live preference controls and real page tab', async () => {
+test('site preparation drives the shipped semantic preference controls and real page tab', async () => {
   const source = await readFile(join(repo, 'scripts', 'smoke', 'capture.mjs'), 'utf8');
+  const manifest = JSON.parse(await readFile(join(repo, 'scripts', 'smoke', 'site-manifest.json'), 'utf8'));
+  const html = await readFile(join(repo, 'docs', 'site', 'index.html'), 'utf8');
   const siteSource = await readFile(join(repo, 'docs', 'site', 'app.js'), 'utf8');
   const storageKey = /const STORAGE_KEY = '([^']+)'/u.exec(siteSource)?.[1];
   assert.ok(storageKey, 'site source must declare its preference storage key');
-  assert.match(source, /\['capability-regex','settings-regex','command-palette','scrim','snackbar'\]/u);
-  assert.match(source, /\['capability-filter','capability-pattern','settings-search','settings-pattern','palette-search'\]/u);
+  assert.match(source, /document\.querySelectorAll\('\[data-builder\]'\)/u);
+  assert.match(source, /document\.querySelectorAll\('\[data-builder-for\]'\)/u);
+  assert.match(source, /document\.querySelectorAll\('\[data-pattern-for\]'\)/u);
+  assert.match(source, /const choose=\(name,value\)=>\{const control=document\.querySelector\('input\[name="'\+name\+'"\]\[value="'\+value\+'"\]'\)/u);
+  assert.match(source, /document\.getElementById\('density-scale'\)/u);
   assert.match(source, /document\.getElementById\('tab-rail'\)\?\.classList\.remove\('open'\)/u);
-  assert.match(source, /\['language','theme','density','dock','documentation-tab-list'\]\.every/u);
+  assert.match(source, /document\.getElementById\('documentation-tab-list'\)/u);
   assert.match(source, /else await waitForSite\(client\)/u);
   assert.match(source, /meta\[name="material-winutil-source-commit"\]/u);
   assert.match(source, /deployedCommit !== commit/u);
-  assert.match(source, /set\('language'.*set\('theme'.*set\('density'.*set\('dock'/su);
-  assert.match(source, /dispatchEvent\(new Event\('change',\{bubbles:true\}\)\)/u);
+  assert.match(source, /choose\('language'.*choose\('preset'.*choose\('dock'/su);
   assert.doesNotMatch(source, /location\.reload\(\)/u);
   assert.match(source, /document\.querySelector\('\[data-page=\$\{literal\(requestedPage\)\}\]'\)\?\.click\(\)/u);
   assert.match(source, /if \(!activated\) throw new Error\(`\$\{capture\.id\} could not activate/u);
+  const pages = new Set([...html.matchAll(/data-panel="([^"]+)"/gu)].map((match) => match[1]));
+  for (const capture of manifest.captures) assert.ok(pages.has(capture.page), `${capture.id} refers to a real live site panel`);
+  for (const name of ['language', 'preset', 'dock']) assert.match(html, new RegExp(`name="${name}"`, 'u'));
+  assert.match(html, /id="density-scale"/u);
 });
 
 test('PNG inspector decodes a real capture and duplicate check fails closed', async () => {

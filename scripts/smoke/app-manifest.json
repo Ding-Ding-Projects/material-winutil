@@ -22,7 +22,7 @@
     { "id": "install-scale-150", "file": "app-install-dark-en-scale-150.png", "view": "install", "theme": "dark", "language": "English", "viewport": { "width": 960, "height": 627, "scale": 1.5 } },
     { "id": "install-scale-200", "file": "app-install-dark-en-scale-200.png", "view": "install", "theme": "dark", "language": "English", "viewport": { "width": 720, "height": 600, "scale": 2 } },
     { "id": "settings-scale-200-bilingual", "file": "app-settings-dark-bilingual-scale-200.png", "view": "settings", "theme": "dark", "language": "Bilingual", "viewport": { "width": 720, "height": 600, "scale": 2 } },
-    { "id": "reduced-motion", "file": "app-install-reduced-motion-dark-en.png", "view": "install", "theme": "dark", "language": "English", "reducedMotion": true },
+    { "id": "reduced-motion", "file": "app-settings-reduced-motion-dark-en.png", "view": "settings", "theme": "dark", "language": "English", "reducedMotion": true },
     { "id": "search-empty", "file": "app-install-search-empty-dark-en.png", "view": "install", "theme": "dark", "language": "English", "search": "no-package-can-match-this-99731" },
     { "id": "palette", "file": "app-command-palette-keyboard-dark-en.png", "view": "install", "theme": "dark", "language": "English", "dialog": "palette" },
     { "id": "palette-empty", "file": "app-command-palette-empty-dark-en.png", "view": "install", "theme": "dark", "language": "English", "dialog": "palette", "prepare": "state.dialogSearch.text='no-command-can-match';render()" },

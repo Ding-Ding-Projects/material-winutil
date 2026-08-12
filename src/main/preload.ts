@@ -96,6 +96,7 @@ const bridge: Bridge = {
   appLogoUpdateTransform: (transform) => ipcRenderer.invoke('app-logo:update-transform', transform),
   appLogoReset: () => ipcRenderer.invoke('app-logo:reset'),
   ollamaHealth: () => ipcRenderer.invoke('ollama:health'),
+  ollamaHardware: () => ipcRenderer.invoke('ollama:hardware'),
   ollamaCatalog: () => ipcRenderer.invoke('ollama:catalog'),
   ollamaRefreshCatalog: () => ipcRenderer.invoke('ollama:refresh-catalog'),
   ollamaPullQueue: () => ipcRenderer.invoke('ollama:pull-queue'),

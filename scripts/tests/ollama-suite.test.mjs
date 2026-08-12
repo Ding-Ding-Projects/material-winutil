@@ -71,10 +71,12 @@ test('validates exact catalog identity, capability, and pagination metadata', ()
 });
 
 test('computes conservative fit from evidence rather than model names', () => {
-  const common = { detectedAt: '2026-08-12T00:00:00Z', gpuName: null, vramTotalBytes: null, vramAvailableBytes: null, gpuDriver: null, gpuSupported: null };
+  const probes = { ram: { state: 'available', message: 'fixture' }, disk: { state: 'available', message: 'fixture' }, gpu: { state: 'unavailable', message: 'fixture' } };
+  const common = { detectedAt: '2026-08-12T00:00:00Z', gpuName: null, vramTotalBytes: null, vramAvailableBytes: null, gpuDriver: null, gpuSupported: null, probes };
   assert.equal(assessOllamaFit({ ...variant, model: 'tiny-sounds-easy' }, { ...common, ramTotalBytes: 1_000_000_000, ramAvailableBytes: 500_000_000, diskFreeBytes: 500_000_000 }).verdict, 'unlikely');
-  assert.equal(assessOllamaFit(variant, { ...common, ramTotalBytes: 16_000_000_000, ramAvailableBytes: 12_000_000_000, diskFreeBytes: 50_000_000_000 }).verdict, 'runs-well');
+  assert.equal(assessOllamaFit(variant, { ...common, ramTotalBytes: 16_000_000_000, ramAvailableBytes: 12_000_000_000, diskFreeBytes: 50_000_000_000 }).verdict, 'runs-with-limits');
   assert.equal(assessOllamaFit(variant, { ...common, ramTotalBytes: 16_000_000_000, ramAvailableBytes: 12_000_000_000, gpuSupported: true, vramAvailableBytes: null, diskFreeBytes: 50_000_000_000 }).verdict, 'runs-with-limits');
+  assert.equal(assessOllamaFit(variant, { ...common, ramTotalBytes: 16_000_000_000, ramAvailableBytes: 12_000_000_000, gpuSupported: true, vramAvailableBytes: 12_000_000_000, diskFreeBytes: 50_000_000_000 }).verdict, 'runs-well');
   assert.equal(assessOllamaFit({ ...variant, blobSizeBytes: null }, { ...common, ramTotalBytes: null, ramAvailableBytes: null, diskFreeBytes: null }).verdict, 'unknown');
 });
 
@@ -92,11 +94,11 @@ test('main, preload, and shared bridge expose bounded Ollama service seams', asy
     readFile(new URL('../../src/main/preload.ts', import.meta.url), 'utf8'),
     readFile(new URL('../../src/shared/types.ts', import.meta.url), 'utf8'),
   ]);
-  for (const channel of ['ollama:health', 'ollama:catalog', 'ollama:refresh-catalog', 'ollama:pull-queue', 'ollama:enqueue-pulls', 'ollama:cancel-pull', 'ollama:retry-pull', 'ollama:chat', 'ollama:cancel-chat', 'ollama:export-chat']) {
+  for (const channel of ['ollama:health', 'ollama:hardware', 'ollama:catalog', 'ollama:refresh-catalog', 'ollama:pull-queue', 'ollama:enqueue-pulls', 'ollama:cancel-pull', 'ollama:retry-pull', 'ollama:chat', 'ollama:cancel-chat', 'ollama:export-chat']) {
     assert.match(main, new RegExp(`ipcMain\\.handle\\('${channel.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}'`, 'u'));
     assert.match(preload, new RegExp(`ipcRenderer\\.invoke\\('${channel.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}'`, 'u'));
   }
-  for (const method of ['ollamaHealth()', 'ollamaCatalog()', 'ollamaRefreshCatalog()', 'ollamaPullQueue()', 'ollamaEnqueuePulls(', 'ollamaChat(', 'ollamaExportChat(']) assert.ok(types.includes(method), method);
+  for (const method of ['ollamaHealth()', 'ollamaHardware()', 'ollamaCatalog()', 'ollamaRefreshCatalog()', 'ollamaPullQueue()', 'ollamaEnqueuePulls(', 'ollamaChat(', 'ollamaExportChat(']) assert.ok(types.includes(method), method);
   assert.ok(main.includes('new OllamaSuiteService('));
 });
 
@@ -157,9 +159,9 @@ test('bounded pull queue uses the API, streams progress, and persists only outco
 });
 
 test('chat validates bounded parameters, unsupported attachments, streaming, cancellation, and redaction', async (t) => {
-  const f = await fixture(); t.after(f.cleanup); const chunks = [];
+  const f = await fixture(); t.after(f.cleanup); const chunks = []; await f.service.refreshCatalog();
   const request = { model: variant.qualifiedName, messages: [{ role: 'system', content: 'Private setup' }, { role: 'user', content: 'token=secret-value hello' }], options: { temperature: 0.4, numCtx: 4096 } };
-  await f.service.chat(request, variant, (chunk) => chunks.push(chunk)); assert.deepEqual(chunks, ['hello', '!']);
+  await f.service.chat(request, (chunk) => chunks.push(chunk)); assert.deepEqual(chunks, ['hello', '!']);
   assert.throws(() => validateChatRequest({ ...request, options: { temperature: 999 } }, variant), /outside/u);
   assert.throws(() => validateChatRequest({ ...request, cloudUrl: 'https://ollama.com/api' }, variant), /unknown fields/u);
   assert.throws(() => validateChatRequest({ ...request, options: { temperature: 0.4, command: 'ollama run' } }, variant), /unknown fields/u);
@@ -168,9 +170,12 @@ test('chat validates bounded parameters, unsupported attachments, streaming, can
   assert.equal(validateChatRequest({ ...request, messages: [{ role: 'user', content: 'line one\nline two' }] }, variant).messages[0].content, 'line one\nline two');
   const exported = redactChatExport(request.messages); assert.equal(exported.messages[0].content, '[system prompt omitted]'); assert.doesNotMatch(exported.messages[1].content, /secret-value/u);
   let rejectChat;
-  const cancelFixture = await fixture({ fetchLocal: async () => new Promise((_resolve, reject) => { rejectChat = reject; }) }); t.after(cancelFixture.cleanup);
-  const running = cancelFixture.service.chat(request, variant, () => {}).catch((error) => error);
+  const cancelFixture = await fixture({ fetchLocal: async () => new Promise((_resolve, reject) => { rejectChat = reject; }) }); t.after(cancelFixture.cleanup); await cancelFixture.service.refreshCatalog();
+  const running = cancelFixture.service.chat(request, () => {}).catch((error) => error);
   assert.equal(cancelFixture.service.cancelChat(), true); rejectChat(Object.assign(new Error('cancelled'), { name: 'AbortError' })); assert.match((await running).message, /cancelled/u);
+  const forged = { ...request, model: 'forged:latest' };
+  await assert.rejects(() => f.service.chat(forged, () => {}), /current verified official catalog/u);
+  assert.throws(() => f.service.exportChat(forged), /current verified official catalog/u);
 });
 
 test('harness profiles are prebuilt typed plans with immutable rollback and no arbitrary command fields', () => {

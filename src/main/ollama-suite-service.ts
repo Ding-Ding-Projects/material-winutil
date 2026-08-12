@@ -222,8 +222,17 @@ export class OllamaSuiteService {
   private emit(item: OllamaPullProgress): void { this.dependencies.onPullProgress?.(structuredClone(item)); }
   private persistPulls(): Promise<void> { return this.atomicWrite(this.pullsFile, { schemaVersion: 1, items: this.pulls } satisfies PersistedPullState); }
 
-  async chat(request: OllamaChatRequest, variant: OllamaCatalogVariant, onChunk: (content: string) => void): Promise<OllamaChatRequest> {
+  private verifiedVariant(model: unknown): OllamaCatalogVariant {
+    const qualifiedName = validateOllamaModelName(model);
+    if (!this.catalog?.complete) throw new Error('Chat and export require a complete verified official catalog.');
+    const variant = this.catalog.variants.find((candidate) => candidate.qualifiedName === qualifiedName);
+    if (!variant) throw new Error('The requested model is not in the current verified official catalog.');
+    return structuredClone(variant);
+  }
+
+  async chat(request: OllamaChatRequest, onChunk: (content: string) => void): Promise<OllamaChatRequest> {
     if (this.chatController) throw new Error('A chat request is already active.');
+    const variant = this.verifiedVariant(request?.model);
     const validated = validateChatRequest(request, variant); const controller = new AbortController(); this.chatController = controller;
     try {
       const response = await this.local('chat', { model: validated.model, messages: validated.messages, options: {
@@ -250,7 +259,7 @@ export class OllamaSuiteService {
     } finally { this.chatController = null; }
   }
   cancelChat(): boolean { if (!this.chatController) return false; this.chatController.abort(); return true; }
-  exportChat(request: OllamaChatRequest, variant: OllamaCatalogVariant): ReturnType<typeof redactChatExport> {
-    return redactChatExport(validateChatRequest(request, variant).messages);
+  exportChat(request: OllamaChatRequest): ReturnType<typeof redactChatExport> {
+    return redactChatExport(validateChatRequest(request, this.verifiedVariant(request?.model)).messages);
   }
 }

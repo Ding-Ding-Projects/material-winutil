@@ -14,7 +14,7 @@ This index documents the current Material System Utility baseline. A feature is 
 - [Dim sum startup surprise](dim-sum-boundary.md) — a non-blocking once-per-launch public-catalog photo card with protected-state suppression and bounded application-data caching.
 - [App-logo customization](app-logo-customization.md) — shipped presets, bounded local PNG validation, derived-only persistence, live size previews, Settings/palette/title-bar wiring, and stable installed identity.
 - [Local file converter](file-converter.md) — a native local picker, categorized regex-searchable catalog, storage preflight, and persistent paged queue; every converter stays disabled until packaged offline adapter proof exists.
-- [Local Ollama suite manager](ollama-suite.md) — guided desktop Model Store, local health/troubleshooting, bounded pull cart, chat and allowlisted harness plans; official-catalog and hardware-adapter evidence remains explicitly unavailable until reviewed adapters ship.
+- [Local Ollama suite manager](ollama-suite.md) — guided desktop Model Store, local health/troubleshooting, bounded pull cart, chat, allowlisted harness plans, and fail-closed local RAM/disk/GPU evidence; the official-catalog adapter remains explicitly unavailable until reviewed.
 
 ## Available with bounded limitations
 

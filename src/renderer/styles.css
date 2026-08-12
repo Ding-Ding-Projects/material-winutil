@@ -642,6 +642,9 @@ input[type="range"].gradient::-webkit-slider-thumb { -webkit-appearance: none; a
 .ollama-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; }
 .ollama-facts dt { color: var(--md-sys-color-on-surface-variant); }
 .ollama-facts dd { margin: 0; overflow-wrap: anywhere; }
+.ollama-probe-list { display: grid; gap: 8px; grid-column: 1 / -1; }
+.ollama-probe { display: grid; grid-template-columns: minmax(72px, auto) minmax(0, 1fr); gap: 10px; margin: 0; padding: 10px 12px; border-radius: var(--shape-m); background: var(--md-sys-color-surface-container); }
+.ollama-probe.error { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
 .ollama-store, .ollama-cart, .ollama-chat, .ollama-harness { display: grid; gap: 14px; min-width: 0; }
 .ollama-store-search { max-width: 780px; }
 .ollama-catalog-banner, .ollama-proof-banner, .ollama-attachment-note { display: grid; grid-template-columns: 28px minmax(0,1fr); gap: 10px; padding: 14px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--shape-l); background: var(--md-sys-color-surface-container-high); }

@@ -99,6 +99,11 @@ export interface OllamaCatalogSnapshot {
   message: string;
 }
 
+export interface OllamaHardwareProbeState {
+  state: 'available' | 'unavailable' | 'error';
+  message: string;
+}
+
 export interface OllamaHardwareEvidence {
   detectedAt: string;
   ramTotalBytes: number | null;
@@ -109,6 +114,11 @@ export interface OllamaHardwareEvidence {
   gpuDriver: string | null;
   gpuSupported: boolean | null;
   diskFreeBytes: number | null;
+  probes: {
+    ram: OllamaHardwareProbeState;
+    disk: OllamaHardwareProbeState;
+    gpu: OllamaHardwareProbeState;
+  };
 }
 
 export interface OllamaFitAssessment {
@@ -347,7 +357,7 @@ export function assessOllamaFit(variant: OllamaCatalogVariant, evidence: OllamaH
     if (evidence.diskFreeBytes < disk || evidence.ramAvailableBytes < Math.ceil(working * 0.75)) {
       verdict = 'unlikely'; reasons.push('Free disk or available memory is below the conservative requirement.');
     } else if (evidence.ramAvailableBytes >= Math.ceil(working * 1.25)
-      && (evidence.gpuSupported !== true || (evidence.vramAvailableBytes !== null && evidence.vramAvailableBytes >= working))) {
+      && evidence.gpuSupported === true && evidence.vramAvailableBytes !== null && evidence.vramAvailableBytes >= working) {
       verdict = 'runs-well'; reasons.push('Available memory and disk exceed the conservative working-set allowance.');
     } else {
       verdict = 'runs-with-limits'; reasons.push('The model fits conservatively, but memory, VRAM, or accelerator evidence leaves limited headroom.');

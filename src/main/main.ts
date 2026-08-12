@@ -11,7 +11,7 @@ import type {
   PersonalVocabularyState, PersonalVocabularyUploadResult, Preferences, RunKind, SchoolModeChangeResult,
   ScheduledSettingsState, SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateRestartRequest, UpdateRestartResult, UpdateStatus, WinutilCatalog, DimSumStartupPresentation, FileConverterSurfaceState, AppLogoRuntimeSnapshot,
 } from '../shared/types';
-import type { OllamaCatalogSnapshot, OllamaCatalogVariant, OllamaChatRequest, OllamaHealthSnapshot, OllamaPullProgress } from '../shared/ollama-suite';
+import type { OllamaCatalogSnapshot, OllamaChatRequest, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaPullProgress } from '../shared/ollama-suite';
 import { resolvePackageRequest, validateCatalog, wingetArgs } from './package-policy';
 import { AUTHENTICATOR_PNG_LIMITS, AuthenticatorService } from './authenticator-service';
 import { PersonalVocabularyStore } from './personal-vocabulary-store';
@@ -33,6 +33,7 @@ import { FileConverterService } from './file-converter-service';
 import { AppLogoService } from './app-logo-service';
 import { APP_LOGO_LIMITS, validateAppLogoTransform, type AppLogoPresetId, type AppLogoTransform } from '../shared/app-logo';
 import { OllamaSuiteService } from './ollama-suite-service';
+import { OllamaHardwareService } from './ollama-hardware-service';
 
 const ROOT = path.join(__dirname, '..', '..');
 const CONFIG_DIR = path.join(__dirname, '..', 'config');
@@ -57,6 +58,7 @@ let offlineDocsCache: OfflineDocsBundle | null = null;
 let fileConverterService: FileConverterService | null = null;
 let appLogoService: AppLogoService | null = null;
 let ollamaSuiteService: OllamaSuiteService | null = null;
+let ollamaHardwareService: OllamaHardwareService | null = null;
 let lastExportPath = '';
 let historyUnlockedUntil = 0;
 const HISTORY_CREDENTIAL_TARGET = 'history-manager-primary';
@@ -1130,8 +1132,16 @@ function ollamaSuite(): OllamaSuiteService {
   return ollamaSuiteService;
 }
 
+function ollamaHardware(): OllamaHardwareService {
+  if (!ollamaHardwareService) throw new Error('The local Ollama hardware evidence service is unavailable.');
+  return ollamaHardwareService;
+}
+
 ipcMain.handle('ollama:health', async (event): Promise<OllamaHealthSnapshot> => {
   requireTrustedSender(event); return ollamaSuite().health();
+});
+ipcMain.handle('ollama:hardware', async (event): Promise<OllamaHardwareEvidence> => {
+  requireTrustedSender(event); return ollamaHardware().detect();
 });
 ipcMain.handle('ollama:catalog', (event): OllamaCatalogSnapshot => {
   requireTrustedSender(event); return ollamaSuite().catalogSnapshot() ?? ollamaSuite().catalogWithInstalled([]);
@@ -1156,13 +1166,14 @@ ipcMain.handle('ollama:retry-pull', async (event, model: unknown): Promise<Ollam
 });
 ipcMain.handle('ollama:chat', async (event, request: unknown, variant: unknown): Promise<OllamaChatRequest> => {
   requireTrustedSender(event);
-  return ollamaSuite().chat(request as OllamaChatRequest, variant as OllamaCatalogVariant, (content) => {
+  void variant;
+  return ollamaSuite().chat(request as OllamaChatRequest, (content) => {
     if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('ollama:chat-chunk', content);
   });
 });
 ipcMain.handle('ollama:cancel-chat', (event): boolean => { requireTrustedSender(event); return ollamaSuite().cancelChat(); });
 ipcMain.handle('ollama:export-chat', (event, request: unknown, variant: unknown) => {
-  requireTrustedSender(event); return ollamaSuite().exportChat(request as OllamaChatRequest, variant as OllamaCatalogVariant);
+  requireTrustedSender(event); void variant; return ollamaSuite().exportChat(request as OllamaChatRequest);
 });
 
 app.whenReady().then(async () => {
@@ -1198,6 +1209,7 @@ app.whenReady().then(async () => {
       if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('ollama:pull-progress', progress);
     },
   });
+  ollamaHardwareService = new OllamaHardwareService();
   await ollamaSuiteService.load();
   createWindow();
   win?.setTitle(initialSettings.displayName.displayName);

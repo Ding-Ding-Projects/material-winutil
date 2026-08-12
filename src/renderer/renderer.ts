@@ -56,6 +56,10 @@ interface OllamaRunningModel extends OllamaInstalledModel { expiresAt: string; s
 interface OllamaHealthSnapshot { state: 'healthy' | 'missing' | 'unhealthy'; checkedAt: string; version: string | null; installed: OllamaInstalledModel[]; running: OllamaRunningModel[]; message: string; }
 interface OllamaCatalogVariant { model: string; tag: string; qualifiedName: string; digest: string | null; blobSizeBytes: number | null; parameterCount: number | null; quantization: string | null; contextLength: number | null; capabilities: OllamaCapability[]; publishedAt: string | null; sourceUrl: string; }
 interface OllamaCatalogSnapshot { schemaVersion: 1; source: 'official-ollama-catalog'; sourceRevision: string; refreshedAt: string; pageCount: number; complete: boolean; stale: boolean; variants: OllamaCatalogVariant[]; installedOnly: OllamaInstalledModel[]; message: string; }
+interface OllamaHardwareProbeState { state: 'available' | 'unavailable' | 'error'; message: string; }
+interface OllamaHardwareEvidence { detectedAt: string; ramTotalBytes: number | null; ramAvailableBytes: number | null; gpuName: string | null; vramTotalBytes: number | null; vramAvailableBytes: number | null; gpuDriver: string | null; gpuSupported: boolean | null; diskFreeBytes: number | null; probes: { ram: OllamaHardwareProbeState; disk: OllamaHardwareProbeState; gpu: OllamaHardwareProbeState }; }
+type OllamaFitVerdict = 'runs-well' | 'runs-with-limits' | 'unlikely' | 'unknown';
+interface OllamaFitAssessment { verdict: OllamaFitVerdict; reasons: string[]; evidence: OllamaHardwareEvidence; requirements: { blobSizeBytes: number | null; parameterCount: number | null; quantization: string | null; contextLength: number | null; estimatedWorkingSetBytes: number | null; requiredFreeDiskBytes: number | null } }
 interface OllamaPullProgress { model: string; state: 'queued' | 'pulling' | 'completed' | 'cancelled' | 'failed'; status: string; completedBytes: number | null; totalBytes: number | null; error: string | null; }
 interface OllamaChatMessage { role: 'system' | 'user' | 'assistant'; content: string; images?: string[]; }
 interface OllamaChatRequest { model: string; messages: OllamaChatMessage[]; options: { temperature?: number; topP?: number; topK?: number; seed?: number; numCtx?: number; numPredict?: number }; }
@@ -250,6 +254,7 @@ interface Bridge {
   appLogoUpdateTransform(transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot>;
   appLogoReset(): Promise<AppLogoRuntimeSnapshot>;
   ollamaHealth(): Promise<OllamaHealthSnapshot>;
+  ollamaHardware(): Promise<OllamaHardwareEvidence>;
   ollamaCatalog(): Promise<OllamaCatalogSnapshot>;
   ollamaRefreshCatalog(): Promise<OllamaCatalogSnapshot>;
   ollamaPullQueue(): Promise<OllamaPullProgress[]>;
@@ -731,6 +736,7 @@ const state = {
   },
   ollama: {
     health: null as OllamaHealthSnapshot | null,
+    hardware: null as OllamaHardwareEvidence | null,
     catalog: null as OllamaCatalogSnapshot | null,
     queue: [] as OllamaPullProgress[],
     tab: 'store' as 'status' | 'store' | 'cart' | 'chat' | 'harness',
@@ -1204,6 +1210,7 @@ function bridge(): Bridge {
     appLogoUpdateTransform: async (transform) => previewAppLogoState('material-blue', transform),
     appLogoReset: async () => previewAppLogoState(),
     ollamaHealth: async () => ({ state: 'missing', checkedAt: new Date().toISOString(), version: null, installed: [], running: [], message: 'Ollama is not available in this browser preview. Install and start the local Ollama service, then refresh in the installed application.' }),
+    ollamaHardware: async () => ({ detectedAt: new Date().toISOString(), ramTotalBytes: null, ramAvailableBytes: null, gpuName: null, vramTotalBytes: null, vramAvailableBytes: null, gpuDriver: null, gpuSupported: null, diskFreeBytes: null, probes: { ram: { state: 'unavailable', message: 'Hardware evidence is available only in the installed application.' }, disk: { state: 'unavailable', message: 'Hardware evidence is available only in the installed application.' }, gpu: { state: 'unavailable', message: 'Hardware evidence is available only in the installed application.' } } }),
     ollamaCatalog: async () => ({ schemaVersion: 1, source: 'official-ollama-catalog', sourceRevision: '', refreshedAt: new Date().toISOString(), pageCount: 0, complete: false, stale: true, variants: [], installedOnly: [], message: 'No reviewed official catalog adapter is available in this build.' }),
     ollamaRefreshCatalog: async () => fake.ollamaCatalog(),
     ollamaPullQueue: async () => [],
@@ -1818,10 +1825,10 @@ async function refreshOllama(refreshCatalog = false): Promise<void> {
   if (state.ollama.busy) return;
   state.ollama.busy = true; state.ollama.error = ''; render();
   try {
-    const [health, catalog, queue] = await Promise.all([
-      bridge().ollamaHealth(), refreshCatalog ? bridge().ollamaRefreshCatalog() : bridge().ollamaCatalog(), bridge().ollamaPullQueue(),
+    const [health, hardware, catalog, queue] = await Promise.all([
+      bridge().ollamaHealth(), bridge().ollamaHardware(), refreshCatalog ? bridge().ollamaRefreshCatalog() : bridge().ollamaCatalog(), bridge().ollamaPullQueue(),
     ]);
-    state.ollama.health = health; state.ollama.catalog = catalog; state.ollama.queue = queue;
+    state.ollama.health = health; state.ollama.hardware = hardware; state.ollama.catalog = catalog; state.ollama.queue = queue;
     if (!state.ollama.selectedModel) state.ollama.selectedModel = catalog.variants[0]?.qualifiedName ?? health.installed[0]?.name ?? '';
   } catch (error) { state.ollama.error = error instanceof Error ? error.message : 'The local Ollama state could not be loaded.'; }
   finally { state.ollama.busy = false; render(); }
@@ -1849,6 +1856,7 @@ function ollamaPane(): HTMLElement {
 
 function ollamaStatus(): HTMLElement {
   const health = state.ollama.health;
+  const hardware = state.ollama.hardware;
   const stateLabel = health?.state ?? 'unknown';
   const next = stateLabel === 'healthy'
     ? ollamaText('The documented local API responded. Installed and running inventories were validated.', '已成功連接已記錄嘅本機 API，亦驗證咗已安裝同運行中模型清單。')
@@ -1863,13 +1871,56 @@ function ollamaStatus(): HTMLElement {
     card(ollamaText('Official catalog truth', '官方目錄狀態'), state.ollama.catalog?.complete ? 'COMPLETE' : 'UNAVAILABLE / INCOMPLETE', [
       h('p', {}, state.ollama.catalog?.message ?? ollamaText('No verified official catalog snapshot is loaded.', '未有載入已驗證官方目錄快照。')),
       h('p', { class: 'unavailable-note' }, ollamaText('This build has no reviewed official catalog adapter. The Model Store stays empty rather than showing a curated or guessed list.', '呢個版本未有經審核官方目錄配接器。模型商店會保持空白，唔會顯示精選或者估出嚟嘅清單。')),
+    ]),
+    card(ollamaText('Local hardware evidence', '本機硬件證據'), hardware ? 'DETECTED' : 'UNKNOWN', [
+      h('p', { role: 'status', 'aria-live': 'polite' }, hardware
+        ? ollamaText('These local facts feed conservative model-fit verdicts. Unknown values remain unknown.', '以下本機資料會用嚟做保守模型適合度判斷；未知數值會保持未知。')
+        : ollamaText('Hardware evidence has not been checked yet.', '尚未檢查硬件證據。')),
+      h('dl', { class: 'ollama-facts' },
+        h('dt', {}, ollamaText('Available RAM', '可用 RAM')), h('dd', {}, hardware?.ramAvailableBytes === null || hardware?.ramAvailableBytes === undefined ? 'Unknown' : byteSize(hardware.ramAvailableBytes)),
+        h('dt', {}, ollamaText('Total RAM', '總 RAM')), h('dd', {}, hardware?.ramTotalBytes === null || hardware?.ramTotalBytes === undefined ? 'Unknown' : byteSize(hardware.ramTotalBytes)),
+        h('dt', {}, ollamaText('Free model storage', '模型儲存可用空間')), h('dd', {}, hardware?.diskFreeBytes === null || hardware?.diskFreeBytes === undefined ? 'Unknown' : byteSize(hardware.diskFreeBytes)),
+        h('dt', {}, 'GPU'), h('dd', {}, hardware?.gpuName ?? 'Unknown'),
+        h('dt', {}, ollamaText('Reported total VRAM', '報告總 VRAM')), h('dd', {}, hardware?.vramTotalBytes === null || hardware?.vramTotalBytes === undefined ? 'Unknown' : byteSize(hardware.vramTotalBytes)),
+        h('dt', {}, ollamaText('Available VRAM', '可用 VRAM')), h('dd', {}, hardware?.vramAvailableBytes === null || hardware?.vramAvailableBytes === undefined ? 'Unknown' : byteSize(hardware.vramAvailableBytes)),
+        h('dt', {}, ollamaText('GPU driver', 'GPU 驅動程式')), h('dd', {}, hardware?.gpuDriver ?? 'Unknown'),
+        h('dt', {}, ollamaText('Ollama accelerator support', 'Ollama 加速器支援')), h('dd', {}, hardware?.gpuSupported === null || hardware?.gpuSupported === undefined ? 'Unknown' : hardware.gpuSupported ? 'Supported' : 'Not supported')),
+      h('div', { class: 'ollama-probe-list' }, ...(['ram', 'disk', 'gpu'] as const).map((probe) => {
+        const result = hardware?.probes[probe];
+        return h('p', { class: `ollama-probe ${result?.state ?? 'unavailable'}` }, h('b', {}, probe.toUpperCase()), h('span', {}, result?.message ?? ollamaText('Not checked.', '未檢查。')));
+      })),
     ]));
 }
 
+function ollamaFitAssessment(variant: OllamaCatalogVariant, evidence: OllamaHardwareEvidence): OllamaFitAssessment {
+  const blob = variant.blobSizeBytes;
+  const parameters = variant.parameterCount;
+  const context = variant.contextLength;
+  const estimatedWeights = blob ?? (parameters === null ? null : Math.ceil(parameters * 0.75));
+  const contextOverhead = context === null ? null : Math.max(512 * 1024 * 1024, context * 256 * 1024);
+  const working = estimatedWeights === null || contextOverhead === null ? null : estimatedWeights + contextOverhead;
+  const disk = blob === null ? null : Math.ceil(blob * 1.2);
+  const reasons: string[] = [];
+  let verdict: OllamaFitVerdict = 'unknown';
+  if (blob === null || parameters === null || context === null || !variant.quantization) reasons.push('The official variant lacks exact size, parameter, quantization, or context evidence.');
+  if (evidence.diskFreeBytes === null || evidence.ramAvailableBytes === null || working === null || disk === null) reasons.push('Hardware or model resource evidence is incomplete.');
+  if (working !== null && disk !== null && evidence.ramAvailableBytes !== null && evidence.diskFreeBytes !== null) {
+    if (evidence.diskFreeBytes < disk || evidence.ramAvailableBytes < Math.ceil(working * 0.75)) { verdict = 'unlikely'; reasons.push('Free disk or available memory is below the conservative requirement.'); }
+    else if (evidence.ramAvailableBytes >= Math.ceil(working * 1.25) && evidence.gpuSupported === true && evidence.vramAvailableBytes !== null && evidence.vramAvailableBytes >= working) { verdict = 'runs-well'; reasons.push('Available memory, disk, supported acceleration, and available VRAM exceed the conservative working-set allowance.'); }
+    else { verdict = 'runs-with-limits'; reasons.push('The model fits conservatively, but memory, VRAM, or accelerator evidence leaves limited headroom.'); }
+  }
+  if (evidence.gpuSupported === false) reasons.push('The detected GPU or driver is not reported as supported; CPU fallback may apply.');
+  return { verdict, reasons, evidence, requirements: { blobSizeBytes: blob, parameterCount: parameters, quantization: variant.quantization, contextLength: context, estimatedWorkingSetBytes: working, requiredFreeDiskBytes: disk } };
+}
+
 function ollamaFitText(variant: OllamaCatalogVariant): { verdict: string; detail: string } {
+  const evidence = state.ollama.hardware;
   const missing = variant.blobSizeBytes === null || variant.parameterCount === null || variant.contextLength === null || !variant.quantization;
   if (missing) return { verdict: ollamaText('Unknown', '未知'), detail: ollamaText('Exact size, parameters, quantization, context, or hardware evidence is missing. No fit is guessed from the model name.', '缺少確實大小、參數、量化、context 或硬件證據。唔會靠模型名估計。') };
-  return { verdict: ollamaText('Unknown', '未知'), detail: ollamaText('The model evidence is complete, but this surface has no reviewed RAM/VRAM/disk probe yet. A success promise would be fiction.', '模型證據齊全，但呢個介面未有經審核 RAM／VRAM／磁碟偵測。聲稱一定成功會係虛構。') };
+  if (!evidence) return { verdict: ollamaText('Unknown', '未知'), detail: ollamaText('Local hardware evidence has not been checked. No fit is guessed.', '未有檢查本機硬件證據，唔會估計適合度。') };
+  const assessment = ollamaFitAssessment(variant, evidence);
+  const label = assessment.verdict === 'runs-well' ? ollamaText('Runs well', '運行良好') : assessment.verdict === 'runs-with-limits' ? ollamaText('Runs with limits', '有限度運行') : assessment.verdict === 'unlikely' ? ollamaText('Unlikely', '不太可能') : ollamaText('Unknown', '未知');
+  return { verdict: label, detail: assessment.reasons.join(' ') || ollamaText('No complete fit evidence is available.', '未有完整適合度證據。') };
 }
 
 function ollamaStore(): HTMLElement {

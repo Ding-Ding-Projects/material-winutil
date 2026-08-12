@@ -105,6 +105,20 @@ test('capture ancestry path inspection identifies product changes after evidence
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('capture verifier requires unsigned exact-set Squirrel provenance', async () => {
+  const valid = {
+    kind: 'validated-squirrel-full-package', developmentFallback: false,
+    signatureStatus: 'NotSigned', setup: 'MaterialSystemUtility-Setup.exe',
+    releases: 'RELEASES', fullPackage: 'MaterialSystemUtility-0.1.0-full.nupkg',
+    packagePath: 'MaterialSystemUtility-0.1.0-full.nupkg', packageCount: 1,
+  };
+  assert.equal(valid.signatureStatus, 'NotSigned');
+  assert.equal(valid.setup, 'MaterialSystemUtility-Setup.exe');
+  assert.equal(valid.releases, 'RELEASES');
+  assert.equal(valid.fullPackage, valid.packagePath);
+  assert.equal(valid.packageCount, 1);
+});
+
 test('PNG inspector decodes a real capture and duplicate check fails closed', async () => {
   const file = join(repo, 'docs', 'screenshots', 'safe-package-catalogue-dark.png');
   const png = await inspectPng(file);

@@ -28,6 +28,9 @@ async function main() {
     if (/^[A-Za-z]:[\\/]|^\\\\/u.test(capture.file ?? '') || /^[A-Za-z]:[\\/]|^\\\\/u.test(capture.executable ?? '')) throw new Error(`${capture.id} exposes an absolute local path`);
     if (capture.artifact?.developmentFallback || capture.artifact?.kind !== 'validated-squirrel-full-package') throw new Error(`${capture.id} was not captured from a validated Squirrel package`);
     if (capture.artifact?.sourceCommit !== metadata.commit) throw new Error(`${capture.id} package provenance does not match the photographed commit`);
+    if (capture.artifact?.signatureStatus !== 'NotSigned') throw new Error(`${capture.id} does not prove the unsigned installer policy`);
+    if (capture.artifact?.setup !== 'MaterialSystemUtility-Setup.exe' || capture.artifact?.releases !== 'RELEASES' || capture.artifact?.packageCount !== 1) throw new Error(`${capture.id} does not describe the exact Squirrel asset set`);
+    if (capture.artifact?.fullPackage !== capture.artifact?.packagePath) throw new Error(`${capture.id} full package identity is inconsistent`);
     const file = join(repo, 'docs', 'screenshots', capture.relativeFile);
     const png = await inspectPng(file);
     if (png.sha256 !== capture.png.sha256 || png.width !== capture.png.width || png.height !== capture.png.height) throw new Error(`${capture.id} does not match its metadata`);

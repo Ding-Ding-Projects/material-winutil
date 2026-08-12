@@ -60,6 +60,11 @@ async function resolveAppArtifact(commit) {
         packagePath: squirrel.packagePath,
         packageSha256: squirrel.packageSha256,
         provenancePath: squirrel.provenancePath,
+        signatureStatus: squirrel.provenance.signatureStatus,
+        setup: squirrel.provenance.setup,
+        releases: squirrel.provenance.releases,
+        fullPackage: squirrel.provenance.fullPackage,
+        packageCount: squirrel.provenance.packageCount,
       },
     };
   }

@@ -16,4 +16,6 @@ appearanceRuntimeWindow.appearanceColor = Object.freeze({
   convertColor: appearanceRuntimeExports.convertColor,
   contrastRatio: appearanceRuntimeExports.contrastRatio,
 });
-delete appearanceRuntimeWindow.exports;
+// The CommonJS module's exported functions resolve `exports` at call time, so it must
+// remain available after loading. Freeze it rather than leaving a mutable global seam.
+Object.freeze(appearanceRuntimeExports);

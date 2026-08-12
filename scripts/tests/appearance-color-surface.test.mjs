@@ -14,7 +14,7 @@ test('renderer loads the shared appearance colour runtime before the main surfac
   assert.match(index, /appearance-runtime-start\.js[\s\S]*\.\.\/shared\/appearance\.js[\s\S]*appearance-runtime-finish\.js[\s\S]*renderer\.js/u);
   assert.match(start, /window[\s\S]*exports/u);
   assert.match(finish, /appearanceColor[\s\S]*convertColor[\s\S]*contrastRatio/u);
-  assert.match(finish, /delete appearanceRuntimeWindow\.exports/u);
+  assert.match(finish, /Object\.freeze\(appearanceRuntimeExports\)/u);
 });
 
 test('colour picker uses every shared representation with bounded editable input and copy', () => {

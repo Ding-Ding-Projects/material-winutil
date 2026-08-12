@@ -18,11 +18,71 @@ export interface OllamaSuiteServiceDependencies {
   fetchCatalogPage?: CatalogFetcher;
   now?: () => Date;
   onPullProgress?: (progress: OllamaPullProgress) => void;
+  requestTimeoutMs?: number;
+  catalogPageTimeoutMs?: number;
+  catalogRefreshTimeoutMs?: number;
+  streamIdleTimeoutMs?: number;
+  pullTimeoutMs?: number;
+  chatTimeoutMs?: number;
 }
 
 interface PersistedPullState { schemaVersion: 1; items: OllamaPullProgress[]; }
 
 function errorText(error: unknown): string { return error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500); }
+
+class UserCancelledError extends Error {
+  constructor(message: string) { super(message); this.name = 'AbortError'; }
+}
+
+const DEFAULT_TIMEOUTS = Object.freeze({
+  request: 15_000,
+  catalogPage: 20_000,
+  catalogRefresh: 120_000,
+  streamIdle: 120_000,
+  pull: 6 * 60 * 60 * 1000,
+  chat: 15 * 60 * 1000,
+});
+type TimeoutSettings = { request: number; catalogPage: number; catalogRefresh: number; streamIdle: number; pull: number; chat: number };
+
+function timeoutValue(value: number | undefined, fallback: number): number {
+  return Number.isSafeInteger(value) && Number(value) >= 10 && Number(value) <= 24 * 60 * 60 * 1000 ? Number(value) : fallback;
+}
+
+function linkedController(parent?: AbortSignal): { controller: AbortController; dispose: () => void } {
+  const controller = new AbortController();
+  const abort = () => controller.abort(parent?.reason);
+  if (parent?.aborted) abort();
+  else parent?.addEventListener('abort', abort, { once: true });
+  return { controller, dispose: () => parent?.removeEventListener('abort', abort) };
+}
+
+async function withDeadline<T>(operation: Promise<T>, controller: AbortController, milliseconds: number, message: string): Promise<T> {
+  if (milliseconds <= 0) {
+    const error = new Error(message);
+    controller.abort(error);
+    throw error;
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let rejectAborted: ((error: unknown) => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => { rejectAborted = reject; });
+  const abort = () => rejectAborted?.(controller.signal.reason instanceof Error ? controller.signal.reason : new Error(message));
+  if (controller.signal.aborted) abort();
+  else controller.signal.addEventListener('abort', abort, { once: true });
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(message);
+      controller.abort(error);
+      reject(error);
+    }, milliseconds);
+  });
+  try { return await Promise.race([operation, timeout, aborted]); }
+  finally {
+    if (timer !== undefined) clearTimeout(timer);
+    controller.signal.removeEventListener('abort', abort);
+  }
+}
+
+function remaining(deadline: number, maximum: number): number { return Math.min(maximum, Math.max(0, deadline - Date.now())); }
 
 async function boundedJson(response: Response): Promise<unknown> {
   const length = Number(response.headers.get('content-length') ?? '0');
@@ -42,37 +102,59 @@ export class OllamaSuiteService {
   private activePulls = new Map<string, AbortController>();
   private pullWorkers = 0;
   private chatController: AbortController | null = null;
+  private catalogRefreshPromise: Promise<OllamaCatalogSnapshot> | null = null;
+  private readonly timeouts: Readonly<TimeoutSettings>;
 
   constructor(private readonly dependencies: OllamaSuiteServiceDependencies) {
     this.fetchLocal = dependencies.fetchLocal ?? ((input, init) => fetch(input, init));
     this.now = dependencies.now ?? (() => new Date());
     this.catalogFile = path.join(dependencies.userDataDirectory, 'ollama-catalog-cache.v1.json');
     this.pullsFile = path.join(dependencies.userDataDirectory, 'ollama-pull-queue.v1.json');
+    this.timeouts = Object.freeze({
+      request: timeoutValue(dependencies.requestTimeoutMs, DEFAULT_TIMEOUTS.request),
+      catalogPage: timeoutValue(dependencies.catalogPageTimeoutMs, DEFAULT_TIMEOUTS.catalogPage),
+      catalogRefresh: timeoutValue(dependencies.catalogRefreshTimeoutMs, DEFAULT_TIMEOUTS.catalogRefresh),
+      streamIdle: timeoutValue(dependencies.streamIdleTimeoutMs, DEFAULT_TIMEOUTS.streamIdle),
+      pull: timeoutValue(dependencies.pullTimeoutMs, DEFAULT_TIMEOUTS.pull),
+      chat: timeoutValue(dependencies.chatTimeoutMs, DEFAULT_TIMEOUTS.chat),
+    });
   }
 
-  private async local(route: keyof typeof OLLAMA_DOCUMENTED_ROUTES, body?: unknown, signal?: AbortSignal): Promise<Response> {
+  private async local(route: keyof typeof OLLAMA_DOCUMENTED_ROUTES, body: unknown, controller: AbortController, timeoutMs: number): Promise<Response> {
     const descriptor = OLLAMA_DOCUMENTED_ROUTES[route];
     const url = validateOllamaLocalUrl(new URL(descriptor.path, `${OLLAMA_LOCAL_ORIGIN}/`).href, route).href;
-    const response = await this.fetchLocal(url, { method: descriptor.method, redirect: 'error', cache: 'no-store', credentials: 'omit', signal,
-      headers: body === undefined ? undefined : { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const response = await withDeadline(this.fetchLocal(url, { method: descriptor.method, redirect: 'error', cache: 'no-store', credentials: 'omit', signal: controller.signal,
+      headers: body === undefined ? undefined : { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }), controller, timeoutMs,
+    `The local Ollama ${route} request timed out.`);
     if (!response.ok) throw new Error(`Ollama ${route} returned HTTP ${response.status}.`);
     return response;
   }
 
+  private async localJson(route: 'version' | 'installed' | 'running', parent?: AbortSignal): Promise<unknown> {
+    const linked = linkedController(parent);
+    try {
+      const deadline = Date.now() + this.timeouts.request;
+      const response = await this.local(route, undefined, linked.controller, remaining(deadline, this.timeouts.request));
+      return await withDeadline(boundedJson(response), linked.controller, remaining(deadline, this.timeouts.request), `The local Ollama ${route} response timed out.`);
+    } finally { linked.dispose(); }
+  }
+
   async health(signal?: AbortSignal): Promise<OllamaHealthSnapshot> {
     const checkedAt = this.now().toISOString();
+    const linked = linkedController(signal);
     try {
       const [version, installed, running] = await Promise.all([
-        this.local('version', undefined, signal).then(boundedJson).then(parseOllamaVersion),
-        this.local('installed', undefined, signal).then(boundedJson).then(parseOllamaInstalled),
-        this.local('running', undefined, signal).then(boundedJson).then(parseOllamaRunning),
+        this.localJson('version', linked.controller.signal).then(parseOllamaVersion),
+        this.localJson('installed', linked.controller.signal).then(parseOllamaInstalled),
+        this.localJson('running', linked.controller.signal).then(parseOllamaRunning),
       ]);
       return { state: 'healthy', checkedAt, version, installed, running, message: `Ollama ${version} is available on the local loopback API.` };
     } catch (error) {
+      linked.controller.abort(error);
       const message = errorText(error);
       const missing = /ECONNREFUSED|fetch failed|not found/iu.test(message);
       return { state: missing ? 'missing' : 'unhealthy', checkedAt, version: null, installed: [], running: [], message };
-    }
+    } finally { linked.dispose(); }
   }
 
   private async atomicWrite(file: string, value: unknown): Promise<void> {
@@ -106,6 +188,12 @@ export class OllamaSuiteService {
   catalogSnapshot(): OllamaCatalogSnapshot | null { return this.catalog ? structuredClone(this.catalog) : null; }
 
   async refreshCatalog(firstPageUrl = 'https://ollama.com/library'): Promise<OllamaCatalogSnapshot> {
+    if (this.catalogRefreshPromise) return this.catalogRefreshPromise;
+    this.catalogRefreshPromise = this.performCatalogRefresh(firstPageUrl).finally(() => { this.catalogRefreshPromise = null; });
+    return this.catalogRefreshPromise;
+  }
+
+  private async performCatalogRefresh(firstPageUrl: string): Promise<OllamaCatalogSnapshot> {
     const fetchPage = this.dependencies.fetchCatalogPage;
     if (!fetchPage) return this.offlineCatalog('No official catalog adapter is available; installed models remain visible.');
     let next: string | null = validateOfficialCatalogUrl(firstPageUrl).href;
@@ -114,13 +202,14 @@ export class OllamaSuiteService {
     let complete = true;
     const seenPages = new Set<string>();
     const variants = new Map<string, OllamaCatalogVariant>();
-    const controller = new AbortController();
+    const controller = new AbortController(); const deadline = Date.now() + this.timeouts.catalogRefresh;
     try {
       while (next) {
         if (pageCount >= OLLAMA_LIMITS.catalogPages || variants.size >= OLLAMA_LIMITS.catalogVariants) { complete = false; break; }
         if (seenPages.has(next)) throw new Error('The official catalog pagination contains a cycle.');
         seenPages.add(next);
-        const page = validateCatalogPage(await fetchPage(next, controller.signal));
+        const page = validateCatalogPage(await withDeadline(fetchPage(next, controller.signal), controller,
+          remaining(deadline, this.timeouts.catalogPage), 'The official Ollama catalog refresh timed out.'));
         if (page.pageUrl !== next || (pageCount && page.sourceRevision !== revision) || page.page !== pageCount + 1) throw new Error('The official catalog pagination is inconsistent.');
         revision ||= page.sourceRevision;
         for (const variant of page.variants) {
@@ -179,14 +268,15 @@ export class OllamaSuiteService {
   }
 
   private async runPull(item: OllamaPullProgress): Promise<void> {
-    const controller = new AbortController(); this.activePulls.set(item.model, controller);
+    const controller = new AbortController(); const deadline = Date.now() + this.timeouts.pull; this.activePulls.set(item.model, controller);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
     Object.assign(item, { state: 'pulling', status: 'Pulling through the documented local API.', error: null }); this.emit(item);
     try {
-      const response = await this.local('pull', { model: item.model, stream: true, insecure: false }, controller.signal);
+      const response = await this.local('pull', { model: item.model, stream: true, insecure: false }, controller, remaining(deadline, this.timeouts.request));
       if (!response.body) throw new Error('Ollama pull returned no progress stream.');
-      const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ''; let total = 0;
+      reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ''; let total = 0;
       while (true) {
-        const result = await reader.read(); if (result.done) break;
+        const result = await withDeadline(reader.read(), controller, remaining(deadline, this.timeouts.streamIdle), 'The local Ollama pull stream timed out.'); if (result.done) break;
         total += result.value.byteLength; if (total > OLLAMA_LIMITS.responseBytes) throw new Error('Ollama pull progress exceeds 8 MiB.');
         buffer += decoder.decode(result.value, { stream: true });
         const lines = buffer.split(/\r?\n/u); buffer = lines.pop() ?? '';
@@ -195,8 +285,12 @@ export class OllamaSuiteService {
       if (buffer.trim()) this.applyPullLine(item, buffer);
       Object.assign(item, { state: 'completed', status: 'Pull completed.', error: null });
     } catch (error) {
-      Object.assign(item, { state: controller.signal.aborted ? 'cancelled' : 'failed', status: controller.signal.aborted ? 'Pull cancelled.' : 'Pull failed.', error: controller.signal.aborted ? null : errorText(error) });
-    } finally { this.activePulls.delete(item.model); this.emit(item); await this.persistPulls(); }
+      const cancelled = controller.signal.reason instanceof UserCancelledError;
+      Object.assign(item, { state: cancelled ? 'cancelled' : 'failed', status: cancelled ? 'Pull cancelled.' : 'Pull failed.', error: cancelled ? null : errorText(error) });
+    } finally {
+      if (reader) void reader.cancel().catch(() => undefined);
+      this.activePulls.delete(item.model); this.emit(item); await this.persistPulls();
+    }
   }
 
   private applyPullLine(item: OllamaPullProgress, line: string): void {
@@ -211,7 +305,7 @@ export class OllamaSuiteService {
   cancelPull(model: string): boolean {
     const controller = this.activePulls.get(validateOllamaModelName(model));
     if (!controller) return false;
-    controller.abort();
+    controller.abort(new UserCancelledError('Pull cancelled by the user.'));
     return true;
   }
   async retryPull(model: string): Promise<void> {
@@ -233,16 +327,17 @@ export class OllamaSuiteService {
   async chat(request: OllamaChatRequest, onChunk: (content: string) => void): Promise<OllamaChatRequest> {
     if (this.chatController) throw new Error('A chat request is already active.');
     const variant = this.verifiedVariant(request?.model);
-    const validated = validateChatRequest(request, variant); const controller = new AbortController(); this.chatController = controller;
+    const validated = validateChatRequest(request, variant); const controller = new AbortController(); const deadline = Date.now() + this.timeouts.chat; this.chatController = controller;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
     try {
       const response = await this.local('chat', { model: validated.model, messages: validated.messages, options: {
         temperature: validated.options.temperature, top_p: validated.options.topP, top_k: validated.options.topK,
         seed: validated.options.seed, num_ctx: validated.options.numCtx, num_predict: validated.options.numPredict,
-      }, stream: true }, controller.signal);
+      }, stream: true }, controller, remaining(deadline, this.timeouts.request));
       if (!response.body) throw new Error('Ollama chat returned no stream.');
-      const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ''; let total = 0;
+      reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ''; let total = 0;
       while (true) {
-        const result = await reader.read(); if (result.done) break;
+        const result = await withDeadline(reader.read(), controller, remaining(deadline, this.timeouts.streamIdle), 'The local Ollama chat stream timed out.'); if (result.done) break;
         total += result.value.byteLength; if (total > OLLAMA_LIMITS.responseBytes) throw new Error('Ollama chat response exceeds 8 MiB.');
         buffer += decoder.decode(result.value, { stream: true });
         const lines = buffer.split(/\r?\n/u); buffer = lines.pop() ?? '';
@@ -256,9 +351,15 @@ export class OllamaSuiteService {
         if (typeof parsed.message?.content === 'string') onChunk(parsed.message.content);
       }
       return validated;
-    } finally { this.chatController = null; }
+    } catch (error) {
+      if (controller.signal.reason instanceof UserCancelledError) throw new Error('The local Ollama chat was cancelled.');
+      throw error;
+    } finally {
+      if (reader) void reader.cancel().catch(() => undefined);
+      this.chatController = null;
+    }
   }
-  cancelChat(): boolean { if (!this.chatController) return false; this.chatController.abort(); return true; }
+  cancelChat(): boolean { if (!this.chatController) return false; this.chatController.abort(new UserCancelledError('Chat cancelled by the user.')); return true; }
   exportChat(request: OllamaChatRequest): ReturnType<typeof redactChatExport> {
     return redactChatExport(validateChatRequest(request, this.verifiedVariant(request?.model)).messages);
   }

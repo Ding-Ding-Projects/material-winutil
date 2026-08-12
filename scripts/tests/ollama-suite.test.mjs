@@ -88,6 +88,23 @@ test('health validates version plus installed and running inventories on loopbac
   assert.ok(f.calls.every(({ init }) => init.redirect === 'error' && init.credentials === 'omit'));
 });
 
+test('health aborts hung local requests within a bounded deadline', async (t) => {
+  let aborts = 0;
+  const f = await fixture({
+    requestTimeoutMs: 15,
+    fetchLocal: async (_url, init) => new Promise((_resolve, reject) => {
+      init.signal.addEventListener('abort', () => { aborts += 1; reject(init.signal.reason); }, { once: true });
+    }),
+  });
+  t.after(f.cleanup);
+  const health = await f.service.health();
+  assert.equal(health.state, 'unhealthy');
+  assert.match(health.message, /timed out/u);
+  assert.equal(aborts, 3);
+  assert.deepEqual(health.installed, []);
+  assert.deepEqual(health.running, []);
+});
+
 test('main, preload, and shared bridge expose bounded Ollama service seams', async () => {
   const [main, preload, types] = await Promise.all([
     readFile(new URL('../../src/main/main.ts', import.meta.url), 'utf8'),
@@ -144,6 +161,28 @@ test('catalog follows all pages, rejects cycles/duplicates, and retains a stale 
   const bounded = await incomplete.service.refreshCatalog(); assert.equal(bounded.complete, false); assert.equal(bounded.stale, true); assert.equal(bounded.pageCount, OLLAMA_LIMITS.catalogPages);
 });
 
+test('catalog refresh is single-flight and times out a hung official adapter without replacing cache', async (t) => {
+  let calls = 0;
+  const f = await fixture({
+    catalogPageTimeoutMs: 15,
+    catalogRefreshTimeoutMs: 30,
+    fetchCatalogPage: async (_url, signal) => new Promise((_resolve, reject) => {
+      calls += 1;
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    }),
+  });
+  t.after(f.cleanup);
+  const first = f.service.refreshCatalog();
+  const second = f.service.refreshCatalog();
+  const [a, b] = await Promise.all([first, second]);
+  assert.equal(calls, 1);
+  assert.equal(a.complete, false);
+  assert.equal(a.stale, true);
+  assert.match(a.message, /timed out/u);
+  assert.deepEqual(b, a);
+  assert.equal(f.service.catalogSnapshot(), null);
+});
+
 test('bounded pull queue uses the API, streams progress, and persists only outcomes', async (t) => {
   const progress = [];
   const f = await fixture({ onPullProgress(item) { progress.push(item); } }); t.after(f.cleanup);
@@ -156,6 +195,34 @@ test('bounded pull queue uses the API, streams progress, and persists only outco
   await assert.rejects(() => f.service.enqueuePulls(Array(OLLAMA_LIMITS.pullQueue + 1).fill(variant.qualifiedName)), /128/u);
   const installedOnly = f.service.catalogWithInstalled([{ name: 'private-local:latest', model: 'private-local:latest', modifiedAt: '2026-08-12T00:00:00Z', sizeBytes: 1, digest, details: { format: 'gguf', family: 'local', families: ['local'], parameterSize: '1B', quantization: 'Q4' } }]);
   assert.deepEqual(installedOnly.installedOnly.map(({ name }) => name), ['private-local:latest']);
+});
+
+test('partial pull stream fails closed after its idle deadline and cannot later report completion', async (t) => {
+  let cancelled = false;
+  const partial = new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode(`${JSON.stringify({ status: 'partial', completed: 1, total: 10 })}\n`)); },
+    cancel() { cancelled = true; },
+  });
+  const f = await fixture({
+    streamIdleTimeoutMs: 15,
+    pullTimeoutMs: 50,
+    fetchLocal: async (url) => {
+      if (url.endsWith('/api/pull')) return new Response(partial);
+      if (url.endsWith('/api/version')) return json({ version: '0.12.6' });
+      if (url.endsWith('/api/tags')) return json({ models: [] });
+      if (url.endsWith('/api/ps')) return json({ models: [] });
+      throw new Error('unexpected route');
+    },
+  });
+  t.after(f.cleanup);
+  await f.service.refreshCatalog();
+  await f.service.enqueuePulls([variant.qualifiedName]);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const item = f.service.pullQueue()[0];
+  assert.equal(item.state, 'failed');
+  assert.match(item.error, /timed out/u);
+  assert.equal(item.completedBytes, 1);
+  assert.equal(cancelled, true);
 });
 
 test('chat validates bounded parameters, unsupported attachments, streaming, cancellation, and redaction', async (t) => {
@@ -176,6 +243,34 @@ test('chat validates bounded parameters, unsupported attachments, streaming, can
   const forged = { ...request, model: 'forged:latest' };
   await assert.rejects(() => f.service.chat(forged, () => {}), /current verified official catalog/u);
   assert.throws(() => f.service.exportChat(forged), /current verified official catalog/u);
+});
+
+test('partial chat stream times out, cleans up, and permits a later request without stale chunks', async (t) => {
+  let attempts = 0;
+  let cancelled = false;
+  const f = await fixture({
+    streamIdleTimeoutMs: 15,
+    chatTimeoutMs: 50,
+    fetchLocal: async (url) => {
+      if (!url.endsWith('/api/chat')) throw new Error('unexpected route');
+      attempts += 1;
+      if (attempts === 1) return new Response(new ReadableStream({
+        start(controller) { controller.enqueue(new TextEncoder().encode(`${JSON.stringify({ message: { content: 'partial' }, done: false })}\n`)); },
+        cancel() { cancelled = true; },
+      }));
+      return new Response(`${JSON.stringify({ message: { content: 'fresh' }, done: true })}\n`);
+    },
+  });
+  t.after(f.cleanup);
+  await f.service.refreshCatalog();
+  const request = { model: variant.qualifiedName, messages: [{ role: 'user', content: 'hello' }], options: { temperature: 0.4, numCtx: 4096 } };
+  const partialChunks = [];
+  await assert.rejects(() => f.service.chat(request, (chunk) => partialChunks.push(chunk)), /timed out/u);
+  assert.deepEqual(partialChunks, ['partial']);
+  assert.equal(cancelled, true);
+  const freshChunks = [];
+  await f.service.chat(request, (chunk) => freshChunks.push(chunk));
+  assert.deepEqual(freshChunks, ['fresh']);
 });
 
 test('harness profiles are prebuilt typed plans with immutable rollback and no arbitrary command fields', () => {

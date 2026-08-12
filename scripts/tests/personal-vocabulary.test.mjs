@@ -21,6 +21,12 @@ test('accepts a bounded complete payload and produces a deterministic private ca
   assert.equal(result.canonicalCache, '{"version":1,"mappings":{"source":"replacement","source phrase":"replacement phrase"}}');
   assert.deepEqual(vocabulary.loadPersonalVocabularyCache(result.canonicalCache), result);
   assert.equal(vocabulary.serializePersonalVocabularyCache(result.document), result.canonicalCache);
+
+  const firstOrder = vocabulary.validatePersonalVocabulary('{"version":1,"mappings":{"z":"last","ä":"accented","a":"first"}}');
+  const reversedOrder = vocabulary.validatePersonalVocabulary('{"mappings":{"a":"first","ä":"accented","z":"last"},"version":1}');
+  assert.equal(firstOrder.ok, true);
+  assert.equal(reversedOrder.ok, true);
+  assert.equal(firstOrder.canonicalCache, reversedOrder.canonicalCache);
 });
 
 test('rejects malformed JSON, duplicate keys, unsafe keys, and unexpected fields', () => {
@@ -29,6 +35,10 @@ test('rejects malformed JSON, duplicate keys, unsafe keys, and unexpected fields
     ['{"version":1,"version":1,"mappings":{}}', 'duplicate-key'],
     ['{"version":1,"mappings":{"source":"one","source":"two"}}', 'duplicate-key'],
     ['{"version":1,"mappings":{"__proto__":"replacement"}}', 'unsafe-key'],
+    ['{"version":1,"mappings":{"prototype":"replacement"}}', 'unsafe-key'],
+    ['{"version":1,"mappings":{"constructor":"replacement"}}', 'unsafe-key'],
+    ['{"version":1,"mappings":{"a":"one","\\u0061":"two"}}', 'duplicate-key'],
+    ['{"version":1,"mappings":{"safe":"value"},"\\u005f\\u005fproto\\u005f\\u005f":true}', 'unsafe-key'],
     ['{"version":1,"mappings":{},"extra":true}', 'invalid-schema'],
     ['{"version":1,\u00a0"mappings":{}}', 'invalid-json'],
   ];
@@ -63,6 +73,17 @@ test('enforces byte, depth, entry, key, and value bounds', () => {
   assert.equal(vocabulary.validatePersonalVocabulary(JSON.stringify({ version: 1, mappings: entries })).code, 'too-many-entries');
   assert.equal(vocabulary.validatePersonalVocabulary(JSON.stringify({ version: 1, mappings: { ['k'.repeat(limits.maxKeyLength + 1)]: 'value' } })).code, 'invalid-key');
   assert.equal(vocabulary.validatePersonalVocabulary(JSON.stringify({ version: 1, mappings: { source: 'v'.repeat(limits.maxValueLength + 1) } })).code, 'invalid-value');
+
+  const atEntryLimit = Object.fromEntries(Array.from({ length: limits.maxEntries }, (_, index) => [`k${index}`, '']));
+  assert.equal(vocabulary.validatePersonalVocabulary(JSON.stringify({ version: 1, mappings: atEntryLimit })).ok, true);
+  assert.equal(vocabulary.validatePersonalVocabulary(JSON.stringify({ version: 1, mappings: { ['𐐀'.repeat(limits.maxKeyLength)]: '𐐀'.repeat(limits.maxValueLength) } })).ok, true);
+  assert.equal(vocabulary.validatePersonalVocabulary('{"version":1,"mappings":{"   ":"value"}}').code, 'invalid-key');
+  assert.equal(vocabulary.validatePersonalVocabulary('{"version":1,"mappings":{"source":""}}').ok, true);
+
+  const minimal = '{"version":1,"mappings":{}}';
+  const exactBytePayload = minimal + ' '.repeat(limits.maxPayloadBytes - Buffer.byteLength(minimal));
+  assert.equal(Buffer.byteLength(exactBytePayload), limits.maxPayloadBytes);
+  assert.equal(vocabulary.validatePersonalVocabulary(exactBytePayload).ok, true);
 });
 
 test('rejects invalid UTF-8 cache bytes', () => {

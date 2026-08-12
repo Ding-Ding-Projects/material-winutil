@@ -96,6 +96,13 @@ test('capture ids are selected across only the active mode manifests', () => {
   assert.throws(() => selectCaptureManifests([app, site], ['definitely-unknown']), /definitely-unknown/iu);
 });
 
+test('each capture state is isolated in a fresh hidden-desktop session', async () => {
+  const source = await readFile(join(repo, 'scripts', 'smoke', 'capture.mjs'), 'utf8');
+  assert.match(source, /for \(const capture of manifest\.captures\)[\s\S]*?\{ \.\.\.manifest, captures: \[capture\] \}[\s\S]*?captureSession/gu);
+  const sessionCalls = source.match(/captureSession\(/gu) ?? [];
+  assert.ok(sessionCalls.length >= 3, 'app and site capture loops must launch one session per selected state');
+});
+
 test('capture cleanliness check fails closed on tracked and untracked changes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'material-winutil-clean-'));
   try {

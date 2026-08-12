@@ -270,11 +270,13 @@ async function main() {
           packagePath: artifact.metadata.packagePath ? basename(artifact.metadata.packagePath) : undefined,
           provenancePath: artifact.metadata.provenancePath ? relative(repo, artifact.metadata.provenancePath) : undefined,
         };
-        all.push(...await captureSession(
-          kind, manifest, artifact.executable, artifact.args,
-          (target) => target.url.startsWith('file:') && /renderer\/index\.html$/u.test(new URL(target.url).pathname),
-          prepareApp, hash, commit, publicArtifact,
-        ));
+        for (const capture of manifest.captures) {
+          all.push(...await captureSession(
+            kind, { ...manifest, captures: [capture] }, artifact.executable, artifact.args,
+            (target) => target.url.startsWith('file:') && /renderer\/index\.html$/u.test(new URL(target.url).pathname),
+            prepareApp, hash, commit, publicArtifact,
+          ));
+        }
       } finally {
         if (artifact.cleanupRoot) await rm(artifact.cleanupRoot, { recursive: true, force: true });
       }
@@ -282,17 +284,19 @@ async function main() {
       const executable = process.env.EDGE_EXE || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
       const hash = await sha256File(executable);
       const expected = new URL(options.siteUrl).href;
-      all.push(...await captureSession(
-        kind,
-        manifest,
-        executable,
-        (profile, port) => [`--user-data-dir=${profile}`, `--remote-debugging-port=${port}`, '--remote-allow-origins=*', '--guest', '--disable-sync', '--disable-extensions', '--disable-component-extensions-with-background-pages', '--no-first-run', '--no-default-browser-check', '--disable-features=msEdgeFirstRunExperience,msEdgeSignin,msEdgeSync', `--app=${expected}`],
-        (target) => new URL(target.url).href === expected,
-        prepareSite,
-        hash,
-        commit,
-        { kind: 'installed-edge', developmentFallback: false, sourceCommit: commit },
-      ));
+      for (const capture of manifest.captures) {
+        all.push(...await captureSession(
+          kind,
+          { ...manifest, captures: [capture] },
+          executable,
+          (profile, port) => [`--user-data-dir=${profile}`, `--remote-debugging-port=${port}`, '--remote-allow-origins=*', '--guest', '--disable-sync', '--disable-extensions', '--disable-component-extensions-with-background-pages', '--no-first-run', '--no-default-browser-check', '--disable-features=msEdgeFirstRunExperience,msEdgeSignin,msEdgeSync', `--app=${expected}`],
+          (target) => new URL(target.url).href === expected,
+          prepareSite,
+          hash,
+          commit,
+          { kind: 'installed-edge', developmentFallback: false, sourceCommit: commit },
+        ));
+      }
     }
   }
   assertUniquePngs(all);

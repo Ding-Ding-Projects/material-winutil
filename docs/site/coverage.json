@@ -1,40 +1,559 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "surface": "published documentation site",
   "requiredIds": [
-    "responsive-m3", "tabbed-navigation", "four-tab-searches", "language-modes", "humor-copy", "school-mode-boundary", "dialog-emoji", "personal-vocabulary", "search-regex", "command-palette", "appearance-editor", "notifications", "scheduled-settings", "dim-sum-surprise", "locks-authenticator", "support-recovery", "records-export", "changelog", "destructive-confirmation", "published-release-truth", "real-capture", "offline-assets"
+    "responsive-m3",
+    "tabbed-navigation",
+    "four-tab-searches",
+    "language-modes",
+    "humor-copy",
+    "school-mode-boundary",
+    "dialog-emoji",
+    "personal-vocabulary",
+    "search-regex",
+    "command-palette",
+    "appearance-editor",
+    "notifications",
+    "scheduled-settings",
+    "dim-sum-surprise",
+    "locks-authenticator",
+    "support-recovery",
+    "records-export",
+    "changelog",
+    "destructive-confirmation",
+    "published-release-truth",
+    "real-capture",
+    "offline-assets",
+    "app-logo-local",
+    "file-converter-local",
+    "ollama-suite-browser-boundary"
   ],
   "verified": [
-    { "id": "responsive-m3", "label": "Material Design responsive shell from 320px, large text, reduced motion, focus and touch targets", "evidence": [{ "file": "index.html", "contains": "width=device-width" }, { "file": "styles.css", "contains": "@media(max-width:640px)" }, { "file": "styles.css", "contains": "@media(prefers-reduced-motion:reduce)" }] },
-    { "id": "tabbed-navigation", "label": "Keyboard tabs, persisted groups, pinning, dock positions and searchable tab context actions", "evidence": [{ "file": "index.html", "contains": "id=\"documentation-tab-list\"" }, { "file": "app.js", "contains": "function tabKeydown(event)" }, { "file": "app.js", "contains": "function togglePin(page)" }, { "file": "index.html", "contains": "id=\"tab-context-menu\"" }] },
-    { "id": "four-tab-searches", "label": "Current-strip, per-group, group-name, and master tab searches with independent anchored regex builders", "evidence": [{ "file": "index.html", "contains": "id=\"tab-search\"" }, { "file": "index.html", "contains": "id=\"learn-tab-search\"" }, { "file": "index.html", "contains": "id=\"workspace-tab-search\"" }, { "file": "index.html", "contains": "id=\"group-search\"" }, { "file": "index.html", "contains": "id=\"master-tab-search\"" }] },
-    { "id": "language-modes", "label": "English, Hong Kong Cantonese, and bilingual site modes", "evidence": [{ "file": "index.html", "contains": "value=\"both\">Both" }, { "file": "app.js", "contains": "if (language === 'both')" }] },
-    { "id": "humor-copy", "label": "Independent English and Cantonese humor levels visibly change site headings and body copy", "evidence": [{ "file": "index.html", "contains": "id=\"english-level\"" }, { "file": "index.html", "contains": "id=\"cantonese-level\"" }, { "file": "app.js", "contains": "value[Math.max(0, Math.min(4, level - 1))]" }] },
-    { "id": "school-mode-boundary", "label": "Renamable local School mode forces English and omits playful/private controls", "evidence": [{ "file": "index.html", "contains": "id=\"school-enabled\"" }, { "file": "app.js", "contains": "node.hidden = state.school.enabled" }] },
-    { "id": "dialog-emoji", "label": "Persisted dialog emoji toggle changes aria-hidden notification decoration only", "evidence": [{ "file": "index.html", "contains": "id=\"dialog-emoji\"" }, { "file": "app.js", "contains": "state.dialogEmoji && !state.school.enabled" }] },
-    { "id": "personal-vocabulary", "label": "Local generic JSON validator and cache with schema, size, count, key, value, duplicate and unsafe-key bounds", "evidence": [{ "file": "index.html", "contains": "id=\"vocabulary-file\"" }, { "file": "app.js", "contains": "function validateVocabularyObject" }, { "file": "app.js", "contains": "function detectDuplicateKeys" }, { "file": "app.js", "contains": "file.size > 65536" }] },
-    { "id": "search-regex", "label": "Every added search and menu search has its own adjacent anchored local regex builder", "evidence": [{ "file": "index.html", "contains": "data-builder-for=\"settings-search\"" }, { "file": "index.html", "contains": "data-builder-for=\"schedule-search\"" }, { "file": "index.html", "contains": "data-builder-for=\"record-search\"" }, { "file": "index.html", "contains": "data-builder-for=\"tab-menu-search\"" }, { "file": "app.js", "contains": "function matcherFor(searchId)" }] },
-    { "id": "command-palette", "label": "Ctrl+Shift+F rich command palette with focus containment and exact-element teleport", "evidence": [{ "file": "index.html", "contains": "id=\"command-result-count\" role=\"status\" aria-live=\"polite\"" }, { "file": "app.js", "contains": "event.ctrlKey && event.shiftKey" }, { "file": "app.js", "contains": "activatePage('settings', true, 'vocabulary-file')" }, { "file": "app.js", "contains": "if (event.key === 'Tab')" }] },
-    { "id": "appearance-editor", "label": "Named presets plus local per-element appearance targets, reset and theme export", "evidence": [{ "file": "index.html", "contains": "id=\"appearance-card\"" }, { "file": "index.html", "contains": "data-appearance-target=\"hero\"" }, { "file": "app.js", "contains": "state.appearance[appearanceTarget]" }] },
-    { "id": "notifications", "label": "Nonblocking snackbar stack and reviewable local notification centre", "evidence": [{ "file": "index.html", "contains": "id=\"notification-list\"" }, { "file": "index.html", "contains": "id=\"snackbar-stack\"" }, { "file": "app.js", "contains": "function notify(title, message, level = 'info')" }] },
-    { "id": "scheduled-settings", "label": "Versioned browser-local schedule editor with date, time, weekdays, cross-midnight, recoverable base settings, and deterministic later-rule precedence", "evidence": [{ "file": "index.html", "contains": "id=\"schedule-form\"" }, { "file": "app.js", "contains": "function scheduleMatches(rule, date = new Date())" }, { "file": "app.js", "contains": "const rule = matching.at(-1)" }, { "file": "app.js", "contains": "scheduleOverride = {}" }] },
-    { "id": "dim-sum-surprise", "label": "Nonblocking 10 percent startup dim-sum surprise linking the authoritative public catalog without local images", "evidence": [{ "file": "index.html", "contains": "id=\"dim-sum-surprise\"" }, { "file": "app.js", "contains": "Math.random() >= .1" }, { "file": "app.js", "contains": "Ding-Ding-Projects/dim-sum-photos/blob/main/catalog/index.json" }] },
-    { "id": "locks-authenticator", "label": "Truthfully labelled browser-local toy locks and RFC-style TOTP generator with ordinary-export omission", "evidence": [{ "file": "index.html", "contains": "For-fun element lock" }, { "file": "index.html", "contains": "id=\"totp-form\"" }, { "file": "app.js", "contains": "async function totpCode" }, { "file": "app.js", "contains": "secret: 'omitted'" }] },
-    { "id": "support-recovery", "label": "Fictional local Support Tickets with unmissable no-network disclosure and browser-data reset route", "evidence": [{ "file": "index.html", "contains": "Nothing is sent anywhere." }, { "file": "index.html", "contains": "id=\"ticket-form\"" }, { "file": "app.js", "contains": "Open browser settings for this site" }] },
-    { "id": "records-export", "label": "Searchable local notifications/history and redacted JSON, CSV and Markdown exports", "evidence": [{ "file": "index.html", "contains": "data-export=\"json\"" }, { "file": "index.html", "contains": "data-export=\"csv\"" }, { "file": "index.html", "contains": "data-export=\"markdown\"" }, { "file": "app.js", "contains": "function redactedExport()" }] },
-    { "id": "changelog", "label": "Searchable date-filtered changelog with exact commit links", "evidence": [{ "file": "index.html", "contains": "id=\"changelog-date\"" }, { "file": "index.html", "contains": "commit/a5f22534e7930fa19b72f55c4945a435d08fa2ac" }, { "file": "app.js", "contains": "function renderChangelog()" }] },
-    { "id": "destructive-confirmation", "label": "Local-data reset requires two independent keys and a full-range slider with emergency exit", "evidence": [{ "file": "index.html", "contains": "id=\"reset-key-one\"" }, { "file": "index.html", "contains": "id=\"reset-key-two\"" }, { "file": "index.html", "contains": "id=\"reset-slider\"" }, { "file": "index.html", "contains": "Emergency exit" }] },
-    { "id": "published-release-truth", "label": "Latest unsigned installer and mutable-release warning are visible", "evidence": [{ "file": "index.html", "contains": "releases/latest/download/MaterialSystemUtility-Setup.exe" }, { "file": "index.html", "contains": "GitHub immutable releases are disabled" }] },
-    { "id": "real-capture", "label": "Real v0.1.8601 built application capture", "evidence": [{ "file": "../screenshots/release-v0.1.8601/app-install-dark-comfortable-en-1440x940.png", "exists": true }] },
-    { "id": "offline-assets", "label": "No CDN, remote fonts, analytics, runtime fetch, or local dim-sum image", "evidence": [{ "file": "index.html", "contains": "<link rel=\"stylesheet\" href=\"styles.css\">" }, { "file": "index.html", "contains": "<script src=\"app.js\" defer></script>" }] }
+    {
+      "id": "responsive-m3",
+      "label": "Material Design responsive shell from 320px, large text, reduced motion, focus and touch targets",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "width=device-width"
+        },
+        {
+          "file": "styles.css",
+          "contains": "@media(max-width:640px)"
+        },
+        {
+          "file": "styles.css",
+          "contains": "@media(prefers-reduced-motion:reduce)"
+        }
+      ]
+    },
+    {
+      "id": "tabbed-navigation",
+      "label": "Keyboard tabs, persisted groups, pinning, dock positions and searchable tab context actions",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "id=\"documentation-tab-list\""
+        },
+        {
+          "file": "app.js",
+          "contains": "function tabKeydown(event)"
+        },
+        {
+          "file": "app.js",
+          "contains": "function togglePin(page)"
+        },
+        {
+          "file": "index.html",
+          "contains": "id=\"tab-context-menu\""
+        }
+      ]
+    },
+    {
+      "id": "four-tab-searches",
+      "label": "Current-strip, per-group, group-name, and master tab searches with independent anchored regex builders",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "id=\"tab-search\""
+        },
+        {
+          "file": "index.html",
+          "contains": "id=\"learn-tab-search\""
+        },
+        {
+          "file": "index.html",
+          "contains": "id=\"workspace-tab-search\""
+        },
+        {
+          "file": "index.html",
+          "contains": "id=\"group-search\""
+        },
+        {
+          "file": "index.html",
+          "contains": "id=\"master-tab-search\""
+        }
+      ]
+    },
+    {
+      "id": "language-modes",
+      "label": "English, Hong Kong Cantonese, and bilingual site modes",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "value=\"both\">Both"
+        },
+        {
+          "file": "app.js",
+          "contains": "if (language === 'both')"
+        }
+      ]
+    },
+    {
+      "id": "humor-copy",
+      "label": "Independent English and Cantonese humor levels visibly change site headings and body copy",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "id=\"english-level\""
+        },
+        {
+          "file": "index.html",
+          "contains": "id=\"cantonese-level\""
+        },
+        {
+          "file": "app.js",
+          "contains": "value[Math.max(0, Math.min(4, level - 1))]"
+        }
+      ]
+    },
+    {
+      "id": "school-mode-boundary",
+      "label": "Renamable local School mode forces English and omits playful/private controls",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "id=\"school-enabled\""
+        },
+        {
+          "file": "app.js",
+          "contains": "node.hidden = state.school.enabled"
+        }
+      ]
+    },
+    {
+      "id": "dialog-emoji",
+      "label": "Persisted dialog emoji toggle changes aria-hidden notification decoration only",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "id=\"dialog-emoji\""
+        },
+        {
+          "file": "app.js",
+          "contains": "state.dialogEmoji && !state.school.enabled"
+        }
+      ]
+    },
+    {
+      "id": "personal-vocabulary",
+      "label": "Local generic JSON validator and cache with schema, size, count, key, value, duplicate and unsafe-key bounds",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "id=\"vocabulary-file\""
+        },
+        {
+          "file": "app.js",
+          "contains": "function validateVocabularyObject"
+        },
+        {
+          "file": "app.js",
+          "contains": "function detectDuplicateKeys"
+        },
+        {
+          "file": "app.js",
+          "contains": "file.size > 65536"
+        }
+      ]
+    },
+    {
+      "id": "search-regex",
+      "label": "Every added search and menu search has its own adjacent anchored local regex builder",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "data-builder-for=\"settings-search\""
+        },
+        {
+          "file": "index.html",
+          "contains": "data-builder-for=\"schedule-search\""
+        },
+        {
+          "file": "index.html",
+          "contains": "data-builder-for=\"record-search\""
+        },
+        {
+          "file": "index.html",
+          "contains": "data-builder-for=\"tab-menu-search\""
+        },
+        {
+          "file": "app.js",
+          "contains": "function matcherFor(searchId)"
+        }
+      ]
+    },
+    {
+      "id": "command-palette",
+      "label": "Ctrl+Shift+F rich command palette with focus containment and exact-element teleport",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "id=\"command-result-count\" role=\"status\" aria-live=\"polite\""
+        },
+        {
+          "file": "app.js",
+          "contains": "event.ctrlKey && event.shiftKey"
+        },
+        {
+          "file": "app.js",
+          "contains": "activatePage('settings', true, 'vocabulary-file')"
+        },
+        {
+          "file": "app.js",
+          "contains": "if (event.key === 'Tab')"
+        }
+      ]
+    },
+    {
+      "id": "appearance-editor",
+      "label": "Named presets plus local per-element appearance targets, reset and theme export",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "id=\"appearance-card\""
+        },
+        {
+          "file": "index.html",
+          "contains": "data-appearance-target=\"hero\""
+        },
+        {
+          "file": "app.js",
+          "contains": "state.appearance[appearanceTarget]"
+        }
+      ]
+    },
+    {
+      "id": "notifications",
+      "label": "Nonblocking snackbar stack and reviewable local notification centre",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "id=\"notification-list\""
+        },
+        {
+          "file": "index.html",
+          "contains": "id=\"snackbar-stack\""
+        },
+        {
+          "file": "app.js",
+          "contains": "function notify(title, message, level = 'info')"
+        }
+      ]
+    },
+    {
+      "id": "scheduled-settings",
+      "label": "Versioned browser-local schedule editor with date, time, weekdays, cross-midnight, recoverable base settings, and deterministic later-rule precedence",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "id=\"schedule-form\""
+        },
+        {
+          "file": "app.js",
+          "contains": "function scheduleMatches(rule, date = new Date())"
+        },
+        {
+          "file": "app.js",
+          "contains": "const rule = matching.at(-1)"
+        },
+        {
+          "file": "app.js",
+          "contains": "scheduleOverride = {}"
+        }
+      ]
+    },
+    {
+      "id": "dim-sum-surprise",
+      "label": "Nonblocking 10 percent startup dim-sum surprise linking the authoritative public catalog without local images",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "id=\"dim-sum-surprise\""
+        },
+        {
+          "file": "app.js",
+          "contains": "Math.random() >= .1"
+        },
+        {
+          "file": "app.js",
+          "contains": "Ding-Ding-Projects/dim-sum-photos/blob/main/catalog/index.json"
+        }
+      ]
+    },
+    {
+      "id": "locks-authenticator",
+      "label": "Truthfully labelled browser-local toy locks and RFC-style TOTP generator with ordinary-export omission",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "For-fun element lock"
+        },
+        {
+          "file": "index.html",
+          "contains": "id=\"totp-form\""
+        },
+        {
+          "file": "app.js",
+          "contains": "async function totpCode"
+        },
+        {
+          "file": "app.js",
+          "contains": "secret: 'omitted'"
+        }
+      ]
+    },
+    {
+      "id": "support-recovery",
+      "label": "Fictional local Support Tickets with unmissable no-network disclosure and browser-data reset route",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "Nothing is sent anywhere."
+        },
+        {
+          "file": "index.html",
+          "contains": "id=\"ticket-form\""
+        },
+        {
+          "file": "app.js",
+          "contains": "Open browser settings for this site"
+        }
+      ]
+    },
+    {
+      "id": "records-export",
+      "label": "Searchable local notifications/history and redacted JSON, CSV and Markdown exports",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "data-export=\"json\""
+        },
+        {
+          "file": "index.html",
+          "contains": "data-export=\"csv\""
+        },
+        {
+          "file": "index.html",
+          "contains": "data-export=\"markdown\""
+        },
+        {
+          "file": "app.js",
+          "contains": "function redactedExport()"
+        }
+      ]
+    },
+    {
+      "id": "changelog",
+      "label": "Searchable date-filtered changelog with exact commit links",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "id=\"changelog-date\""
+        },
+        {
+          "file": "index.html",
+          "contains": "commit/a5f22534e7930fa19b72f55c4945a435d08fa2ac"
+        },
+        {
+          "file": "app.js",
+          "contains": "function renderChangelog()"
+        }
+      ]
+    },
+    {
+      "id": "destructive-confirmation",
+      "label": "Local-data reset requires two independent keys and a full-range slider with emergency exit",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "id=\"reset-key-one\""
+        },
+        {
+          "file": "index.html",
+          "contains": "id=\"reset-key-two\""
+        },
+        {
+          "file": "index.html",
+          "contains": "id=\"reset-slider\""
+        },
+        {
+          "file": "index.html",
+          "contains": "Emergency exit"
+        }
+      ]
+    },
+    {
+      "id": "published-release-truth",
+      "label": "Latest unsigned installer and mutable-release warning are visible",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "releases/latest/download/MaterialSystemUtility-Setup.exe"
+        },
+        {
+          "file": "index.html",
+          "contains": "GitHub immutable releases are disabled"
+        }
+      ]
+    },
+    {
+      "id": "real-capture",
+      "label": "Real v0.1.8601 built application capture",
+      "evidence": [
+        {
+          "file": "../screenshots/release-v0.1.8601/app-install-dark-comfortable-en-1440x940.png",
+          "exists": true
+        }
+      ]
+    },
+    {
+      "id": "offline-assets",
+      "label": "No CDN, remote fonts, analytics, runtime fetch, or local dim-sum image",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "<link rel=\"stylesheet\" href=\"styles.css\">"
+        },
+        {
+          "file": "index.html",
+          "contains": "<script src=\"app.js\" defer></script>"
+        }
+      ]
+    },
+    {
+      "id": "app-logo-local",
+      "label": "Browser-local displayed-logo presets and constrained PNG upload with fit, focal point, background and size previews",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "id=\"panel-logo\""
+        },
+        {
+          "file": "index.html",
+          "contains": "id=\"logo-file\" type=\"file\" accept=\"image/png,.png\""
+        },
+        {
+          "file": "app.js",
+          "contains": "function readLocalPng(file)"
+        },
+        {
+          "file": "app.js",
+          "contains": "customBytes: 'omitted'"
+        }
+      ]
+    },
+    {
+      "id": "file-converter-local",
+      "label": "Eight-category local file-converter inventory and bounded session queue with exact unavailable adapter reasons",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "id=\"panel-converter\""
+        },
+        {
+          "file": "index.html",
+          "contains": "id=\"converter-category-search\""
+        },
+        {
+          "file": "app.js",
+          "contains": "const converterCategories = ["
+        },
+        {
+          "file": "app.js",
+          "contains": "no packaged offline adapter proof in this static site"
+        }
+      ]
+    },
+    {
+      "id": "ollama-suite-browser-boundary",
+      "label": "Guided local Ollama suite surfaces with model-store, installed models, cart, chat and troubleshooter while browser networking remains unavailable",
+      "evidence": [
+        {
+          "file": "index.html",
+          "contains": "id=\"panel-ollama\""
+        },
+        {
+          "file": "index.html",
+          "contains": "id=\"ollama-catalog-search\""
+        },
+        {
+          "file": "index.html",
+          "contains": "id=\"ollama-installed-search\""
+        },
+        {
+          "file": "index.html",
+          "contains": "id=\"ollama-troubleshooter-panel\""
+        },
+        {
+          "file": "app.js",
+          "contains": "function renderOllama()"
+        }
+      ]
+    }
   ],
-  "requiredUnavailableIds": ["installed-update-e2e-proof", "external-schedule-sources", "vault-security-equivalence", "complete-appearance-translator", "qr-camera-import", "complete-capture-matrix"],
+  "requiredUnavailableIds": [
+    "installed-update-e2e-proof",
+    "external-schedule-sources",
+    "vault-security-equivalence",
+    "complete-appearance-translator",
+    "qr-camera-import",
+    "complete-capture-matrix",
+    "browser-file-conversion-adapters",
+    "browser-ollama-loopback-api"
+  ],
   "explicitlyUnavailable": [
-    { "id": "installed-update-e2e-proof", "label": "Installed updater restart, replacement detection, rollback and corruption proof" },
-    { "id": "external-schedule-sources", "label": "HTTPS API and Home Assistant scheduled-setting sources on the static site" },
-    { "id": "vault-security-equivalence", "label": "Operating-system credential-vault or encryption equivalence for browser-local locks and authenticator" },
-    { "id": "complete-appearance-translator", "label": "Word-depth per-property editor and continuous multi-color-space translator" },
-    { "id": "qr-camera-import", "label": "QR image, clipboard, and camera authenticator import" },
-    { "id": "complete-capture-matrix", "label": "Real captures for every new site state, theme, and narrow layout" }
+    {
+      "id": "installed-update-e2e-proof",
+      "label": "Installed updater restart, replacement detection, rollback and corruption proof"
+    },
+    {
+      "id": "external-schedule-sources",
+      "label": "HTTPS API and Home Assistant scheduled-setting sources on the static site"
+    },
+    {
+      "id": "vault-security-equivalence",
+      "label": "Operating-system credential-vault or encryption equivalence for browser-local locks and authenticator"
+    },
+    {
+      "id": "complete-appearance-translator",
+      "label": "Word-depth per-property editor and continuous multi-color-space translator"
+    },
+    {
+      "id": "qr-camera-import",
+      "label": "QR image, clipboard, and camera authenticator import"
+    },
+    {
+      "id": "complete-capture-matrix",
+      "label": "Real captures for every new site state, theme, and narrow layout"
+    },
+    {
+      "id": "browser-file-conversion-adapters",
+      "label": "Packaged offline converter adapters cannot be proven or executed by the static browser site"
+    },
+    {
+      "id": "browser-ollama-loopback-api",
+      "label": "Official Ollama loopback API, process control, hardware inventory, model pulls and local chat cannot cross the static browser boundary"
+    }
   ]
 }

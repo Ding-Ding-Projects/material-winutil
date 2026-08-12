@@ -14,6 +14,11 @@ import type {
   ScheduledSettingRule, ScheduledSettingsDocument, ScheduledSettingValue,
 } from './scheduled-settings';
 import type { DimSumSurpriseDescriptor } from './dim-sum-surprise';
+import type { ConverterAdapter, FileKind, QueueItemState, QueueState } from './file-converter';
+import type { AppLogoExportMetadata, AppLogoPersistedState, AppLogoPresetId, AppLogoTransform, AppLogoDerivedAsset } from './app-logo';
+import type {
+  OllamaCatalogSnapshot, OllamaCatalogVariant, OllamaChatRequest, OllamaHealthSnapshot, OllamaPullProgress,
+} from './ollama-suite';
 
 /**
  * Shared contracts between the Electron main process, the preload bridge and the renderer.
@@ -328,6 +333,51 @@ export interface DimSumStartupPresentation {
   imageDataUrl: `data:image/png;base64,${string}`;
 }
 
+export interface FileConverterSelectedSource {
+  id: string;
+  name: string;
+  bytes: number;
+  kind: FileKind;
+  confidence: 'magic' | 'extension' | 'unknown';
+  conflict: boolean;
+  reason: string;
+}
+
+export interface FileConverterQueueItemView {
+  id: string;
+  sourceName: string;
+  sourceBytes: number;
+  estimatedOutputBytes: number;
+  adapterId: string;
+  state: QueueItemState;
+  retryCount: number;
+  outcome?: string;
+}
+
+export interface FileConverterSurfaceState {
+  schemaVersion: 1;
+  catalog: ConverterAdapter[];
+  selected: FileConverterSelectedSource[];
+  queue: {
+    state: QueueState;
+    pageCount: number;
+    inFlightBytes: number;
+    counts: Record<QueueItemState, number>;
+    items: FileConverterQueueItemView[];
+  };
+  storage: { availableBytes: number; requiredBytes: number; reserveBytes: number; status: 'ready' | 'insufficient' | 'unavailable' };
+  limits: { signatureBytes: number; pageItems: number; maxConcurrency: number };
+  lastMessage: string;
+}
+
+export interface AppLogoRuntimeSnapshot {
+  readonly persisted: AppLogoPersistedState;
+  readonly assets: readonly AppLogoDerivedAsset[];
+  readonly exportMetadata: AppLogoExportMetadata;
+  readonly identityBoundary: 'presentation-only';
+  readonly sourceRetention: 'derived-raster-only';
+}
+
 /** The surface exposed on `window.winutil` by the preload bridge. */
 export interface Bridge {
   platform: NodeJS.Platform | 'browser';
@@ -406,6 +456,31 @@ export interface Bridge {
   clearScheduledHomeAssistantToken(ruleId: string): Promise<ScheduledSettingsState>;
   onScheduledSettingsState(cb: (state: ScheduledSettingsState) => void): void;
   dimSumStartup(): Promise<DimSumStartupPresentation | null>;
+  fileConverterState(): Promise<FileConverterSurfaceState>;
+  fileConverterPickSources(): Promise<FileConverterSurfaceState>;
+  fileConverterClearSelection(): Promise<FileConverterSurfaceState>;
+  fileConverterEnqueue(adapterId: string): Promise<FileConverterSurfaceState>;
+  fileConverterPause(): Promise<FileConverterSurfaceState>;
+  fileConverterResume(): Promise<FileConverterSurfaceState>;
+  fileConverterCancelAll(): Promise<FileConverterSurfaceState>;
+  fileConverterResetQueue(): Promise<FileConverterSurfaceState>;
+  appLogoState(): Promise<AppLogoRuntimeSnapshot>;
+  appLogoPickPng(transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot | null>;
+  appLogoSelectPreset(presetId: AppLogoPresetId, transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot>;
+  appLogoUpdateTransform(transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot>;
+  appLogoReset(): Promise<AppLogoRuntimeSnapshot>;
+  ollamaHealth(): Promise<OllamaHealthSnapshot>;
+  ollamaCatalog(): Promise<OllamaCatalogSnapshot>;
+  ollamaRefreshCatalog(): Promise<OllamaCatalogSnapshot>;
+  ollamaPullQueue(): Promise<OllamaPullProgress[]>;
+  ollamaEnqueuePulls(models: string[]): Promise<OllamaPullProgress[]>;
+  ollamaCancelPull(model: string): Promise<boolean>;
+  ollamaRetryPull(model: string): Promise<OllamaPullProgress[]>;
+  ollamaChat(request: OllamaChatRequest, variant: OllamaCatalogVariant): Promise<OllamaChatRequest>;
+  ollamaCancelChat(): Promise<boolean>;
+  ollamaExportChat(request: OllamaChatRequest, variant: OllamaCatalogVariant): Promise<ReturnType<typeof import('./ollama-suite').redactChatExport>>;
+  onOllamaPullProgress(cb: (progress: OllamaPullProgress) => void): void;
+  onOllamaChatChunk(cb: (content: string) => void): void;
 }
 
 declare global {

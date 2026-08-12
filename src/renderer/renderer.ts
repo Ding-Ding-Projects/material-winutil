@@ -5,7 +5,7 @@
  * file with no module imports.
  * ========================================================================== */
 
-type ViewId = 'install' | 'tweaks' | 'config' | 'updates' | 'iso' | 'history' | 'docs' | 'settings';
+type ViewId = 'install' | 'tweaks' | 'config' | 'updates' | 'iso' | 'converter' | 'ollama' | 'history' | 'docs' | 'settings';
 
 type ThemeMode = 'light' | 'dark';
 type Density = 'comfortable' | 'compact';
@@ -30,6 +30,35 @@ interface AppearanceColorRuntime {
   convertColor(input: AppearanceColorValue, targetSpace: AppearanceColorSpace): AppearanceColorConversion;
   contrastRatio(foreground: AppearanceColorValue, background: AppearanceColorValue): AppearanceContrastResult;
 }
+type ConverterCategory = 'Documents/PDF' | 'Images' | 'Audio' | 'Video' | 'Archives' | 'Structured Data/Spreadsheets' | 'Code/Text' | 'Binary Encodings';
+interface FileConverterSurfaceState {
+  schemaVersion: 1;
+  catalog: Array<{ id: string; category: ConverterCategory; sourceKinds: string[]; targetFormat: string; metadataBehavior: string; lossiness: 'lossless' | 'lossy' | 'opaque'; sandbox: 'isolated-local'; limits: { inputBytes: number; outputBytes: number; memoryBytes: number; cpuMs: number; tempBytes: number }; outputValidator: string; availability: 'available' | 'unavailable'; unavailableReason?: string }>;
+  selected: Array<{ id: string; name: string; bytes: number; kind: string; confidence: string; conflict: boolean; reason: string }>;
+  queue: { state: 'active' | 'paused' | 'cancelled'; pageCount: number; inFlightBytes: number; counts: Record<'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled', number>; items: Array<{ id: string; sourceName: string; sourceBytes: number; estimatedOutputBytes: number; adapterId: string; state: string; retryCount: number; outcome?: string }> };
+  storage: { availableBytes: number; requiredBytes: number; reserveBytes: number; status: 'ready' | 'insufficient' | 'unavailable' };
+  limits: { signatureBytes: number; pageItems: number; maxConcurrency: number };
+  lastMessage: string;
+}
+type AppLogoPresetId = 'material-blue' | 'material-teal' | 'high-contrast';
+type AppLogoTransform = { crop: 'original' | 'square'; fit: 'contain' | 'cover' | 'stretch'; focalPoint: { x: number; y: number }; background: 'transparent' | `#${string}` };
+interface AppLogoDerivedAsset { id: string; format: 'png'; width: number; height: number; consumer: string; sha256: string; dataUrl: string; }
+interface AppLogoRuntimeSnapshot {
+  persisted: { schemaVersion: 1; storage: 'local-only'; transform: AppLogoTransform; selection: { kind: 'preset'; presetId: AppLogoPresetId } | { kind: 'custom'; derivedAsset: AppLogoDerivedAsset } };
+  assets: readonly AppLogoDerivedAsset[];
+  exportMetadata: { schemaVersion: 1; selection: 'preset' | 'custom'; presetId?: AppLogoPresetId; transform: AppLogoTransform; omitted: readonly ['custom-logo-derived-raster'] };
+  identityBoundary: 'presentation-only'; sourceRetention: 'derived-raster-only';
+}
+type OllamaCapability = 'text' | 'vision' | 'tools' | 'embedding';
+interface OllamaModelDetails { format: string; family: string; families: string[]; parameterSize: string; quantization: string; }
+interface OllamaInstalledModel { name: string; model: string; modifiedAt: string; sizeBytes: number; digest: string; details: OllamaModelDetails; }
+interface OllamaRunningModel extends OllamaInstalledModel { expiresAt: string; sizeVramBytes: number; contextLength: number; }
+interface OllamaHealthSnapshot { state: 'healthy' | 'missing' | 'unhealthy'; checkedAt: string; version: string | null; installed: OllamaInstalledModel[]; running: OllamaRunningModel[]; message: string; }
+interface OllamaCatalogVariant { model: string; tag: string; qualifiedName: string; digest: string | null; blobSizeBytes: number | null; parameterCount: number | null; quantization: string | null; contextLength: number | null; capabilities: OllamaCapability[]; publishedAt: string | null; sourceUrl: string; }
+interface OllamaCatalogSnapshot { schemaVersion: 1; source: 'official-ollama-catalog'; sourceRevision: string; refreshedAt: string; pageCount: number; complete: boolean; stale: boolean; variants: OllamaCatalogVariant[]; installedOnly: OllamaInstalledModel[]; message: string; }
+interface OllamaPullProgress { model: string; state: 'queued' | 'pulling' | 'completed' | 'cancelled' | 'failed'; status: string; completedBytes: number | null; totalBytes: number | null; error: string | null; }
+interface OllamaChatMessage { role: 'system' | 'user' | 'assistant'; content: string; images?: string[]; }
+interface OllamaChatRequest { model: string; messages: OllamaChatMessage[]; options: { temperature?: number; topP?: number; topK?: number; seed?: number; numCtx?: number; numPredict?: number }; }
 type TabSearchKey = 'current' | 'groupNames' | 'master' | 'inGroup' | 'closeContaining' | 'closeNot';
 type DialogId =
   | 'palette' | 'regex' | 'tabs' | 'appearance' | 'lock' | 'auth'
@@ -207,6 +236,31 @@ interface Bridge {
   clearScheduledHomeAssistantToken(ruleId: string): Promise<ScheduledSettingsState>;
   onScheduledSettingsState(cb: (state: ScheduledSettingsState) => void): void;
   dimSumStartup(): Promise<DimSumStartupPresentation | null>;
+  fileConverterState(): Promise<FileConverterSurfaceState>;
+  fileConverterPickSources(): Promise<FileConverterSurfaceState>;
+  fileConverterClearSelection(): Promise<FileConverterSurfaceState>;
+  fileConverterEnqueue(adapterId: string): Promise<FileConverterSurfaceState>;
+  fileConverterPause(): Promise<FileConverterSurfaceState>;
+  fileConverterResume(): Promise<FileConverterSurfaceState>;
+  fileConverterCancelAll(): Promise<FileConverterSurfaceState>;
+  fileConverterResetQueue(): Promise<FileConverterSurfaceState>;
+  appLogoState(): Promise<AppLogoRuntimeSnapshot>;
+  appLogoPickPng(transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot | null>;
+  appLogoSelectPreset(presetId: AppLogoPresetId, transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot>;
+  appLogoUpdateTransform(transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot>;
+  appLogoReset(): Promise<AppLogoRuntimeSnapshot>;
+  ollamaHealth(): Promise<OllamaHealthSnapshot>;
+  ollamaCatalog(): Promise<OllamaCatalogSnapshot>;
+  ollamaRefreshCatalog(): Promise<OllamaCatalogSnapshot>;
+  ollamaPullQueue(): Promise<OllamaPullProgress[]>;
+  ollamaEnqueuePulls(models: string[]): Promise<OllamaPullProgress[]>;
+  ollamaCancelPull(model: string): Promise<boolean>;
+  ollamaRetryPull(model: string): Promise<OllamaPullProgress[]>;
+  ollamaChat(request: OllamaChatRequest, variant: OllamaCatalogVariant): Promise<OllamaChatRequest>;
+  ollamaCancelChat(): Promise<boolean>;
+  ollamaExportChat(request: OllamaChatRequest, variant: OllamaCatalogVariant): Promise<{ schemaVersion: 1; messages: Array<{ role: string; content: string; attachmentsOmitted: number }> }>;
+  onOllamaPullProgress(cb: (progress: OllamaPullProgress) => void): void;
+  onOllamaChatChunk(cb: (content: string) => void): void;
 }
 
 /* ------------------------------------------------------------- constants -- */
@@ -220,6 +274,8 @@ const NAV: Array<{ heading: string } | { id: ViewId; label: string; icon: string
   { id: 'config', label: 'Config', icon: 'build' },
   { id: 'updates', label: 'Updates', icon: 'system_update_alt' },
   { id: 'iso', label: 'Win11 Creator', icon: 'album' },
+  { id: 'converter', label: 'File converter', icon: 'flip_to_front' },
+  { id: 'ollama', label: 'Ollama suite', icon: 'memory' },
   { heading: '' },
   { id: 'history', label: 'History', icon: 'history' },
   { id: 'docs', label: 'Docs', icon: 'menu_book' },
@@ -232,6 +288,8 @@ const VIEW_META: Record<ViewId, { title: string; search: string }> = {
   config: { title: 'Config', search: 'Search features, fixes, legacy panels and remote access' },
   updates: { title: 'Updates', search: 'Search update profiles' },
   iso: { title: 'Win11 Creator', search: 'Search image customization steps' },
+  converter: { title: 'File converter', search: 'Search converter categories, formats and unavailable reasons' },
+  ollama: { title: 'Ollama suite', search: 'Search official variants, capabilities, sizes and local states' },
   history: { title: 'History', search: 'Search history actions and details' },
   docs: { title: 'Docs', search: 'Search the built-in documentation' },
   settings: { title: 'Settings', search: 'Search settings, descriptions and current values' },
@@ -480,11 +538,13 @@ const COPY_EN = {
   minimize: 'Minimize', maximize: 'Maximize', close: 'Close', search: 'Search', clearSearch: 'Clear search',
   regexForSearch: 'Open the regex builder for this search', searchDestinations: 'Search destinations',
   system: 'System', install: 'Install', tweaks: 'Tweaks', config: 'Config', updates: 'Updates',
-  creator: 'Win11 Creator', history: 'History', docs: 'Docs',
+  creator: 'Win11 Creator', converter: 'File converter', ollama: 'Ollama suite', history: 'History', docs: 'Docs',
   installSearch: 'Search 227 applications, winget ids and descriptions',
   tweakSearch: 'Search tweaks, categories and registry effects',
   configSearch: 'Search features, fixes, legacy panels and remote access',
   updateSearch: 'Search update profiles', creatorSearch: 'Search image customization steps',
+  converterSearch: 'Search converter categories, formats and unavailable reasons',
+  ollamaSearch: 'Search official variants, capabilities, sizes and local states',
   historySearch: 'Search history actions and details', docsSearch: 'Search the built-in documentation',
   settingsSearch: 'Search settings, descriptions and current values',
   installSelectedPackages: 'Install the selected packages', readOnlyView: 'Read-only view',
@@ -516,11 +576,13 @@ const COPY_YUE: Record<CopyKey, string> = {
   minimize: '最小化', maximize: '最大化', close: '關閉', search: '搜尋', clearSearch: '清除搜尋',
   regexForSearch: '開啟呢個搜尋欄嘅正規表示式建構器', searchDestinations: '搜尋目的地',
   system: '系統', install: '安裝', tweaks: '調校', config: '設定功能', updates: '更新',
-  creator: 'Win11 映像製作器', history: '歷史', docs: '說明文件',
+  creator: 'Win11 映像製作器', converter: '檔案轉換器', ollama: 'Ollama 套件管理器', history: '歷史', docs: '說明文件',
   installSearch: '搜尋 227 個應用程式、winget 識別碼同描述',
   tweakSearch: '搜尋調校、分類同登錄效果',
   configSearch: '搜尋功能、修正、傳統面板同遙距存取',
   updateSearch: '搜尋更新設定檔', creatorSearch: '搜尋映像自訂步驟',
+  converterSearch: '搜尋轉換分類、格式同不可用原因',
+  ollamaSearch: '搜尋官方模型版本、能力、大小同本機狀態',
   historySearch: '搜尋歷史動作同詳情', docsSearch: '搜尋內置說明文件',
   settingsSearch: '搜尋設定、說明同目前值',
   installSelectedPackages: '安裝已選套件', readOnlyView: '唯讀檢視',
@@ -547,7 +609,7 @@ const COPY_YUE: Record<CopyKey, string> = {
 const VIEW_COPY: Record<ViewId, { title: CopyKey; search: CopyKey }> = {
   install: { title: 'install', search: 'installSearch' }, tweaks: { title: 'tweaks', search: 'tweakSearch' },
   config: { title: 'config', search: 'configSearch' }, updates: { title: 'updates', search: 'updateSearch' },
-  iso: { title: 'creator', search: 'creatorSearch' }, history: { title: 'history', search: 'historySearch' },
+  iso: { title: 'creator', search: 'creatorSearch' }, converter: { title: 'converter', search: 'converterSearch' }, ollama: { title: 'ollama', search: 'ollamaSearch' }, history: { title: 'history', search: 'historySearch' },
   docs: { title: 'docs', search: 'docsSearch' }, settings: { title: 'settings', search: 'settingsSearch' },
 };
 
@@ -660,6 +722,23 @@ const state = {
     busy: false, error: '', token: '',
     draft: null as ScheduledRule | null,
   },
+  converter: {
+    data: null as FileConverterSurfaceState | null, selectedCategory: 'Documents/PDF' as ConverterCategory,
+    tab: 'catalog' as 'catalog' | 'sources' | 'queue', busy: false, error: '',
+  },
+  appLogo: {
+    data: null as AppLogoRuntimeSnapshot | null, busy: false, error: '',
+  },
+  ollama: {
+    health: null as OllamaHealthSnapshot | null,
+    catalog: null as OllamaCatalogSnapshot | null,
+    queue: [] as OllamaPullProgress[],
+    tab: 'store' as 'status' | 'store' | 'cart' | 'chat' | 'harness',
+    busy: false, error: '', selectedModel: '', cart: new Set<string>(),
+    chat: { system: '', prompt: '', messages: [] as OllamaChatMessage[], output: '', busy: false, attachmentRequested: false,
+      temperature: 0.4, contextLength: 4096 },
+    harness: { profile: 'vscode-continue', workspaceFolder: '', previewed: false, restored: false },
+  },
   snack: '',
   isoLog: '[00:00:00] Waiting for an ISO. Select an official Microsoft image to begin.',
 };
@@ -686,7 +765,7 @@ function showDimSumStartup(presentation: DimSumStartupPresentation): void {
 }
 
 const WORKSPACE_STORAGE_KEY = 'material-system-utility.workspace.v1';
-const VALID_VIEWS = new Set<ViewId>(['install', 'tweaks', 'config', 'updates', 'iso', 'history', 'docs', 'settings']);
+const VALID_VIEWS = new Set<ViewId>(['install', 'tweaks', 'config', 'updates', 'iso', 'converter', 'ollama', 'history', 'docs', 'settings']);
 let workspaceReady = false;
 let authenticatorRefreshTimer = 0;
 let authenticatorRefreshBusy = false;
@@ -928,6 +1007,7 @@ const ICONS: Record<string, string> = {
   cast_connected: '▣', expand_less: '⌃', expand_more: '⌄', folder: '▤', inventory_2: '▣',
   keep_off: '⌖×', play_circle: '▷', article: '▧', image: '▧', content_paste: '▤',
   security: '◈', volume_off: '♪×', help: '?',
+  memory: '▦', shield: '◇',
 };
 const icon = (name: string, cls = ''): HTMLElement => h('span', {
   class: `mi ${cls}`.trim(), 'aria-hidden': 'true', title: '',
@@ -1110,9 +1190,56 @@ function bridge(): Bridge {
     clearScheduledHomeAssistantToken: async () => fake.scheduledSettingsState(),
     onScheduledSettingsState: () => undefined,
     dimSumStartup: async () => null,
+    fileConverterState: async () => state.converter.data ?? previewConverterState(),
+    fileConverterPickSources: async () => { throw new Error('The native local file picker is available only in the installed application.'); },
+    fileConverterClearSelection: async () => previewConverterState(),
+    fileConverterEnqueue: async () => { throw new Error('No offline adapter is bundled in this build.'); },
+    fileConverterPause: async () => ({ ...(state.converter.data ?? previewConverterState()), queue: { ...(state.converter.data ?? previewConverterState()).queue, state: 'paused' } }),
+    fileConverterResume: async () => ({ ...(state.converter.data ?? previewConverterState()), queue: { ...(state.converter.data ?? previewConverterState()).queue, state: 'active' } }),
+    fileConverterCancelAll: async () => ({ ...(state.converter.data ?? previewConverterState()), queue: { ...(state.converter.data ?? previewConverterState()).queue, state: 'cancelled' } }),
+    fileConverterResetQueue: async () => previewConverterState(),
+    appLogoState: async () => state.appLogo.data ?? previewAppLogoState(),
+    appLogoPickPng: async () => { throw new Error('The native local PNG picker is available only in the installed application.'); },
+    appLogoSelectPreset: async (presetId, transform) => previewAppLogoState(presetId, transform),
+    appLogoUpdateTransform: async (transform) => previewAppLogoState('material-blue', transform),
+    appLogoReset: async () => previewAppLogoState(),
+    ollamaHealth: async () => ({ state: 'missing', checkedAt: new Date().toISOString(), version: null, installed: [], running: [], message: 'Ollama is not available in this browser preview. Install and start the local Ollama service, then refresh in the installed application.' }),
+    ollamaCatalog: async () => ({ schemaVersion: 1, source: 'official-ollama-catalog', sourceRevision: '', refreshedAt: new Date().toISOString(), pageCount: 0, complete: false, stale: true, variants: [], installedOnly: [], message: 'No reviewed official catalog adapter is available in this build.' }),
+    ollamaRefreshCatalog: async () => fake.ollamaCatalog(),
+    ollamaPullQueue: async () => [],
+    ollamaEnqueuePulls: async () => { throw new Error('Pulling needs a verified complete official catalog and the local Ollama API.'); },
+    ollamaCancelPull: async () => false,
+    ollamaRetryPull: async () => [],
+    ollamaChat: async () => { throw new Error('Chat needs a healthy local Ollama service and an installed verified model.'); },
+    ollamaCancelChat: async () => false,
+    ollamaExportChat: async (request) => ({ schemaVersion: 1, messages: request.messages.map((message) => ({ role: message.role, content: message.role === 'system' ? '[system prompt omitted]' : message.content, attachmentsOmitted: message.images?.length ?? 0 })) }),
+    onOllamaPullProgress: () => undefined,
+    onOllamaChatChunk: () => undefined,
   };
   w.winutil = fake;
   return fake;
+}
+
+function previewAppLogoState(presetId: AppLogoPresetId = 'material-blue', transform: AppLogoTransform = { crop: 'original', fit: 'contain', focalPoint: { x: 0.5, y: 0.5 }, background: 'transparent' }): AppLogoRuntimeSnapshot {
+  const colors: Record<AppLogoPresetId, [string, string]> = { 'material-blue': ['#6750a4', '#e8def8'], 'material-teal': ['#006b5f', '#d7e8e3'], 'high-contrast': ['#000000', '#ffffff'] };
+  const [foreground, background] = colors[presetId];
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" rx="72" fill="${background}"/><circle cx="128" cy="128" r="88" fill="${foreground}"/><path d="M128 70l52 58-52 58-52-58z" fill="${background}"/></svg>`;
+  const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  const assets = [20, 24, 48, 64, 128, 256].map((size, index) => ({ id: ['titlebar-20', 'menu-24', 'settings-preview-48', 'app-64', 'app-128', 'app-256'][index], format: 'png' as const, width: size, height: size, consumer: 'preview', sha256: `preview-${size}`, dataUrl }));
+  return { persisted: { schemaVersion: 1, storage: 'local-only', transform, selection: { kind: 'preset', presetId } }, assets, exportMetadata: { schemaVersion: 1, selection: 'preset', presetId, transform, omitted: ['custom-logo-derived-raster'] }, identityBoundary: 'presentation-only', sourceRetention: 'derived-raster-only' };
+}
+
+const CONVERTER_CATEGORIES: readonly ConverterCategory[] = ['Documents/PDF', 'Images', 'Audio', 'Video', 'Archives', 'Structured Data/Spreadsheets', 'Code/Text', 'Binary Encodings'];
+function previewConverterState(): FileConverterSurfaceState {
+  const unavailableReason = 'Unavailable: this adapter is not bundled and verified in the packaged artifact.';
+  const targets = ['PDF inspection and page operations', 'PNG/JPEG/WebP', 'WAV/MP3/Ogg', 'MP4/WebM', 'ZIP/7z', 'CSV/TSV/XLSX/ODS', 'TXT/Markdown/JSON/YAML/XML', 'Base64/hex'];
+  return {
+    schemaVersion: 1,
+    catalog: CONVERTER_CATEGORIES.map((category, index) => ({ id: `preview-${index}`, category, sourceKinds: ['unknown'], targetFormat: targets[index], metadataBehavior: 'Exact behavior requires a bundled offline adapter.', lossiness: 'opaque', sandbox: 'isolated-local', limits: { inputBytes: 0, outputBytes: 0, memoryBytes: 0, cpuMs: 0, tempBytes: 0 }, outputValidator: 'Unavailable until a bundled adapter can reopen and validate its output.', availability: 'unavailable', unavailableReason })),
+    selected: [], queue: { state: 'active', pageCount: 0, inFlightBytes: 0, counts: { queued: 0, running: 0, succeeded: 0, failed: 0, cancelled: 0 }, items: [] },
+    storage: { availableBytes: 0, requiredBytes: 0, reserveBytes: 268435456, status: 'unavailable' },
+    limits: { signatureBytes: 4096, pageItems: 64, maxConcurrency: 4 }, lastMessage: 'Preview mode cannot inspect local source files.',
+  };
 }
 
 const activeUtterances = new Map<number, SpeechSynthesisUtterance>();
@@ -1267,7 +1394,7 @@ function categoryLabel(category: string): string {
 
 /* ------------------------------------------------------------ derivation -- */
 
-const isSystemView = (v: ViewId): boolean => ['install', 'tweaks', 'config', 'updates', 'iso'].includes(v);
+const isSystemView = (v: ViewId): boolean => ['install', 'tweaks', 'config', 'updates', 'iso', 'converter', 'ollama'].includes(v);
 const isListView = (v: ViewId): boolean => ['install', 'tweaks', 'config', 'history'].includes(v);
 
 function tweakGroups(source: WinutilTweak[]): Array<{ name: string; items: WinutilTweak[] }> {
@@ -1329,6 +1456,9 @@ function dimSumStartupCard(presentation: DimSumStartupPresentation): HTMLElement
 
 function appBar(): HTMLElement {
   const unread = state.notifications.filter((n) => !n.read).length;
+  const titlebarLogo = schoolModeRestrictsPersonalization()
+    ? undefined
+    : state.appLogo.data?.assets.find((asset) => asset.id === 'titlebar-20');
   return h('header', { class: 'appbar' },
     h('button', {
       class: 'icon-btn', title: t('mainMenu'), 'aria-label': t('mainMenu'),
@@ -1336,7 +1466,9 @@ function appBar(): HTMLElement {
       onclick: () => { state.drawerCollapsed = !state.drawerCollapsed; render(); },
     }, icon('menu')),
     h('div', { class: 'brand', 'data-personalizable': 'true' },
-      h('div', { class: 'brand-mark' }, 'W'),
+      titlebarLogo
+        ? h('img', { class: 'brand-mark app-logo-titlebar', src: titlebarLogo.dataUrl, alt: '', 'aria-hidden': 'true' })
+        : h('div', { class: 'brand-mark', 'aria-hidden': 'true' }, 'W'),
       h('div', { class: 'brand-name' }, scheduledDisplayName())),
     searchField(),
     h('div', { style: 'flex:1' }),
@@ -1663,10 +1795,254 @@ function pane(): HTMLElement {
     case 'config': return checklistPane(state.catalog.features, false);
     case 'updates': return updatesPane();
     case 'iso': return isoPane();
+    case 'converter': return converterPane();
+    case 'ollama': return ollamaPane();
     case 'history': return historyPane();
     case 'docs': return docsPane();
     case 'settings': return settingsPane();
   }
+  return emptyState('This destination is unavailable.');
+}
+
+function ollamaText(english: string, yue: string): string {
+  if (effectiveLanguage() === 'Yue') return yue;
+  if (effectiveLanguage() === 'Bilingual') return `${english} · ${yue}`;
+  return english;
+}
+
+function ollamaVariant(): OllamaCatalogVariant | undefined {
+  return state.ollama.catalog?.variants.find(({ qualifiedName }) => qualifiedName === state.ollama.selectedModel);
+}
+
+async function refreshOllama(refreshCatalog = false): Promise<void> {
+  if (state.ollama.busy) return;
+  state.ollama.busy = true; state.ollama.error = ''; render();
+  try {
+    const [health, catalog, queue] = await Promise.all([
+      bridge().ollamaHealth(), refreshCatalog ? bridge().ollamaRefreshCatalog() : bridge().ollamaCatalog(), bridge().ollamaPullQueue(),
+    ]);
+    state.ollama.health = health; state.ollama.catalog = catalog; state.ollama.queue = queue;
+    if (!state.ollama.selectedModel) state.ollama.selectedModel = catalog.variants[0]?.qualifiedName ?? health.installed[0]?.name ?? '';
+  } catch (error) { state.ollama.error = error instanceof Error ? error.message : 'The local Ollama state could not be loaded.'; }
+  finally { state.ollama.busy = false; render(); }
+}
+
+function ollamaPane(): HTMLElement {
+  const o = state.ollama;
+  const tabs = ['status', 'store', 'cart', 'chat', 'harness'] as const;
+  const pane = h('div', { class: 'pane padded ollama-pane', 'data-ollama-suite': 'true' },
+    h('div', { class: 'pane-head ollama-head' }, h('div', {},
+      h('h2', {}, ollamaText('Local Ollama suite', '本機 Ollama 套件管理器')),
+      h('p', {}, ollamaText('Runs only against the fixed local loopback API. It never connects chat or pulls to a cloud model service, launches arbitrary shell commands, or invents sample models.', '只會連接固定本機 loopback API。聊天同下載唔會連去雲端模型服務，唔會執行任意 shell 指令，亦唔會虛構示範模型。'))),
+      h('button', { class: 'btn tonal', disabled: o.busy, onclick: () => void refreshOllama(true) }, icon('refresh'), ollamaText('Refresh local and official state', '重新整理本機同官方狀態'))),
+    h('div', { class: 'tabrow ollama-tabs', role: 'tablist', 'aria-label': ollamaText('Ollama suite sections', 'Ollama 套件分頁') },
+      ...tabs.map((tab) => h('button', { class: `seg${o.tab === tab ? ' active' : ''}`, role: 'tab', 'aria-selected': o.tab === tab ? 'true' : 'false', onclick: () => { o.tab = tab; render(); } },
+        tab === 'status' ? ollamaText('Status & help', '狀態同協助') : tab === 'store' ? ollamaText('Model Store', '模型商店') : tab === 'cart' ? ollamaText('Pull cart', '下載清單') : tab === 'chat' ? ollamaText('Chat', '聊天') : ollamaText('Harness', '工具啟動')))),
+    o.error ? h('div', { class: 'feedback error', role: 'alert' }, o.error) : null);
+  if (o.tab === 'status') pane.appendChild(ollamaStatus());
+  if (o.tab === 'store') pane.appendChild(ollamaStore());
+  if (o.tab === 'cart') pane.appendChild(ollamaCart());
+  if (o.tab === 'chat') pane.appendChild(ollamaChat());
+  if (o.tab === 'harness') pane.appendChild(ollamaHarness());
+  return pane;
+}
+
+function ollamaStatus(): HTMLElement {
+  const health = state.ollama.health;
+  const stateLabel = health?.state ?? 'unknown';
+  const next = stateLabel === 'healthy'
+    ? ollamaText('The documented local API responded. Installed and running inventories were validated.', '已成功連接已記錄嘅本機 API，亦驗證咗已安裝同運行中模型清單。')
+    : stateLabel === 'missing'
+      ? ollamaText('Install Ollama from its official installer, start the local service, then use Refresh. This app will not redirect you to a cloud API.', '請用官方安裝器安裝 Ollama，再啟動本機服務，之後按重新整理。呢個應用程式唔會改用雲端 API。')
+      : ollamaText('The local service answered with invalid or unhealthy data. Restart Ollama, then refresh; details remain below.', '本機服務回傳無效或者唔健康資料。請重新啟動 Ollama 再重新整理；詳情保留喺下面。');
+  return h('section', { class: 'ollama-grid', 'aria-label': ollamaText('Local service status and troubleshooter', '本機服務狀態同疑難排解') },
+    card(ollamaText('Local service', '本機服務'), stateLabel.toUpperCase(), [
+      h('p', { role: 'status', 'aria-live': 'polite' }, health?.message ?? ollamaText('Status has not been checked yet.', '尚未檢查狀態。')),
+      h('p', {}, next), h('dl', { class: 'ollama-facts' }, h('dt', {}, 'Version'), h('dd', {}, health?.version ?? 'Unknown'), h('dt', {}, 'Installed'), h('dd', {}, String(health?.installed.length ?? 0)), h('dt', {}, 'Running'), h('dd', {}, String(health?.running.length ?? 0))),
+    ]),
+    card(ollamaText('Official catalog truth', '官方目錄狀態'), state.ollama.catalog?.complete ? 'COMPLETE' : 'UNAVAILABLE / INCOMPLETE', [
+      h('p', {}, state.ollama.catalog?.message ?? ollamaText('No verified official catalog snapshot is loaded.', '未有載入已驗證官方目錄快照。')),
+      h('p', { class: 'unavailable-note' }, ollamaText('This build has no reviewed official catalog adapter. The Model Store stays empty rather than showing a curated or guessed list.', '呢個版本未有經審核官方目錄配接器。模型商店會保持空白，唔會顯示精選或者估出嚟嘅清單。')),
+    ]));
+}
+
+function ollamaFitText(variant: OllamaCatalogVariant): { verdict: string; detail: string } {
+  const missing = variant.blobSizeBytes === null || variant.parameterCount === null || variant.contextLength === null || !variant.quantization;
+  if (missing) return { verdict: ollamaText('Unknown', '未知'), detail: ollamaText('Exact size, parameters, quantization, context, or hardware evidence is missing. No fit is guessed from the model name.', '缺少確實大小、參數、量化、context 或硬件證據。唔會靠模型名估計。') };
+  return { verdict: ollamaText('Unknown', '未知'), detail: ollamaText('The model evidence is complete, but this surface has no reviewed RAM/VRAM/disk probe yet. A success promise would be fiction.', '模型證據齊全，但呢個介面未有經審核 RAM／VRAM／磁碟偵測。聲稱一定成功會係虛構。') };
+}
+
+function ollamaStore(): HTMLElement {
+  const catalog = state.ollama.catalog;
+  const search = sq('ollama:model-store'); const match = makeMatcher(search);
+  const variants = (catalog?.variants ?? []).filter((variant) => match(`${variant.qualifiedName} ${variant.capabilities.join(' ')} ${variant.quantization ?? ''} ${variant.blobSizeBytes ?? ''}`));
+  return h('section', { class: 'ollama-store', 'aria-label': ollamaText('Official Model Store', '官方模型商店') },
+    h('div', { class: 'ollama-store-search' }, searchLine('ollama:model-store', ollamaText('Search the complete official variant inventory', '搜尋完整官方模型版本清單'))),
+    h('div', { class: `ollama-catalog-banner${catalog?.complete ? ' complete' : ' unavailable'}`, role: 'status' },
+      icon(catalog?.complete ? 'verified' : 'warning'), h('div', {}, h('b', {}, catalog?.complete ? ollamaText('Verified complete snapshot', '已驗證完整快照') : ollamaText('Catalog unavailable or incomplete', '目錄不可用或者唔完整')),
+        h('span', {}, catalog?.message ?? ollamaText('No official snapshot is available.', '未有官方快照。')),
+        h('small', {}, `${catalog?.pageCount ?? 0} page(s) · ${catalog?.variants.length ?? 0} variant(s) · ${catalog?.stale ? 'stale' : 'current'} · revision ${catalog?.sourceRevision || 'unknown'}`))),
+    h('div', { class: 'ollama-models' }, ...(variants.length ? variants.map((variant) => {
+      const fit = ollamaFitText(variant); const selected = state.ollama.selectedModel === variant.qualifiedName; const inCart = state.ollama.cart.has(variant.qualifiedName);
+      return h('article', { class: `ollama-model${selected ? ' selected' : ''}` },
+        h('div', { class: 'ollama-model-title' }, h('div', {}, h('b', {}, variant.qualifiedName), h('small', {}, variant.capabilities.join(' · '))), h('span', { class: 'availability unavailable' }, fit.verdict)),
+        h('p', {}, `${variant.blobSizeBytes === null ? 'Size unknown' : byteSize(variant.blobSizeBytes)} · ${variant.parameterCount === null ? 'Parameters unknown' : variant.parameterCount.toLocaleString()} · ${variant.quantization ?? 'Quantization unknown'} · ${variant.contextLength ?? 'Context unknown'}`),
+        h('p', { class: 'unavailable-note' }, fit.detail),
+        h('div', { class: 'btnrow' }, h('button', { class: 'btn text', onclick: () => { state.ollama.selectedModel = variant.qualifiedName; render(); } }, selected ? ollamaText('Selected', '已選') : ollamaText('Use for chat', '用於聊天')),
+          h('button', { class: 'btn tonal', onclick: () => { inCart ? state.ollama.cart.delete(variant.qualifiedName) : state.ollama.cart.add(variant.qualifiedName); render(); } }, inCart ? ollamaText('Remove from cart', '移出下載清單') : ollamaText('Add to pull cart', '加入下載清單'))));
+    }) : [emptyState(ollamaText('No verified official variants are available. The app will not fill the gap with curated or sample models.', '未有已驗證官方模型版本。應用程式唔會用精選或者示範模型填補空缺。'))])));
+}
+
+function ollamaCart(): HTMLElement {
+  const cart = [...state.ollama.cart];
+  return h('section', { class: 'ollama-cart', 'aria-label': ollamaText('Bounded pull cart and queue', '有限度下載清單同佇列') },
+    h('div', { class: 'ollama-cart-summary' }, h('div', {}, h('b', {}, ollamaText('Pull cart — never payment', '下載清單 — 絕非付款購物車')), h('span', {}, `${cart.length} selected · maximum 128 · 2 parallel pulls`)),
+      h('button', { class: 'btn filled', disabled: !cart.length || !state.ollama.catalog?.complete || state.ollama.health?.state !== 'healthy', title: !state.ollama.catalog?.complete ? ollamaText('A verified complete official catalog is required.', '需要已驗證完整官方目錄。') : state.ollama.health?.state !== 'healthy' ? ollamaText('The local Ollama API must be healthy.', '本機 Ollama API 必須健康。') : '', onclick: async () => { state.ollama.busy = true; render(); try { state.ollama.queue = await bridge().ollamaEnqueuePulls(cart); state.ollama.cart.clear(); } catch (error) { state.ollama.error = error instanceof Error ? error.message : 'Pull request failed safely.'; } finally { state.ollama.busy = false; render(); } } }, ollamaText('Start bounded pull', '開始有限度下載'))),
+    h('p', { class: 'unavailable-note' }, ollamaText('Before starting, review exact blob sizes in Model Store. Network and storage estimates remain unavailable when official size metadata or a hardware probe is missing.', '開始之前，請喺模型商店核對確實 blob 大小。官方大小資料或者硬件偵測缺少時，網絡同儲存估算會標示不可用。')),
+    h('div', { class: 'ollama-queue-list' }, ...(state.ollama.queue.length ? state.ollama.queue.map((item) => h('article', { class: `ollama-queue-item ${item.state}` },
+      h('b', {}, item.model), h('span', {}, `${item.state} · ${item.status}`), h('small', {}, item.totalBytes ? `${byteSize(item.completedBytes ?? 0)} / ${byteSize(item.totalBytes)}` : 'Size progress unavailable'),
+      item.state === 'pulling' ? h('button', { class: 'btn text', onclick: () => void bridge().ollamaCancelPull(item.model) }, ollamaText('Cancel', '取消')) : null,
+      ['failed', 'cancelled'].includes(item.state) ? h('button', { class: 'btn text', onclick: async () => { state.ollama.queue = await bridge().ollamaRetryPull(item.model); render(); } }, ollamaText('Retry', '重試')) : null)) : [emptyState(ollamaText('The pull queue is empty.', '下載佇列係空嘅。'))])));
+}
+
+function ollamaChat(): HTMLElement {
+  const variant = ollamaVariant(); const installed = new Set(state.ollama.health?.installed.map(({ name }) => name) ?? []); const available = !!variant && installed.has(variant.qualifiedName) && state.ollama.health?.state === 'healthy';
+  const chat = state.ollama.chat;
+  return h('section', { class: 'ollama-chat', 'aria-label': ollamaText('Local Ollama chat', '本機 Ollama 聊天') },
+    selectField(ollamaText('Verified installed model', '已驗證已安裝模型'), state.ollama.catalog?.variants.filter(({ qualifiedName }) => installed.has(qualifiedName)).map(({ qualifiedName }) => qualifiedName) ?? [], state.ollama.selectedModel || ollamaText('No verified installed model', '冇已驗證已安裝模型'), (value) => { state.ollama.selectedModel = value; render(); }),
+    h('label', { class: 'field' }, ollamaText('System prompt', '系統提示').toUpperCase(), h('textarea', { maxlength: '32768', value: chat.system, oninput: (event: Event) => { chat.system = (event.target as HTMLTextAreaElement).value; } })),
+    h('label', { class: 'field' }, ollamaText('Message', '訊息').toUpperCase(), h('textarea', { maxlength: '32768', value: chat.prompt, oninput: (event: Event) => { chat.prompt = (event.target as HTMLTextAreaElement).value; } })),
+    h('div', { class: 'ollama-chat-options' }, rangeField(ollamaText('Temperature', '溫度'), 0, 2, 0.1, chat.temperature, (value) => { chat.temperature = value; }), numberField(ollamaText('Context length', 'Context 長度'), 256, variant?.contextLength ?? 131072, chat.contextLength, (value) => { chat.contextLength = value; })),
+    h('div', { class: 'ollama-attachment-note', role: 'note' }, icon(variant?.capabilities.includes('vision') ? 'image' : 'block'), h('span', {}, variant?.capabilities.includes('vision')
+      ? ollamaText('This verified variant reports vision capability. Attachment file picking is not wired in this build, so no file leaves the chooser or enters chat.', '呢個已驗證模型版本支援影像，但呢個版本未接好附件選擇器，所以冇檔案會離開選擇器或者進入聊天。')
+      : ollamaText('Attachments are unavailable because the selected variant does not report vision capability.', '揀選嘅模型版本未有報告影像能力，所以附件不可用。'))),
+    h('div', { class: 'btnrow' }, h('button', { class: 'btn filled', disabled: !available || !chat.prompt.trim() || chat.busy, title: !available ? ollamaText('Select an installed verified model and start the local service.', '請揀已安裝已驗證模型，再啟動本機服務。') : '', onclick: () => void sendOllamaChat() }, ollamaText('Send locally', '本機傳送')),
+      h('button', { class: 'btn outlined', disabled: !chat.busy, onclick: () => void bridge().ollamaCancelChat() }, ollamaText('Cancel response', '取消回應')),
+      h('button', { class: 'btn text', disabled: !chat.messages.length, onclick: async () => { if (variant) { await bridge().ollamaExportChat({ model: variant.qualifiedName, messages: chat.messages, options: {} }, variant); snack(ollamaText('Created a redacted export object. File save wiring is still unavailable.', '已建立遮蔽敏感資料嘅匯出物件；檔案儲存接線仍未提供。')); } } }, ollamaText('Prepare redacted export', '準備遮蔽匯出'))),
+    h('pre', { class: 'ollama-chat-output', role: 'log', 'aria-live': 'polite' }, chat.output || ollamaText('No local response yet.', '未有本機回應。')));
+}
+
+async function sendOllamaChat(): Promise<void> {
+  const variant = ollamaVariant(); const chat = state.ollama.chat; if (!variant || chat.busy || !chat.prompt.trim()) return;
+  const messages: OllamaChatMessage[] = [...chat.messages]; if (chat.system.trim() && !messages.some(({ role }) => role === 'system')) messages.unshift({ role: 'system', content: chat.system.trim() });
+  messages.push({ role: 'user', content: chat.prompt.trim() }); chat.output = ''; chat.busy = true; state.ollama.error = ''; render();
+  try { const validated = await bridge().ollamaChat({ model: variant.qualifiedName, messages, options: { temperature: chat.temperature, numCtx: chat.contextLength } }, variant); chat.messages = validated.messages; chat.prompt = ''; }
+  catch (error) { state.ollama.error = error instanceof Error ? error.message : 'Local chat failed safely.'; }
+  finally { chat.busy = false; render(); }
+}
+
+function ollamaHarness(): HTMLElement {
+  const variant = ollamaVariant(); const hstate = state.ollama.harness; const profiles = ['vscode-continue', 'opencode-local', 'open-webui-local'];
+  return h('section', { class: 'ollama-harness', 'aria-label': ollamaText('Allowlisted harness plans', '已允許工具啟動方案') },
+    h('div', { class: 'ollama-proof-banner' }, icon('shield'), h('div', {}, h('b', {}, ollamaText('Prebuilt profiles only', '只限預建設定檔')), h('span', {}, ollamaText('This is not an arbitrary command launcher. Ollama does not natively launch these harnesses; the app prepares a reviewed local profile.', '呢個唔係任意指令啟動器。Ollama 本身唔會原生啟動呢啲工具；應用程式只會準備經審核本機設定檔。')))),
+    selectField(ollamaText('Harness profile', '工具設定檔'), profiles, hstate.profile, (value) => { hstate.profile = value; hstate.previewed = false; render(); }),
+    selectField(ollamaText('Model', '模型'), state.ollama.health?.installed.map(({ name }) => name) ?? [], state.ollama.selectedModel || ollamaText('No installed model', '冇已安裝模型'), (value) => { state.ollama.selectedModel = value; hstate.previewed = false; render(); }),
+    h('label', { class: 'field' }, ollamaText('Workspace folder', '工作區資料夾').toUpperCase(), h('input', { value: hstate.workspaceFolder, placeholder: ollamaText('Use the native folder browser in a future build', '未來版本會使用原生資料夾瀏覽器'), oninput: (event: Event) => { hstate.workspaceFolder = (event.target as HTMLInputElement).value; hstate.previewed = false; } })),
+    h('p', { class: 'unavailable-note' }, ollamaText('Native browse and executable detection are not wired, so launch remains disabled. Typing a path cannot turn this into an arbitrary executable field.', '未接好原生瀏覽同執行檔偵測，所以啟動保持停用。手動輸入路徑唔會令呢度變成任意執行檔欄位。')),
+    h('div', { class: 'btnrow' }, h('button', { class: 'btn tonal', disabled: !variant, onclick: () => { hstate.previewed = true; hstate.restored = false; render(); } }, ollamaText('Preview typed plan', '預覽類型化方案')),
+      h('button', { class: 'btn filled', disabled: true, title: ollamaText('Unavailable until installed executable detection and automatic failed-launch rollback are wired.', '要等已安裝執行檔偵測同失敗自動回復接好先可以用。') }, ollamaText('Launch unavailable', '啟動不可用')),
+      h('button', { class: 'btn outlined', disabled: !hstate.previewed, onclick: () => { hstate.restored = true; render(); } }, ollamaText('Restore snapshot', '還原快照'))),
+    h('pre', { class: 'ollama-plan' }, hstate.previewed ? JSON.stringify({ schemaVersion: 1, profileId: hstate.profile, model: variant?.qualifiedName ?? '', executableId: hstate.profile === 'vscode-continue' ? 'vscode' : hstate.profile === 'opencode-local' ? 'opencode' : 'open-webui', environment: hstate.profile === 'open-webui-local' ? { OLLAMA_BASE_URL: 'http://127.0.0.1:11434' } : { OLLAMA_HOST: 'http://127.0.0.1:11434' }, rollbackRequiredOnFailure: true, restored: hstate.restored }, null, 2) : ollamaText('Preview a profile to inspect its fixed executable identity, loopback environment, and rollback requirement.', '預覽設定檔即可檢查固定執行檔身份、loopback 環境同回復要求。')));
+}
+
+function converterText(en: string, yue: string): string {
+  if (effectiveLanguage() === 'Yue') return yue;
+  if (effectiveLanguage() === 'Bilingual') return `${en} · ${yue}`;
+  return en;
+}
+
+function byteSize(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '0 B';
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']; let current = value; let unit = 0;
+  while (current >= 1024 && unit < units.length - 1) { current /= 1024; unit += 1; }
+  return `${current >= 10 || unit === 0 ? current.toFixed(0) : current.toFixed(1)} ${units[unit]}`;
+}
+
+async function converterAction(action: () => Promise<FileConverterSurfaceState>): Promise<void> {
+  if (state.converter.busy) return;
+  state.converter.busy = true; state.converter.error = ''; render();
+  try { state.converter.data = await action(); }
+  catch (error) { state.converter.error = error instanceof Error ? error.message : 'The local converter action failed safely.'; }
+  finally { state.converter.busy = false; render(); }
+}
+
+function converterPane(): HTMLElement {
+  const data = state.converter.data;
+  const school = schoolModeRestrictsPersonalization();
+  const pane = h('div', { class: 'pane padded converter-pane' },
+    h('div', { class: 'pane-head converter-head' },
+      h('div', {}, h('h2', {}, converterText('Local file converter', '本機檔案轉換器')),
+        h('p', {}, converterText('Choose local files through the native picker. Content detection reads at most 4 KiB; paths and document contents are never shown in this catalog.', '用原生選擇器揀本機檔案。內容偵測最多讀 4 KiB；目錄唔會顯示路徑或者文件內容。'))),
+      h('div', { class: 'converter-status', role: 'status', 'aria-live': 'polite' }, data?.lastMessage ?? converterText('Loading the persistent queue…', '正在載入可恢復佇列…'))),
+    h('div', { class: 'tabrow converter-tabs', role: 'tablist', 'aria-label': converterText('Converter sections', '轉換器分頁') },
+      ...(['catalog', 'sources', 'queue'] as const).map((tab) => h('button', {
+        class: `seg${state.converter.tab === tab ? ' active' : ''}`, role: 'tab', 'aria-selected': state.converter.tab === tab ? 'true' : 'false',
+        onclick: () => { state.converter.tab = tab; render(); },
+      }, tab === 'catalog' ? converterText('Adapter catalog', '配接器目錄') : tab === 'sources' ? converterText('Source files', '來源檔案') : converterText('Queue and results', '佇列同結果')))),
+    state.converter.error ? h('div', { class: 'feedback error', role: 'alert' }, state.converter.error) : null);
+
+  if (!data) { pane.appendChild(emptyState(converterText('Loading the local converter state…', '正在載入本機轉換器狀態…'))); return pane; }
+  if (state.converter.tab === 'catalog') pane.appendChild(converterCatalog(data));
+  if (state.converter.tab === 'sources') pane.appendChild(converterSources(data, school));
+  if (state.converter.tab === 'queue') pane.appendChild(converterQueue(data));
+  return pane;
+}
+
+function converterCatalog(data: FileConverterSurfaceState): HTMLElement {
+  const category = state.converter.selectedCategory;
+  const search = sq(`converter:${category}`); const match = makeMatcher(search);
+  const entries = data.catalog.filter((entry) => entry.category === category && match(`${entry.targetFormat} ${entry.sourceKinds.join(' ')} ${entry.unavailableReason ?? ''} ${entry.metadataBehavior}`));
+  return h('section', { class: 'converter-catalog', 'aria-label': converterText('Categorized adapter catalog', '分類配接器目錄') },
+    h('div', { class: 'converter-categories', role: 'tablist', 'aria-label': converterText('Adapter categories', '配接器分類') },
+      ...CONVERTER_CATEGORIES.map((item) => h('button', {
+        class: `chip${item === category ? ' active' : ''}`, role: 'tab', 'aria-selected': item === category ? 'true' : 'false',
+        onclick: () => { state.converter.selectedCategory = item; render(); },
+      }, item))),
+    h('div', { class: 'converter-category-search' }, searchLine(`converter:${category}`, converterText(`Search ${category} formats and reasons`, `搜尋 ${category} 格式同原因`))),
+    h('div', { class: 'converter-proof-banner', role: 'note' }, icon('verified'), h('div', {},
+      h('b', {}, converterText('Packaged proof is required', '必須有封裝證明')),
+      h('span', {}, converterText('A format is enabled only when every offline adapter artifact is bundled, hashed, isolated, and can reopen its output. PATH tools and network services never count.', '只有離線配接器已內置、有雜湊、隔離執行，並可重新開啟輸出，格式先會啟用。PATH 工具同網絡服務一律唔算。')))),
+    h('div', { class: 'converter-adapters' }, ...(entries.length ? entries.map((entry) => h('article', { class: `converter-adapter ${entry.availability}`, 'aria-disabled': entry.availability === 'unavailable' ? 'true' : 'false' },
+      h('div', { class: 'converter-adapter-title' }, h('b', {}, entry.targetFormat), h('span', { class: `availability ${entry.availability}` }, entry.availability === 'available' ? converterText('Available offline', '離線可用') : converterText('Unavailable', '不可用'))),
+      h('p', {}, converterText('Sources', '來源'), ': ', entry.sourceKinds.join(', ')),
+      h('p', {}, entry.metadataBehavior),
+      h('p', { class: 'converter-reason' }, entry.unavailableReason ?? entry.outputValidator),
+      h('button', {
+        class: 'btn tonal', disabled: entry.availability !== 'available' || data.storage.status !== 'ready' || data.selected.length === 0,
+        title: entry.availability !== 'available' ? entry.unavailableReason : data.selected.length === 0 ? converterText('Choose source files first.', '請先揀來源檔案。') : data.storage.status !== 'ready' ? converterText('Storage preflight is not ready.', '儲存空間預檢未準備好。') : converterText('Queue this offline conversion', '加入離線轉換佇列'),
+        onclick: () => void converterAction(() => bridge().fileConverterEnqueue(entry.id)),
+      }, converterText('Queue conversion', '加入轉換佇列')))) : [emptyState(converterText('No adapter matches this category search.', '呢個分類搜尋冇配接器符合。'))])));
+}
+
+function converterSources(data: FileConverterSurfaceState, school: boolean): HTMLElement {
+  return h('section', { class: 'converter-sources' },
+    h('div', { class: 'btnrow' },
+      h('button', { class: 'btn filled', disabled: state.converter.busy, onclick: () => void converterAction(() => bridge().fileConverterPickSources()) }, icon('folder_open'), converterText('Choose local files', '揀本機檔案')),
+      h('button', { class: 'btn outlined', disabled: state.converter.busy || !data.selected.length, onclick: () => void converterAction(() => bridge().fileConverterClearSelection()) }, converterText('Clear source selection', '清除來源選擇'))),
+    h('div', { class: `storage-preflight ${data.storage.status}`, role: 'status' },
+      h('b', {}, converterText('Storage preflight', '儲存空間預檢')),
+      h('span', {}, data.storage.status === 'ready'
+        ? converterText(`${byteSize(data.storage.availableBytes)} available; ${byteSize(data.storage.requiredBytes + data.storage.reserveBytes)} required including reserve.`, `可用 ${byteSize(data.storage.availableBytes)}；連預留空間需要 ${byteSize(data.storage.requiredBytes + data.storage.reserveBytes)}。`)
+        : data.storage.status === 'insufficient' ? converterText('Not enough application-data storage for the selected batch and safety reserve.', '應用程式資料位置唔夠空間容納批次同安全預留。') : converterText('Storage capacity could not be verified, so conversion stays disabled.', '無法驗證儲存容量，所以轉換會保持停用。'))),
+    school ? h('div', { class: 'converter-school', role: 'note' }, converterText('School mode keeps this surface in English and omits playful converter copy.', '')) : null,
+    h('div', { class: 'converter-source-list' }, ...(data.selected.length ? data.selected.map((source) => h('article', { class: `converter-source${source.conflict ? ' conflict' : ''}` },
+      h('div', {}, h('b', {}, source.name), h('span', {}, `${byteSize(source.bytes)} · ${source.kind} · ${source.confidence}`)),
+      h('p', {}, source.reason), source.conflict ? h('strong', {}, converterText('The extension conflicts with the bounded content signature. Conversion remains unavailable.', '副檔名同有限內容簽名有衝突；轉換保持不可用。')) : null)) : [emptyState(converterText('No local source files selected.', '未揀本機來源檔案。'))])));
+}
+
+function converterQueue(data: FileConverterSurfaceState): HTMLElement {
+  const total = Object.values(data.queue.counts).reduce((sum, value) => sum + value, 0);
+  return h('section', { class: 'converter-queue' },
+    h('div', { class: 'converter-queue-summary' },
+      h('div', {}, h('b', {}, converterText('Persistent paged queue', '可恢復分頁佇列')), h('span', {}, `${total} item(s) · ${data.queue.pageCount} page(s) · ${data.queue.state}`)),
+      h('div', { class: 'btnrow' },
+        h('button', { class: 'btn tonal', disabled: data.queue.state !== 'active', onclick: () => void converterAction(() => bridge().fileConverterPause()) }, converterText('Pause', '暫停')),
+        h('button', { class: 'btn tonal', disabled: data.queue.state !== 'paused', onclick: () => void converterAction(() => bridge().fileConverterResume()) }, converterText('Resume', '繼續')),
+        h('button', { class: 'btn outlined', disabled: data.queue.state === 'cancelled' || total === 0, onclick: () => void converterAction(() => bridge().fileConverterCancelAll()) }, converterText('Cancel all', '全部取消')),
+        h('button', { class: 'btn text', disabled: total > 0 && data.queue.state !== 'cancelled', onclick: () => gate(converterText('Delete the local conversion queue metadata and create an empty queue', '刪除本機轉換佇列中繼資料並建立空白佇列'), undefined, undefined, () => void converterAction(() => bridge().fileConverterResetQueue())) }, converterText('New empty queue', '建立空白佇列')))),
+    h('p', { class: 'converter-queue-note' }, converterText(`Metadata is stored in pages of at most ${data.limits.pageItems}; processing is capped at ${data.limits.maxConcurrency} concurrent items with byte backpressure. File bytes are never retained in queue metadata.`, `中繼資料每頁最多 ${data.limits.pageItems} 項；同時處理最多 ${data.limits.maxConcurrency} 項，並有位元組背壓。檔案內容唔會保存在佇列中繼資料。`)),
+    h('div', { class: 'converter-results' }, ...(data.queue.items.length ? data.queue.items.map((item) => h('article', { class: `converter-result ${item.state}` },
+      h('b', {}, item.sourceName), h('span', {}, `${item.state} · ${item.adapterId}`), h('small', {}, item.outcome ?? converterText('No result yet.', '未有結果。')))) : [emptyState(converterText('The queue is empty. No converter can run until an offline adapter has packaged proof.', '佇列係空嘅。離線配接器未有封裝證明之前，冇轉換器可以執行。'))])));
 }
 
 function docsPane(): HTMLElement {
@@ -2270,6 +2646,10 @@ function settingsPane(): HTMLElement {
     ], 'wide'));
   }
 
+  if (!schoolModeRestrictsPersonalization() && show('Application logo app logo preset upload local PNG crop fit contain cover stretch focal point background live preview reset presentation identity')) {
+    cards.appendChild(appLogoSettingsCard());
+  }
+
   if (surface && !schoolModeRestrictsPersonalization() && show('Show emojis in dialogs and message boxes decorative semantic accessible')) {
     cards.appendChild(card(settingsCopy('Dialog and message-box emoji', '對話框同訊息框 Emoji'), '', [
       h('p', {}, settingsCopy(
@@ -2412,6 +2792,98 @@ function settingsPane(): HTMLElement {
   return h('div', { class: 'pane padded' },
     h('div', { style: 'margin-bottom:16px;max-width:520px' }, searchLine('settings', 'Search settings, descriptions and current values')),
     cards);
+}
+
+function appLogoCopy(english: string, yue: string, englishPlayful = english, yuePlayful = yue): string {
+  return settingsCopy(
+    state.prefs.enFunny >= 4 ? englishPlayful : english,
+    state.prefs.yueFunny >= 4 ? yuePlayful : yue,
+  );
+}
+
+function appLogoAsset(size: number): AppLogoDerivedAsset | undefined {
+  return state.appLogo.data?.assets.find((asset) => asset.width === size && asset.height === size);
+}
+
+function acceptAppLogo(next: AppLogoRuntimeSnapshot | null): void {
+  if (next) state.appLogo.data = next;
+}
+
+async function changeAppLogoTransform(patch: Partial<AppLogoTransform>): Promise<void> {
+  const current = state.appLogo.data?.persisted.transform;
+  if (!current || state.appLogo.busy) return;
+  state.appLogo.busy = true; state.appLogo.error = ''; render();
+  try {
+    const next = { ...current, ...patch, focalPoint: patch.focalPoint ?? current.focalPoint } as AppLogoTransform;
+    acceptAppLogo(await bridge().appLogoUpdateTransform(next));
+  } catch (error) {
+    state.appLogo.error = error instanceof Error ? error.message : appLogoCopy('The logo transform could not be applied.', '未能套用標誌調整。');
+  } finally { state.appLogo.busy = false; render(); }
+}
+
+function appLogoSettingsCard(): HTMLElement {
+  const data = state.appLogo.data;
+  const transform = data?.persisted.transform ?? { crop: 'original', fit: 'contain', focalPoint: { x: 0.5, y: 0.5 }, background: 'transparent' };
+  const selection = data?.persisted.selection;
+  const previewSizes = [20, 24, 48, 64, 128, 256];
+  const preset = selection?.kind === 'preset' ? selection.presetId : 'custom';
+  const preview = h('div', { class: 'app-logo-previews', role: 'group', 'aria-label': appLogoCopy('Live app-logo previews at every consumed display size', '所有使用尺寸嘅即時應用程式標誌預覽') },
+    ...previewSizes.map((size) => {
+      const asset = appLogoAsset(size);
+      return h('figure', { class: 'app-logo-preview' },
+        asset ? h('img', { src: asset.dataUrl, width: String(size), height: String(size), alt: appLogoCopy(`App logo preview at ${size} pixels`, `${size} 像素應用程式標誌預覽`) }) : h('span', { class: 'app-logo-missing' }, '—'),
+        h('figcaption', {}, `${size} × ${size}`));
+    }));
+  const presetPicker = selectField(appLogoCopy('Shipped logo preset', '內置標誌預設'), ['material-blue', 'material-teal', 'high-contrast', 'custom'], preset, (value) => {
+    if (value === 'custom' || state.appLogo.busy) return;
+    state.appLogo.busy = true; state.appLogo.error = ''; render();
+    void bridge().appLogoSelectPreset(value as AppLogoPresetId, transform)
+      .then((next) => { acceptAppLogo(next); snack(appLogoCopy('Logo preset applied.', '已套用標誌預設。')); })
+      .catch((error) => { state.appLogo.error = error instanceof Error ? error.message : appLogoCopy('The preset could not be applied.', '未能套用預設。'); })
+      .finally(() => { state.appLogo.busy = false; render(); });
+  });
+  presetPicker.setAttribute('data-app-logo-control', 'true');
+  const background = h('input', {
+    type: 'text', value: transform.background, maxlength: '9', spellcheck: 'false', 'aria-label': appLogoCopy('Logo background: transparent, HEX, or HEX8', '標誌背景：透明、HEX 或 HEX8'),
+    onchange: (event: Event) => void changeAppLogoTransform({ background: (event.target as HTMLInputElement).value as AppLogoTransform['background'] }),
+  });
+  return card(appLogoCopy('Application logo', '應用程式標誌'), '', [
+    h('p', {}, appLogoCopy('Choose a shipped preset or a local PNG. The app validates and rasterizes it locally into only the sizes shown below. Rasterization can lose vector sharpness and source metadata.', '可揀內置預設或者本機 PNG。應用程式只會喺本機驗證同點陣化成下面顯示嘅尺寸；點陣化可能會失去向量銳利度同來源 metadata。')),
+    h('p', { class: 'feedback' }, appLogoCopy('Presentation only: this never changes the package id, executable or installer name, update feed, or application-data directory.', '只會改畫面：唔會改套件 ID、執行檔或安裝程式名稱、更新來源，亦唔會改應用程式資料目錄。')),
+    preview,
+    h('div', { class: 'grid2' },
+      presetPicker,
+      selectField(appLogoCopy('Crop', '裁剪'), ['original', 'square'], transform.crop, (value) => void changeAppLogoTransform({ crop: value as AppLogoTransform['crop'] })),
+      selectField(appLogoCopy('Fit', '適應方式'), ['contain', 'cover', 'stretch'], transform.fit, (value) => void changeAppLogoTransform({ fit: value as AppLogoTransform['fit'] })),
+      rangeField(appLogoCopy('Horizontal focal point', '水平焦點'), 0, 1, 0.01, transform.focalPoint.x, (value) => void changeAppLogoTransform({ focalPoint: { ...transform.focalPoint, x: value } })),
+      rangeField(appLogoCopy('Vertical focal point', '垂直焦點'), 0, 1, 0.01, transform.focalPoint.y, (value) => void changeAppLogoTransform({ focalPoint: { ...transform.focalPoint, y: value } })),
+      h('label', { class: 'field' }, appLogoCopy('BACKGROUND', '背景'), background)),
+    h('div', { class: 'btnrow' },
+      h('button', { class: 'btn filled', 'data-app-logo-control': 'true', disabled: state.appLogo.busy, onclick: async () => {
+        state.appLogo.busy = true; state.appLogo.error = ''; render();
+        try {
+          const next = await bridge().appLogoPickPng(transform);
+          if (next) {
+            acceptAppLogo(next);
+            snack(appLogoCopy(
+              'Local PNG logo applied.',
+              '已套用本機 PNG 標誌。',
+              'Local PNG logo applied. The pixel kitchen stayed on this computer.',
+              '已套用本機 PNG 標誌，像素廚房全程留喺呢部電腦。',
+            ));
+          }
+        }
+        catch (error) { state.appLogo.error = error instanceof Error ? error.message : appLogoCopy('The PNG was rejected; the prior logo remains active.', 'PNG 被拒絕；之前嘅標誌會繼續使用。'); }
+        finally { state.appLogo.busy = false; render(); }
+      } }, appLogoCopy(selection?.kind === 'custom' ? 'Replace local PNG' : 'Choose local PNG', selection?.kind === 'custom' ? '更換本機 PNG' : '揀本機 PNG')),
+      h('button', { class: 'btn outlined', disabled: state.appLogo.busy, onclick: async () => {
+        state.appLogo.busy = true; state.appLogo.error = ''; render();
+        try { acceptAppLogo(await bridge().appLogoReset()); snack(appLogoCopy('Application logo reset.', '應用程式標誌已重設。')); }
+        catch { state.appLogo.error = appLogoCopy('The logo could not be reset.', '未能重設標誌。'); }
+        finally { state.appLogo.busy = false; render(); }
+      } }, appLogoCopy('Clear and reset', '清除並重設'))),
+    state.appLogo.error ? h('p', { class: 'feedback bad', role: 'alert' }, state.appLogo.error) : h('p', { class: 'feedback', role: 'status' }, selection?.kind === 'custom' ? appLogoCopy('A derived local raster is active. The selected source path, name, and original bytes are not retained.', '而家使用緊衍生本機點陣圖；揀選來源嘅路徑、名稱同原始 bytes 都唔會保留。') : appLogoCopy(`Preset: ${preset}`, `預設：${preset}`)),
+  ], 'wide');
 }
 
 function readingPane(): HTMLElement {
@@ -3041,6 +3513,10 @@ function paletteDialog(): HTMLElement {
     ...(!schoolModeRestrictsPersonalization() ? [{ label: 'Manage personal vocabulary', sub: 'Local JSON upload, replace, status, and clear controls', icon: 'translate', act: () => {
       closeDialog(); go('settings'); state.searches.settings = { text: 'Personal vocabulary', regex: false, flags: 'iu' };
       render(); window.setTimeout(() => document.querySelector<HTMLInputElement>('[data-vocabulary-upload="true"]')?.focus(), 0);
+    } }] : []),
+    ...(!schoolModeRestrictsPersonalization() ? [{ label: 'Manage application logo', sub: 'Presets, local PNG, crop, fit, focal point, background, and reset', icon: 'image', act: () => {
+      closeDialog(); go('settings'); state.searches.settings = { text: 'Application logo', regex: false, flags: 'iu' };
+      render(); window.setTimeout(() => document.querySelector<HTMLElement>('[data-app-logo-control="true"]')?.focus(), 0);
     } }] : []),
     { label: 'Export this view', sub: '17 formats', icon: 'download', act: () => openDialog('export') },
     { label: 'Mark already-installed packages', sub: 'Queries winget', icon: 'fact_check', act: () => { closeDialog(); void loadInstalled(); } },
@@ -4747,6 +5223,12 @@ async function boot(): Promise<void> {
     render();
     narrateFact('update', `Update status ${status.state}: ${status.message}`, `更新狀態 ${status.state}：${status.message}`, status.state === 'error' ? 'error' : 'event');
   });
+  bridge().onOllamaPullProgress((progress) => {
+    const index = state.ollama.queue.findIndex(({ model }) => model === progress.model);
+    if (index >= 0) state.ollama.queue[index] = progress; else state.ollama.queue.push(progress);
+    render();
+  });
+  bridge().onOllamaChatChunk((content) => { state.ollama.chat.output += content; render(); });
   render();
   try {
     state.catalog = await bridge().loadCatalog();
@@ -4756,6 +5238,11 @@ async function boot(): Promise<void> {
   try { state.offlineDocs = await bridge().loadOfflineDocs(); }
   catch (error) { state.offlineDocsError = error instanceof Error ? error.message : 'The offline documentation bundle could not be verified.'; }
   try { state.update = await bridge().updateStatus(); } catch { /* development/browser preview */ }
+  try { state.converter.data = await bridge().fileConverterState(); }
+  catch (error) { state.converter.error = error instanceof Error ? error.message : 'The local converter state could not be loaded.'; }
+  try { state.appLogo.data = await bridge().appLogoState(); }
+  catch (error) { state.appLogo.error = error instanceof Error ? error.message : 'The local app-logo state could not be loaded.'; }
+  await refreshOllama(false);
   try { state.history = (await bridge().history()).reverse(); } catch { state.history = []; }
   await refreshHistoryAccess();
   if (state.historyAccess.unlocked) await refreshGitHistory();

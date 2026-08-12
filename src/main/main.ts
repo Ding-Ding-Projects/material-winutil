@@ -9,8 +9,9 @@ import type {
   AuthenticatorBeginRequest, AuthenticatorCodes, AuthenticatorEntry, AuthenticatorRegistration,
   CommandResult, ExportFormat, HistoryBrowseResult, HistoryEntry, HistoryQuery, NarrationClientResult, NarrationEvent, NarrationRuntimeState,
   PersonalVocabularyState, PersonalVocabularyUploadResult, Preferences, RunKind, SchoolModeChangeResult,
-  ScheduledSettingsState, SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateRestartRequest, UpdateRestartResult, UpdateStatus, WinutilCatalog, DimSumStartupPresentation,
+  ScheduledSettingsState, SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateRestartRequest, UpdateRestartResult, UpdateStatus, WinutilCatalog, DimSumStartupPresentation, FileConverterSurfaceState, AppLogoRuntimeSnapshot,
 } from '../shared/types';
+import type { OllamaCatalogSnapshot, OllamaCatalogVariant, OllamaChatRequest, OllamaHealthSnapshot, OllamaPullProgress } from '../shared/ollama-suite';
 import { resolvePackageRequest, validateCatalog, wingetArgs } from './package-policy';
 import { AUTHENTICATOR_PNG_LIMITS, AuthenticatorService } from './authenticator-service';
 import { PersonalVocabularyStore } from './personal-vocabulary-store';
@@ -28,6 +29,10 @@ import { ScheduledSettingsService } from './scheduled-settings-service';
 import type { ScheduledSettingValue, ScheduledSettingsDocument } from '../shared/scheduled-settings';
 import { UpdateService } from './update-service';
 import { DimSumSurpriseService } from './dim-sum-surprise-service';
+import { FileConverterService } from './file-converter-service';
+import { AppLogoService } from './app-logo-service';
+import { APP_LOGO_LIMITS, validateAppLogoTransform, type AppLogoPresetId, type AppLogoTransform } from '../shared/app-logo';
+import { OllamaSuiteService } from './ollama-suite-service';
 
 const ROOT = path.join(__dirname, '..', '..');
 const CONFIG_DIR = path.join(__dirname, '..', 'config');
@@ -49,6 +54,9 @@ let scheduledSettingsService: ScheduledSettingsService | null = null;
 let localHistoryService: LocalHistory | null = null;
 let lockService: LockService | null = null;
 let offlineDocsCache: OfflineDocsBundle | null = null;
+let fileConverterService: FileConverterService | null = null;
+let appLogoService: AppLogoService | null = null;
+let ollamaSuiteService: OllamaSuiteService | null = null;
 let lastExportPath = '';
 let historyUnlockedUntil = 0;
 const HISTORY_CREDENTIAL_TARGET = 'history-manager-primary';
@@ -1030,6 +1038,133 @@ ipcMain.handle('dim-sum:startup', async (event): Promise<DimSumStartupPresentati
   });
 });
 
+function converter(): FileConverterService {
+  if (!fileConverterService) throw new Error('The local file converter is unavailable.');
+  return fileConverterService;
+}
+
+ipcMain.handle('file-converter:state', async (event): Promise<FileConverterSurfaceState> => {
+  requireTrustedSender(event);
+  return converter().snapshot();
+});
+ipcMain.handle('file-converter:pick-sources', async (event): Promise<FileConverterSurfaceState> => {
+  requireTrustedSender(event);
+  if (!win || win.isDestroyed()) throw new Error('The application window is unavailable.');
+  const choice = await dialog.showOpenDialog(win, {
+    title: 'Choose local source files to inspect', properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Known and other local files', extensions: ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'wav', 'mp3', 'ogg', 'mp4', 'zip', '7z', 'txt', 'md', 'json', 'yaml', 'yml', 'xml', 'csv', 'tsv', '*'] }],
+  });
+  if (choice.canceled) return converter().snapshot();
+  return converter().pickLocalFiles(choice.filePaths);
+});
+ipcMain.handle('file-converter:clear-selection', async (event): Promise<FileConverterSurfaceState> => {
+  requireTrustedSender(event); return converter().clearSelection();
+});
+ipcMain.handle('file-converter:enqueue', async (event, adapterId: unknown): Promise<FileConverterSurfaceState> => {
+  requireTrustedSender(event);
+  if (typeof adapterId !== 'string') throw new Error('The converter adapter id is invalid.');
+  return converter().enqueue(adapterId);
+});
+ipcMain.handle('file-converter:pause', async (event): Promise<FileConverterSurfaceState> => {
+  requireTrustedSender(event); return converter().pause();
+});
+ipcMain.handle('file-converter:resume', async (event): Promise<FileConverterSurfaceState> => {
+  requireTrustedSender(event); return converter().resume();
+});
+ipcMain.handle('file-converter:cancel-all', async (event): Promise<FileConverterSurfaceState> => {
+  requireTrustedSender(event); return converter().cancelAll();
+});
+ipcMain.handle('file-converter:reset-queue', async (event): Promise<FileConverterSurfaceState> => {
+  requireTrustedSender(event); return converter().resetQueue();
+});
+
+function appLogo(): AppLogoService {
+  if (!appLogoService) throw new Error('The local app logo is unavailable.');
+  return appLogoService;
+}
+
+function requireLogoTransform(value: unknown): AppLogoTransform {
+  const transform = validateAppLogoTransform(value);
+  if (!transform) throw new TypeError('The app-logo transform is invalid.');
+  return transform;
+}
+
+ipcMain.handle('app-logo:state', (event): AppLogoRuntimeSnapshot => {
+  requireTrustedSender(event);
+  return appLogo().snapshot();
+});
+ipcMain.handle('app-logo:pick-png', async (event, transformValue: unknown): Promise<AppLogoRuntimeSnapshot | null> => {
+  requireTrustedSender(event);
+  const transform = requireLogoTransform(transformValue);
+  if (!win || win.isDestroyed()) throw new Error('The application window is unavailable.');
+  const choice = await dialog.showOpenDialog(win, {
+    title: 'Choose a local PNG app logo', properties: ['openFile'],
+    filters: [{ name: 'PNG images', extensions: ['png'] }],
+  });
+  if (choice.canceled || choice.filePaths.length !== 1) return null;
+  const filePath = choice.filePaths[0];
+  const info = await fs.stat(filePath);
+  if (!info.isFile() || info.size < 24 || info.size > APP_LOGO_LIMITS.maxUploadBytes) {
+    throw new Error('The app logo must be a bounded PNG file no larger than 4 MiB.');
+  }
+  const bytes = await fs.readFile(filePath);
+  try { return await appLogo().selectCustomPng(bytes, transform); }
+  finally { bytes.fill(0); }
+});
+ipcMain.handle('app-logo:select-preset', async (event, presetId: unknown, transformValue: unknown): Promise<AppLogoRuntimeSnapshot> => {
+  requireTrustedSender(event);
+  if (typeof presetId !== 'string') throw new TypeError('The app-logo preset id is invalid.');
+  return appLogo().selectPreset(presetId as AppLogoPresetId, requireLogoTransform(transformValue));
+});
+ipcMain.handle('app-logo:update-transform', async (event, transformValue: unknown): Promise<AppLogoRuntimeSnapshot> => {
+  requireTrustedSender(event);
+  return appLogo().updateTransform(requireLogoTransform(transformValue));
+});
+ipcMain.handle('app-logo:reset', async (event): Promise<AppLogoRuntimeSnapshot> => {
+  requireTrustedSender(event);
+  return appLogo().reset();
+});
+
+function ollamaSuite(): OllamaSuiteService {
+  if (!ollamaSuiteService) throw new Error('The local Ollama suite is unavailable.');
+  return ollamaSuiteService;
+}
+
+ipcMain.handle('ollama:health', async (event): Promise<OllamaHealthSnapshot> => {
+  requireTrustedSender(event); return ollamaSuite().health();
+});
+ipcMain.handle('ollama:catalog', (event): OllamaCatalogSnapshot => {
+  requireTrustedSender(event); return ollamaSuite().catalogSnapshot() ?? ollamaSuite().catalogWithInstalled([]);
+});
+ipcMain.handle('ollama:refresh-catalog', async (event): Promise<OllamaCatalogSnapshot> => {
+  requireTrustedSender(event); return ollamaSuite().refreshCatalog();
+});
+ipcMain.handle('ollama:pull-queue', (event): OllamaPullProgress[] => {
+  requireTrustedSender(event); return ollamaSuite().pullQueue();
+});
+ipcMain.handle('ollama:enqueue-pulls', async (event, models: unknown): Promise<OllamaPullProgress[]> => {
+  requireTrustedSender(event);
+  if (!Array.isArray(models) || models.some((model) => typeof model !== 'string')) throw new Error('The Ollama pull selection is invalid.');
+  return ollamaSuite().enqueuePulls(models);
+});
+ipcMain.handle('ollama:cancel-pull', (event, model: unknown): boolean => {
+  requireTrustedSender(event); if (typeof model !== 'string') return false; return ollamaSuite().cancelPull(model);
+});
+ipcMain.handle('ollama:retry-pull', async (event, model: unknown): Promise<OllamaPullProgress[]> => {
+  requireTrustedSender(event); if (typeof model !== 'string') throw new Error('The Ollama pull selection is invalid.');
+  await ollamaSuite().retryPull(model); return ollamaSuite().pullQueue();
+});
+ipcMain.handle('ollama:chat', async (event, request: unknown, variant: unknown): Promise<OllamaChatRequest> => {
+  requireTrustedSender(event);
+  return ollamaSuite().chat(request as OllamaChatRequest, variant as OllamaCatalogVariant, (content) => {
+    if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('ollama:chat-chunk', content);
+  });
+});
+ipcMain.handle('ollama:cancel-chat', (event): boolean => { requireTrustedSender(event); return ollamaSuite().cancelChat(); });
+ipcMain.handle('ollama:export-chat', (event, request: unknown, variant: unknown) => {
+  requireTrustedSender(event); return ollamaSuite().exportChat(request as OllamaChatRequest, variant as OllamaCatalogVariant);
+});
+
 app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
@@ -1054,6 +1189,16 @@ app.whenReady().then(async () => {
   });
   await scheduledSettingsService.initialize({ ...preferencesAsSettings(basePreferences), displayName: initialSettings.displayName.displayName });
   dimSumSurpriseService = new DimSumSurpriseService({ userDataDirectory: USER_DIR() });
+  fileConverterService = await FileConverterService.open(USER_DIR());
+  appLogoService = new AppLogoService({ userDataDirectory: USER_DIR() });
+  await appLogoService.initialize();
+  ollamaSuiteService = new OllamaSuiteService({
+    userDataDirectory: USER_DIR(),
+    onPullProgress: (progress) => {
+      if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('ollama:pull-progress', progress);
+    },
+  });
+  await ollamaSuiteService.load();
   createWindow();
   win?.setTitle(initialSettings.displayName.displayName);
   settingsSurfaceService.startWatching(broadcastSettingsSurface);

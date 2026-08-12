@@ -8,6 +8,11 @@ open-source WinUtil catalogue in a frameless Material Design 3 interface.
 The installer is an unsigned Squirrel.Windows executable and may trigger an
 unknown-publisher or SmartScreen warning.
 
+The current desktop build also includes a local app-logo studio, a fail-closed
+file-converter workspace, and a guided local Ollama manager. Conversion adapters
+remain disabled without packaged offline proof; Ollama catalog and hardware facts
+remain explicitly unavailable until their reviewed local adapters are present.
+
 > [!IMPORTANT]
 > Release `v0.1.0-build.6.1` enables only exact, allowlisted WinGet package operations.
 > Tweaks, optional features, update profiles, AppX removal, ISO servicing, and

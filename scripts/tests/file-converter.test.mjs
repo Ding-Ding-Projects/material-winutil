@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 import {
   FILE_CONVERTER_ADAPTERS,
@@ -11,6 +14,7 @@ import {
   detectFileType,
   validateAdapterRegistry,
 } from '../../dist/shared/file-converter.js';
+import { FileConverterService } from '../../dist/main/file-converter-service.js';
 
 class MemoryQueueStore {
   index;
@@ -82,3 +86,46 @@ test('queue rejects unbounded pages and records cancellation without loading fil
   assert.equal(queue.summary().state, 'cancelled');
 });
 
+test('desktop service inspects local picker paths without exposing full paths to the renderer', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'material-winutil-converter-'));
+  try {
+    const source = join(root, 'statement.pdf');
+    await writeFile(source, Buffer.from('%PDF-1.7\ncontrolled local fixture'));
+    const service = await FileConverterService.open(join(root, 'app-data'));
+    const state = await service.pickLocalFiles([source]);
+    assert.equal(state.selected.length, 1);
+    assert.equal(state.selected[0].name, 'statement.pdf');
+    assert.equal(state.selected[0].kind, 'pdf');
+    assert.equal(state.selected[0].confidence, 'magic');
+    assert.equal(state.limits.signatureBytes, FILE_CONVERTER_LIMITS.signatureBytes);
+    assert.doesNotMatch(JSON.stringify(state), /material-winutil-converter-|[A-Z]:\\/i);
+    assert.equal(state.catalog.every((adapter) => adapter.availability === 'unavailable'), true);
+    await assert.rejects(service.enqueue('pdf-inspect'), /not bundled and verified/i);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('desktop service persists queue controls without inventing an executable adapter', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'material-winutil-converter-state-'));
+  try {
+    const service = await FileConverterService.open(root);
+    assert.equal((await service.pause()).queue.state, 'paused');
+    assert.equal((await service.resume()).queue.state, 'active');
+    assert.equal((await service.cancelAll()).queue.state, 'cancelled');
+    const reset = await service.resetQueue();
+    assert.equal(reset.queue.state, 'active');
+    assert.equal(reset.queue.pageCount, 0);
+    const index = JSON.parse(await readFile(join(root, 'file-converter-queue-v1', 'index.json'), 'utf8'));
+    assert.equal(index.schemaVersion, 1);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('renderer exposes categorized converter search and real queue controls', async () => {
+  const renderer = await readFile(new URL('../../src/renderer/renderer.ts', import.meta.url), 'utf8');
+  assert.match(renderer, /\{ id: 'converter', label: 'File converter', icon: 'flip_to_front' \}/);
+  assert.match(renderer, /searchLine\(`converter:\$\{category\}`/);
+  assert.match(renderer, /fileConverterPickSources\(\)/);
+  assert.match(renderer, /fileConverterPause\(\)/);
+  assert.match(renderer, /fileConverterResume\(\)/);
+  assert.match(renderer, /fileConverterCancelAll\(\)/);
+  assert.match(renderer, /PATH tools and network services never count/);
+});

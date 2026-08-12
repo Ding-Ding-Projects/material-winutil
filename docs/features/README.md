@@ -12,11 +12,9 @@ This index documents the current Material System Utility baseline. A feature is 
 - [Locks and authenticator boundary](locks-and-authenticator.md) — a working local RFC 6238 authenticator; password and OTP locks and support-ticket recovery remain unavailable.
 - [Offline documentation browser](offline-documentation.md) — every feature article bundled at build time, verified by manifest and SHA-256, safely rendered from an AST, internally linked, and independently searchable by title and body.
 - [Dim sum startup surprise](dim-sum-boundary.md) — a non-blocking once-per-launch public-catalog photo card with protected-state suppression and bounded application-data caching.
-
-## Core-only foundations awaiting user-interface wiring
-
-- [App-logo customization core](app-logo-customization.md) — bounded local PNG validation, preset/transform/output/persistence primitives; settings and packaged rendering are still pending.
-- [Local file-converter core](file-converter.md) — a truthful unbundled adapter catalog and persistent paged queue; no conversion adapter or user-facing picker is enabled yet.
+- [App-logo customization](app-logo-customization.md) — shipped presets, bounded local PNG validation, derived-only persistence, live size previews, Settings/palette/title-bar wiring, and stable installed identity.
+- [Local file converter](file-converter.md) — a native local picker, categorized regex-searchable catalog, storage preflight, and persistent paged queue; every converter stays disabled until packaged offline adapter proof exists.
+- [Local Ollama suite manager](ollama-suite.md) — guided desktop Model Store, local health/troubleshooting, bounded pull cart, chat and allowlisted harness plans; official-catalog and hardware-adapter evidence remains explicitly unavailable until reviewed adapters ship.
 
 ## Available with bounded limitations
 

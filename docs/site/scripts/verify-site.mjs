@@ -18,7 +18,7 @@ function exactInventory(required, entries, name) {
   assert.deepEqual(entries.map((entry) => entry.id).sort(), [...required].sort(), `${name} entries do not match the hand-written inventory`);
 }
 
-assert.equal(coverage.schemaVersion, 3);
+assert.equal(coverage.schemaVersion, 4);
 exactInventory(coverage.requiredIds, coverage.verified, 'verified');
 exactInventory(coverage.requiredUnavailableIds, coverage.explicitlyUnavailable, 'unavailable');
 for (const contract of coverage.verified) {
@@ -29,11 +29,11 @@ for (const contract of coverage.verified) {
   }
 }
 
-for (const page of ['home', 'capabilities', 'guides', 'settings', 'schedule', 'tools', 'records', 'changelog']) {
+for (const page of ['home', 'capabilities', 'guides', 'settings', 'schedule', 'tools', 'logo', 'converter', 'ollama', 'records', 'changelog']) {
   assert.match(html, new RegExp(`data-page="${page}"`), `missing ${page} tab`);
   assert.match(html, new RegExp(`data-panel="${page}"`), `missing ${page} panel`);
 }
-for (const search of ['tab', 'group', 'master-tab', 'learn-tab', 'workspace-tab', 'capability', 'settings', 'schedule', 'lock', 'record', 'changelog', 'palette', 'tab-menu']) {
+for (const search of ['tab', 'group', 'master-tab', 'learn-tab', 'workspace-tab', 'capability', 'settings', 'schedule', 'lock', 'converter-category', 'converter-queue', 'ollama-catalog', 'ollama-installed', 'record', 'changelog', 'palette', 'tab-menu']) {
   const id = `${search}-search`;
   assert.match(html, new RegExp(`id="${id}"`), `missing ${id}`);
   assert.match(html, new RegExp(`data-builder-for="${id}"`), `missing builder button for ${id}`);
@@ -51,6 +51,25 @@ assert.match(js, /function scheduleMatches/);
 assert.match(js, /async function totpCode/);
 assert.match(js, /event\.ctrlKey && event\.shiftKey/);
 assert.match(js, /if \(event\.key === 'Tab'\)/);
+assert.match(html, /id="logo-file" type="file" accept="image\/png,\.png"/);
+assert.match(html, /16 · 32 · 64 · 128 px/);
+assert.match(js, /function readLocalPng\(file\)/);
+assert.match(js, /URL\.createObjectURL\(file\)/);
+assert.match(js, /URL\.revokeObjectURL\(url\)/);
+assert.match(js, /canvas\.toDataURL\('image\/png'\)/);
+assert.match(js, /function normalizeLogo\(candidate\)/);
+assert.match(js, /function discardExpiredCustomLogo\(\)/);
+assert.equal((js.match(/\['Documents \/ PDF'|\['Images'|\['Audio'|\['Video'|\['Archives'|\['Structured Data \/ Spreadsheets'|\['Code \/ Text'|\['Binary Encodings'/g) || []).length, 8, 'converter must enumerate all eight required categories');
+assert.match(js, /const searchId = `converter-category-detail-\$\{index\}-search`/);
+assert.match(js, /data-builder-for="\$\{searchId\}"/);
+assert.match(js, /data-builder="\$\{searchId\}"/);
+assert.match(html, /Browser networking is deliberately disabled for this site/);
+assert.match(html, /This site does not start a process, execute a shell command, contact a proxy, query a cloud service, or fabricate a model result/);
+assert.match(js, /function validateOllamaBrowserBoundary\(url\)/);
+assert.match(js, /url !== 'http:\/\/127\.0\.0\.1:11434'/);
+assert.match(js, /customBytes: 'omitted'/);
+assert.match(js, /prompts: 'omitted'/);
+assert.doesNotMatch(js, /\b(?:exec|spawn|shell|child_process)\s*\(/i, 'site must not execute local commands');
 assert.match(css, /@media\(max-width:640px\)/);
 assert.match(css, /@media\(prefers-reduced-motion:reduce\)/);
 assert.match(css, /min-width:320px/);

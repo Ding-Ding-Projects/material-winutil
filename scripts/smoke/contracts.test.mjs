@@ -40,8 +40,8 @@ test('app manifest captures the functional locks and exact bundled documentation
 
   assert.equal(captures.has('docs-index'), false);
   assert.equal(captures.has('docs-article'), false);
-  assert.equal(offlineBundle.articles.length, 21);
-  assert.equal(captures.get('docs-bundle-21-index')?.view, 'docs');
+  assert.equal(offlineBundle.articles.length, 22);
+  assert.equal(captures.get('docs-bundle-22-index')?.view, 'docs');
   assert.equal(
     captures.get('docs-bundle-article-release-boundary')?.prepare,
     "openOfflineArticle('docs/features/release-boundary.md')",
@@ -49,6 +49,8 @@ test('app manifest captures the functional locks and exact bundled documentation
   assert.doesNotMatch(JSON.stringify([...captures.values()]), /openDetail\('Release boundary'/u);
   assert.match(captures.get('color-picker')?.prepare ?? '', /state\.selectionColor='#6750A4';openColorPicker\('selection','Smoke selection'\)/u);
   assert.match(captures.get('dim-sum-startup-card')?.prepare ?? '', /state\.dimSumStartup=\{descriptor:/u);
+  assert.equal(captures.get('settings-app-logo')?.view, 'settings');
+  assert.match(captures.get('settings-app-logo')?.prepare ?? '', /state\.searches\.settings=\{text:'Application logo'/u);
   assert.doesNotMatch(JSON.stringify([...captures.values()]), /maybeDimSum|DIM_SUM|dimSumSeen/u);
 });
 

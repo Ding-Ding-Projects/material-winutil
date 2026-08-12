@@ -9,18 +9,22 @@
     page: 'home', language: 'en', englishLevel: 2, cantoneseLevel: 3,
     school: { enabled: false, name: 'School mode' }, dialogEmoji: true,
     theme: 'system', density: 100, dock: 'left', preset: 'system',
-    pinnedTabs: [], tabGroups: { learn: ['home', 'capabilities', 'guides'], workspace: ['settings', 'schedule', 'tools', 'records', 'changelog'] },
-    collapsedGroups: [], schedules: [], notifications: [], history: [], locks: [], totpEntries: [], tickets: [], appearance: {}
+    pinnedTabs: [], tabGroups: { learn: ['home', 'capabilities', 'guides'], workspace: ['settings', 'schedule', 'tools', 'logo', 'converter', 'ollama', 'records', 'changelog'] },
+    collapsedGroups: [], schedules: [], notifications: [], history: [], locks: [], totpEntries: [], tickets: [], appearance: {},
+    logo: { preset: 'material', fit: 'contain', focalX: 50, focalY: 50, background: '#6750a4', customDataUrl: '' },
+    ollamaPreferences: { harness: 'general', chatName: 'Local session' }
   };
 
   const copy = {
     en: {
-      docsLabel: 'Documentation', paletteHint: 'Find a page, setting, or command', home: 'Home', capabilities: 'Capabilities', guides: 'Guides', settings: 'Settings',
+      docsLabel: 'Documentation', paletteHint: 'Find a page, setting, or command', home: 'Home', capabilities: 'Capabilities', guides: 'Guides', settings: 'Settings', logoStudio: 'Logo studio', converter: 'Converter', ollamaSuite: 'Local models',
+      logoTitle: 'Logo studio', logoBoundary: "Change this site's displayed mark without changing its product identity, installer, update feed, or data keys.", converterTitle: 'File converter', converterBoundary: 'Files remain on this device. This static site exposes the complete queue and capability inventory, but runs no converter adapter without bundled package proof.', ollamaTitle: 'Local Ollama manager', ollamaBoundary: "This static site cannot cross the browser boundary to Ollama's loopback API. It keeps guided preferences locally and presents the real recovery path without pretending that a model is installed or running.",
       heroTitle: ['Manage exact WinGet packages with clear boundaries.', 'A focused, safer way to manage exact WinGet packages.', 'Package management without mystery meat buttons.', 'Exact package actions, because guessing is not a workflow.', 'WinGet, but the chaos has been politely asked to leave.'],
       heroBody: ['Browse a reviewed catalogue and run supported exact operations.', 'Browse a reviewed catalogue, search locally, and run exact package operations from a Material Design desktop shell.', 'Search locally, inspect the actual identifier, then let the supported operation do precisely one job.', 'A reviewed catalogue keeps wildcard roulette away from the install button.', 'The package gremlins get exact identifiers and absolutely no improvisation privileges.']
     },
     yue: {
-      docsLabel: '使用說明', paletteHint: '搵頁面、設定或者指令', home: '主頁', capabilities: '功能狀態', guides: '使用指南', settings: '設定',
+      docsLabel: '使用說明', paletteHint: '搵頁面、設定或者指令', home: '主頁', capabilities: '功能狀態', guides: '使用指南', settings: '設定', logoStudio: '標誌工作室', converter: '檔案轉換器', ollamaSuite: '本機模型',
+      logoTitle: '標誌工作室', logoBoundary: '只會改呢個網站顯示嘅標誌，產品身份、安裝程式、更新來源同資料鍵全部唔郁。', converterTitle: '檔案轉換器', converterBoundary: '檔案留喺部機度。呢個靜態網站會提供完整佇列同能力清單，但冇已打包工具證明就唔會扮有轉換器。', ollamaTitle: '本機 Ollama 管理器', ollamaBoundary: '呢個靜態網站唔可以跨過瀏覽器界線連接 Ollama 本機 API；設定只留本機，亦唔會扮模型已安裝或者運行緊。',
       heroTitle: ['清楚界線管理指定 WinGet 套件。', '用更專注、更穩陣嘅方法管理指定 WinGet 套件。', '管理套件唔使估估下。', '指定操作做指定嘢，唔玩按鈕抽獎。', 'WinGet 今次坐定定，唔准套件妖怪自由發揮。'],
       heroBody: ['瀏覽已覆核清單，再執行支援嘅指定操作。', '瀏覽已覆核清單、本機搜尋，並喺 Material Design 桌面介面執行指定套件操作。', '先本機搜尋同核對識別碼，再叫支援嘅操作專心做一件事。', '清單已覆核，安裝掣唔使再玩 wildcard 輪盤。', '每隻套件妖怪只會收到指定識別碼，冇即興演出環節。']
     }
@@ -40,14 +44,27 @@
   let appearanceTarget = 'hero';
   let scheduleTimer = null;
   let scheduleOverride = {};
+  let converterQueue = [];
 
   function $(id) { return document.getElementById(id); }
   function deepClone(value) { return JSON.parse(JSON.stringify(value)); }
   function loadState() {
     try {
       const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-      return { ...deepClone(defaults), ...parsed, school: { ...defaults.school, ...(parsed.school || {}) }, tabGroups: { ...defaults.tabGroups, ...(parsed.tabGroups || {}) }, appearance: parsed.appearance || {} };
+      const merged = { ...deepClone(defaults), ...parsed, school: { ...defaults.school, ...(parsed.school || {}) }, tabGroups: { ...defaults.tabGroups, ...(parsed.tabGroups || {}) }, appearance: parsed.appearance || {}, logo: normalizeLogo(parsed.logo), ollamaPreferences: { ...defaults.ollamaPreferences, ...(parsed.ollamaPreferences || {}) } };
+      const known = new Set(Object.values(merged.tabGroups).flat());
+      defaults.tabGroups.workspace.forEach((page) => { if (!known.has(page)) merged.tabGroups.workspace.push(page); });
+      return merged;
     } catch { return deepClone(defaults); }
+  }
+  function normalizeLogo(candidate) {
+    const value = { ...defaults.logo, ...(candidate || {}) };
+    if (!['material', 'utility', 'system', 'custom'].includes(value.preset)) value.preset = 'material';
+    if (!['contain', 'cover'].includes(value.fit)) value.fit = 'contain';
+    value.focalX = Math.max(0, Math.min(100, Number(value.focalX) || 50)); value.focalY = Math.max(0, Math.min(100, Number(value.focalY) || 50));
+    if (!/^#[0-9a-f]{6}$/i.test(value.background)) value.background = defaults.logo.background;
+    if (typeof value.customDataUrl !== 'string' || value.customDataUrl.length > 400000 || !/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/.test(value.customDataUrl)) { value.customDataUrl = ''; if (value.preset === 'custom') value.preset = 'material'; }
+    return value;
   }
   function loadVocabulary() {
     try {
@@ -59,6 +76,10 @@
     state.history = [...(state.history || []), { id: crypto.randomUUID(), at: new Date().toISOString(), action, detail: String(detail).slice(0, 160) }].slice(-MAX_HISTORY);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     renderRecords();
+  }
+  function discardExpiredCustomLogo() {
+    if (state.logo?.preset !== 'custom') return;
+    const image = new Image(); image.onerror = () => { state.logo = deepClone(defaults.logo); localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); renderLogo(); notify('Logo cache reset', 'The stored derivative was invalid and the built-in logo was restored.', 'error'); }; image.src = state.logo.customDataUrl;
   }
   function notify(title, message, level = 'info') {
     const item = { id: crypto.randomUUID(), at: new Date().toISOString(), title: String(title).slice(0, 80), message: String(message).slice(0, 240), level, dismissed: false };
@@ -109,6 +130,7 @@
     $('english-level').value = state.englishLevel; $('cantonese-level').value = state.cantoneseLevel;
     $('english-level-output').textContent = `English level ${state.englishLevel}`; $('cantonese-level-output').textContent = `Cantonese level ${state.cantoneseLevel}`;
     $('vocabulary-status').textContent = vocabulary ? `${Object.keys(vocabulary.replacements).length} private replacements loaded locally.` : 'No private vocabulary loaded.';
+    renderLogo();
   }
 
   function applyAppearance() {
@@ -148,7 +170,7 @@
     panel.hidden = false; panel.classList.add('active'); tab.classList.add('active'); tab.setAttribute('aria-selected', 'true'); tab.tabIndex = 0; state.page = page;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); closeRail(false);
     requestAnimationFrame(() => { const target = targetId ? $(targetId) : panel; target?.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); if (focus) target?.focus?.(); target?.classList.add('highlight-target'); setTimeout(() => target?.classList.remove('highlight-target'), 1600); });
-    if (page === 'records') renderRecords(); if (page === 'schedule') renderSchedules(); if (page === 'tools') { renderLocks(); renderTotp(); renderTickets(); }
+    if (page === 'records') renderRecords(); if (page === 'schedule') renderSchedules(); if (page === 'tools') { renderLocks(); renderTotp(); renderTickets(); } if (page === 'converter') renderConverter(); if (page === 'logo') renderLogo(); if (page === 'ollama') renderOllama();
   }
   function tabKeydown(event) {
     const tabs = [...document.querySelectorAll('.nav-tab:not([hidden])')]; const index = tabs.indexOf(event.currentTarget); const vertical = ['left', 'right'].includes(state.dock);
@@ -184,10 +206,15 @@
     else if (id === 'changelog-search') renderChangelog();
     else if (id === 'palette-search') renderCommands();
     else if (id === 'tab-menu-search') filterNodes(id, '#tab-context-menu [data-tab-action]');
+    else if (id === 'converter-category-search') renderConverterCategories();
+    else if (id === 'converter-queue-search') renderConverterQueue();
+    else if (id === 'ollama-catalog-search') renderOllama();
+    else if (id === 'ollama-installed-search') renderOllama();
+    else if (id.startsWith('converter-category-detail-')) { const card = $(id)?.closest('.feature-card'); const show = matcherFor(id)(card?.dataset.filter || ''); card?.querySelector('.category-detail')?.toggleAttribute('hidden', !show); card?.querySelector('.category-no-match')?.toggleAttribute('hidden', show); }
   }
 
   const commands = [
-    ...['home', 'capabilities', 'guides', 'settings', 'schedule', 'tools', 'records', 'changelog'].map((page) => ({ label: `Open ${page}`, hint: 'Page', run: () => activatePage(page) })),
+    ...['home', 'capabilities', 'guides', 'settings', 'schedule', 'tools', 'logo', 'converter', 'ollama', 'records', 'changelog'].map((page) => ({ label: `Open ${page}`, hint: 'Page', run: () => activatePage(page) })),
     { label: 'Toggle School mode', hint: 'Live switch', control: 'school', run: () => { state.school.enabled = !state.school.enabled; persist('School mode changed', state.school.enabled ? 'enabled' : 'disabled'); renderAll(); } },
     { label: 'Toggle dialog emoji', hint: 'Live switch', control: 'emoji', run: () => { state.dialogEmoji = !state.dialogEmoji; persist('dialog emoji changed', String(state.dialogEmoji)); renderAll(); } },
     { label: 'Open personal vocabulary upload', hint: 'Exact setting', run: () => activatePage('settings', true, 'vocabulary-file') },
@@ -250,7 +277,33 @@
   async function renderTotp() { const list = $('totp-list'); list.replaceChildren(); for (const entry of state.totpEntries) { const current = await totpCode(entry); const next = await totpCode(entry, 1); const remaining = entry.period - (Math.floor(Date.now() / 1000) % entry.period); const item = document.createElement('article'); item.className = 'record-item'; item.innerHTML = `<div class="item-body"><h3>${escapeHtml(entry.label)}</h3><p><strong>${current.replace(/(.{3})/g, '$1 ').trim()}</strong> · ${remaining}s · next ${next.replace(/(.{3})/g, '$1 ').trim()}</p><small>${escapeHtml(entry.algorithm)} · ${entry.digits} digits · ${entry.period}s</small></div><div class="record-actions"><button class="text-button" type="button" data-copy-code="${current}">Copy code</button><button class="text-button" type="button" data-remove-totp="${entry.id}">Remove</button></div>`; list.append(item); } if (!list.children.length) list.innerHTML = '<p class="empty-state">No local authenticator entries.</p>'; }
   function renderTickets() { const list = $('ticket-list'); list.replaceChildren(); state.tickets.forEach((ticket) => { const item = document.createElement('article'); item.className = 'record-item'; item.innerHTML = `<div class="item-body"><h3>${escapeHtml(ticket.number)} · ${escapeHtml(ticket.category)}</h3><p>${escapeHtml(ticket.status)} — ${escapeHtml(ticket.response)}</p></div></article>`; list.append(item); }); if (!list.children.length) list.innerHTML = '<p class="empty-state">No fictional local tickets.</p>'; }
 
-  function redactedExport() { return { schemaVersion: 1, exportedAt: new Date().toISOString(), notice: 'Private vocabulary payloads and metadata, lock credentials, password hashes, authenticator secrets, and ticket descriptions are omitted.', preferences: { language: state.language, englishLevel: state.englishLevel, cantoneseLevel: state.cantoneseLevel, school: { enabled: state.school.enabled, name: state.school.name }, dialogEmoji: state.dialogEmoji, theme: state.preset, dock: state.dock, density: state.density }, schedules: state.schedules, notifications: state.notifications.map(({ id, at, title, message, level, dismissed }) => ({ id, at, title, message, level, dismissed })), history: state.history, tabs: { pinned: state.pinnedTabs, groups: state.tabGroups, collapsedGroups: state.collapsedGroups }, appearance: state.appearance, locks: state.locks.map(({ id, target, createdAt }) => ({ id, target, createdAt, credential: 'omitted' })), authenticator: state.totpEntries.map(({ id, label, issuer, algorithm, digits, period, createdAt }) => ({ id, label, issuer, algorithm, digits, period, createdAt, secret: 'omitted' })) }; }
+  const logoPresets = {
+    material: { text: 'M', background: '#6750a4' }, utility: { text: '▦', background: '#386a20' }, system: { text: '◎', background: '#00639a' }
+  };
+  function renderLogo() {
+    const logo = state.logo || defaults.logo; const preset = logoPresets[logo.preset] || logoPresets.material;
+    document.querySelectorAll('input[name="logo-preset"]').forEach((input) => { input.checked = input.value === logo.preset; });
+    document.querySelectorAll('input[name="logo-fit"]').forEach((input) => { input.checked = input.value === logo.fit; });
+    $('logo-focal-x').value = logo.focalX; $('logo-focal-y').value = logo.focalY; $('logo-focal-x-output').textContent = `${logo.focalX}%`; $('logo-focal-y-output').textContent = `${logo.focalY}%`; $('logo-background').value = logo.background;
+    const custom = logo.preset === 'custom' && logo.customDataUrl;
+    const draw = (node) => { node.textContent = custom ? '' : preset.text; node.style.background = logo.background || preset.background; node.style.backgroundImage = custom ? `url(${logo.customDataUrl})` : ''; node.style.backgroundSize = logo.fit; node.style.backgroundPosition = `${logo.focalX}% ${logo.focalY}%`; node.style.backgroundRepeat = 'no-repeat'; };
+    draw($('brand-mark')); const grid = $('logo-preview-grid'); grid.replaceChildren(); [16, 32, 64, 128].forEach((size) => { const figure = document.createElement('figure'); const mark = document.createElement('span'); mark.className = 'logo-preview'; mark.style.width = `${size}px`; mark.style.height = `${size}px`; mark.style.fontSize = `${Math.max(10, size * .55)}px`; draw(mark); const caption = document.createElement('figcaption'); caption.textContent = `${size} px`; figure.append(mark, caption); grid.append(figure); });
+    $('logo-status').textContent = custom ? 'Validated custom PNG is active in this browser; original metadata is omitted.' : `${logo.preset} preset is active.`;
+  }
+  function readLocalPng(file) {
+    return new Promise((resolvePromise, reject) => { if (!file) return reject(new Error('Choose a PNG file.')); if (file.size > 65536) return reject(new Error('PNG exceeds the 64 KiB limit.')); const reader = new FileReader(); reader.onerror = () => reject(new Error('The PNG could not be read.')); reader.onload = () => { const bytes = new Uint8Array(reader.result); const signature = [137, 80, 78, 71, 13, 10, 26, 10]; if (bytes.length < 33 || !signature.every((value, index) => bytes[index] === value)) return reject(new Error('The selected file is not a valid PNG.')); if (new TextDecoder('latin1').decode(bytes).includes('acTL')) return reject(new Error('Animated PNG files are not supported.')); const width = new DataView(bytes.buffer).getUint32(16); const height = new DataView(bytes.buffer).getUint32(20); if (!width || !height || width > 1024 || height > 1024) return reject(new Error('PNG dimensions must be 1–1024 px.')); const url = URL.createObjectURL(file); const image = new Image(); image.onerror = () => { URL.revokeObjectURL(url); reject(new Error('The PNG could not be decoded.')); }; image.onload = () => { try { if (image.naturalWidth !== width || image.naturalHeight !== height) throw new Error('PNG dimensions do not match its header.'); const canvas = document.createElement('canvas'); canvas.width = 256; canvas.height = 256; const context = canvas.getContext('2d', { alpha: true }); context.clearRect(0, 0, 256, 256); const scale = Math.min(256 / width, 256 / height); const drawWidth = width * scale; const drawHeight = height * scale; context.drawImage(image, (256 - drawWidth) / 2, (256 - drawHeight) / 2, drawWidth, drawHeight); resolvePromise(canvas.toDataURL('image/png')); } catch (error) { reject(error); } finally { URL.revokeObjectURL(url); } }; image.src = url; }; reader.readAsArrayBuffer(file); });
+  }
+
+  const converterCategories = [
+    ['Documents / PDF', 'Document conversion requires a packaged offline PDF/document engine.'], ['Images', 'Image conversion requires a packaged offline image codec set.'], ['Audio', 'Audio conversion requires a packaged offline audio codec set.'], ['Video', 'Video conversion requires a packaged offline video codec set.'], ['Archives', 'Archive conversion requires packaged bounded ZIP/7z tooling.'], ['Structured Data / Spreadsheets', 'Structured conversion requires packaged schema-aware parsers.'], ['Code / Text', 'Code and text conversion requires an explicit lossless mapping.'], ['Binary Encodings', 'Binary encoding conversion requires an explicit bounded byte mapping.']
+  ];
+  function renderConverterCategories() { const list = $('converter-category-list'); const match = matcherFor('converter-category-search'); list.replaceChildren(); converterCategories.filter(([name, reason]) => match(`${name} ${reason}`)).forEach(([name, reason], index) => { const searchId = `converter-category-detail-${index}-search`; const item = document.createElement('article'); item.className = 'feature-card'; item.dataset.filter = `${name} ${reason} unavailable package proof`; item.innerHTML = `<span class="state unavailable">Unavailable</span><h3>${escapeHtml(name)}</h3><div class="mini-search"><label><span class="sr-only">Search ${escapeHtml(name)} adapter details</span><input id="${searchId}" type="search" placeholder="Search this category"></label><button class="regex-button" type="button" data-builder-for="${searchId}" aria-expanded="false" aria-label="Open ${escapeHtml(name)} regex builder">.*</button><div class="regex-builder compact" data-builder="${searchId}" hidden><label>Pattern<input data-pattern-for="${searchId}" maxlength="256"></label><label>Flags<input data-flags-for="${searchId}" value="i" maxlength="6"></label><p data-feedback-for="${searchId}" role="status">Plain-text search</p></div></div><p class="category-detail">${escapeHtml(reason)}</p><p class="category-no-match empty-state" hidden>No adapter detail matches.</p>`; list.append(item); item.querySelector(`#${searchId}`).addEventListener('input', () => runSearch(searchId)); item.querySelector(`[data-builder-for="${searchId}"]`).addEventListener('click', () => toggleBuilder(searchId)); item.querySelectorAll('[data-pattern-for],[data-flags-for]').forEach((input) => input.addEventListener('input', () => runSearch(searchId))); }); $('converter-category-empty').hidden = Boolean(list.children.length); }
+  function renderConverterQueue() { const list = $('converter-queue'); const match = matcherFor('converter-queue-search'); list.replaceChildren(); converterQueue.filter((item) => match(`${item.displayName} ${item.type} ${item.status}`)).forEach((item) => { const node = document.createElement('article'); node.className = 'record-item'; node.innerHTML = `<div class="item-body"><h3>${escapeHtml(item.displayName)}</h3><p>${escapeHtml(item.type)} · ${escapeHtml(item.size)} · ${escapeHtml(item.status)}</p></div><button class="text-button" type="button" data-remove-converter="${item.id}">Remove</button>`; list.append(node); }); if (!list.children.length) list.innerHTML = '<p class="empty-state">No session file matches. Nothing has been converted.</p>'; }
+  function renderConverter() { renderConverterCategories(); renderConverterQueue(); $('converter-file-status').textContent = converterQueue.length ? `${converterQueue.length} local file${converterQueue.length === 1 ? '' : 's'} selected for this session. Names and contents are not persisted.` : 'No files selected. File contents and names are not persisted.'; $('converter-pause').disabled = converterQueue.length === 0; $('converter-pause').title = converterQueue.length ? 'Pause the session queue' : 'Select at least one local file first'; $('converter-clear').disabled = converterQueue.length === 0; $('converter-clear').title = converterQueue.length ? 'Remove all session file references' : 'The session queue is already empty'; }
+  function renderOllama() { $('ollama-service-status').textContent = 'Not checked. Browser networking is deliberately disabled for this site.'; }
+  function validateOllamaBrowserBoundary(url) { if (url !== 'http://127.0.0.1:11434') throw new Error('Only the fixed documented loopback origin is permitted.'); return false; }
+
+  function redactedExport() { return { schemaVersion: 1, exportedAt: new Date().toISOString(), notice: 'Private vocabulary payloads and metadata, custom logo bytes and metadata, selected converter file names and contents, local-model prompts, lock credentials, password hashes, authenticator secrets, and ticket descriptions are omitted.', preferences: { language: state.language, englishLevel: state.englishLevel, cantoneseLevel: state.cantoneseLevel, school: { enabled: state.school.enabled, name: state.school.name }, dialogEmoji: state.dialogEmoji, theme: state.preset, dock: state.dock, density: state.density, logo: { preset: state.logo.preset, fit: state.logo.fit, focalX: state.logo.focalX, focalY: state.logo.focalY, background: state.logo.background, customBytes: 'omitted' }, ollama: { harness: state.ollamaPreferences.harness, chatName: state.ollamaPreferences.chatName, prompts: 'omitted' } }, schedules: state.schedules, notifications: state.notifications.map(({ id, at, title, message, level, dismissed }) => ({ id, at, title, message, level, dismissed })), history: state.history, tabs: { pinned: state.pinnedTabs, groups: state.tabGroups, collapsedGroups: state.collapsedGroups }, appearance: state.appearance, locks: state.locks.map(({ id, target, createdAt }) => ({ id, target, createdAt, credential: 'omitted' })), authenticator: state.totpEntries.map(({ id, label, issuer, algorithm, digits, period, createdAt }) => ({ id, label, issuer, algorithm, digits, period, createdAt, secret: 'omitted' })) }; }
   function renderRecords() { const match = matcherFor('record-search'); const notices = $('notification-list'); const history = $('history-list'); notices.replaceChildren(); history.replaceChildren(); state.notifications.filter((item) => !item.dismissed && match(`${item.title} ${item.message}`)).slice().reverse().forEach((item) => { const node = document.createElement('article'); node.className = 'record-item'; node.innerHTML = `<div class="item-body"><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.message)}</p><small>${escapeHtml(new Date(item.at).toLocaleString())}</small></div><button class="text-button" type="button" data-dismiss-notification="${item.id}">Dismiss</button>`; notices.append(node); }); state.history.filter((item) => match(`${item.action} ${item.detail}`)).slice().reverse().forEach((item) => { const node = document.createElement('article'); node.className = 'record-item'; node.innerHTML = `<div class="item-body"><h3>${escapeHtml(item.action)}</h3><p>${escapeHtml(item.detail || 'No additional public detail.')}</p><small>${escapeHtml(new Date(item.at).toLocaleString())}</small></div>`; history.append(node); }); if (!notices.children.length) notices.innerHTML = '<p class="empty-state">No visible notifications match.</p>'; if (!history.children.length) history.innerHTML = '<p class="empty-state">No local history matches.</p>'; }
   function renderChangelog() { const match = matcherFor('changelog-search'); const from = $('changelog-date').value; document.querySelectorAll('#changelog-list article').forEach((node) => { node.hidden = !match(node.dataset.filter) || Boolean(from && node.dataset.date < from); }); }
   function renderAppearanceTarget() { $('appearance-target-name').textContent = appearanceTarget; const values = state.appearance[appearanceTarget] || {}; $('accent-color').value = values.accent || state.accent || '#6750a4'; $('font-scale').value = values.scale || 100; $('corner-radius').value = values.radius ?? 24; }
@@ -258,7 +311,7 @@
   function openTabMenu(tab, event) { activeTabForMenu = tab; const menu = $('tab-context-menu'); menu.hidden = false; menu.style.left = `${Math.min(event.clientX || 24, innerWidth - 450)}px`; menu.style.top = `${Math.min(event.clientY || 80, innerHeight - 400)}px`; $('tab-menu-search').value = ''; runSearch('tab-menu-search'); requestAnimationFrame(() => $('tab-menu-search').focus()); }
   function closeTabMenu() { $('tab-context-menu').hidden = true; activeTabForMenu?.focus?.(); }
   function showDimSumMaybe() { if (state.school.enabled || Math.random() >= .1) return; const dish = dimSum[Math.floor(Math.random() * dimSum.length)]; $('surprise-title').textContent = `${dish.en} · ${dish.zh}`; $('surprise-copy').textContent = state.language === 'yue' ? '今日開機點心彩蛋，只出現一次，唔會阻住你。' : 'Today’s one-time startup dim-sum surprise. It will not block your work.'; $('surprise-link').href = 'https://github.com/Ding-Ding-Projects/dim-sum-photos/blob/main/catalog/index.json'; $('dim-sum-surprise').hidden = false; setTimeout(() => { $('dim-sum-surprise').hidden = true; }, 10000); }
-  function renderAll() { renderTabs(); renderCopy(); applyAppearance(); renderSchedules(); renderLocks(); renderTotp(); renderTickets(); renderRecords(); activatePage(state.page, false); }
+  function renderAll() { renderTabs(); renderCopy(); applyAppearance(); renderSchedules(); renderLocks(); renderTotp(); renderTickets(); renderRecords(); renderLogo(); renderConverter(); renderOllama(); activatePage(state.page, false); }
 
   document.querySelectorAll('.nav-tab').forEach((tab) => { tab.addEventListener('click', () => activatePage(tab.dataset.page)); tab.addEventListener('keydown', tabKeydown); tab.addEventListener('contextmenu', (event) => { event.preventDefault(); openTabMenu(tab, event); }); });
   document.querySelectorAll('[data-go]').forEach((button) => button.addEventListener('click', () => activatePage(button.dataset.go, true, button.dataset.focus || '')));
@@ -277,6 +330,20 @@
   $('dialog-emoji').addEventListener('change', () => { state.dialogEmoji = $('dialog-emoji').checked; persist('dialog emoji changed', String(state.dialogEmoji)); notify('Dialog emoji', state.dialogEmoji ? 'Decoration is enabled.' : 'Decoration is disabled.', 'success'); });
   $('vocabulary-file').addEventListener('change', async () => { try { await loadVocabularyFile($('vocabulary-file').files[0]); } catch (error) { $('vocabulary-status').textContent = `Invalid file: ${error.message}`; notify('Vocabulary rejected', error.message, 'error'); } finally { $('vocabulary-file').value = ''; } });
   $('vocabulary-clear').addEventListener('click', () => { localStorage.removeItem(PRIVATE_VOCABULARY_KEY); vocabulary = null; persist('private vocabulary cleared', 'payload omitted'); renderCopy(); notify('Vocabulary cleared', 'Original shipped wording is restored.', 'success'); });
+  document.querySelectorAll('input[name="logo-preset"]').forEach((input) => input.addEventListener('change', () => { state.logo.preset = input.value; if (input.value !== 'custom') state.logo.customDataUrl = ''; persist('displayed logo preset changed', input.value); renderLogo(); }));
+  document.querySelectorAll('input[name="logo-fit"]').forEach((input) => input.addEventListener('change', () => { state.logo.fit = input.value; persist('displayed logo fit changed', input.value); renderLogo(); }));
+  ['logo-focal-x', 'logo-focal-y'].forEach((id) => $(id).addEventListener('input', () => { state.logo[id === 'logo-focal-x' ? 'focalX' : 'focalY'] = Number($(id).value); localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); renderLogo(); }));
+  $('logo-background').addEventListener('input', () => { state.logo.background = $('logo-background').value; localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); renderLogo(); });
+  $('logo-background').addEventListener('change', () => persist('displayed logo background changed', state.logo.background));
+  $('logo-file').addEventListener('change', async () => { try { state.logo.customDataUrl = await readLocalPng($('logo-file').files[0]); state.logo.preset = 'custom'; persist('custom displayed logo changed', 'validated PNG bytes and source metadata omitted'); renderLogo(); notify('Logo updated', 'Validated PNG is stored only in this browser.', 'success'); } catch (error) { $('logo-status').textContent = `Invalid PNG: ${error.message}`; notify('Logo rejected', error.message, 'error'); } finally { $('logo-file').value = ''; } });
+  $('logo-reset').addEventListener('click', () => { state.logo = deepClone(defaults.logo); persist('displayed logo reset', 'Material preset'); renderLogo(); });
+  $('converter-files').addEventListener('change', () => { const files = [...$('converter-files').files].slice(0, 100); converterQueue = files.map((file) => ({ id: crypto.randomUUID(), displayName: file.name.slice(0, 120), type: file.type || 'unknown type', size: `${file.size.toLocaleString()} bytes`, status: 'Unavailable: no packaged offline adapter proof in this static site' })); $('converter-files').value = ''; renderConverter(); notify('Files inspected locally', `${converterQueue.length} file${converterQueue.length === 1 ? '' : 's'} added to the session queue; no conversion started.`, 'info'); });
+  $('converter-queue').addEventListener('click', (event) => { const remove = event.target.closest('[data-remove-converter]'); if (!remove) return; converterQueue = converterQueue.filter((item) => item.id !== remove.dataset.removeConverter); renderConverter(); });
+  $('converter-pause').addEventListener('click', () => { $('converter-pause').textContent = $('converter-pause').textContent.startsWith('Pause') ? 'Resume queue' : 'Pause queue'; notify('Queue state changed', 'Only the local session queue changed; no conversion adapter is active.', 'info'); });
+  $('converter-clear').addEventListener('click', () => { converterQueue = []; renderConverter(); notify('Queue cleared', 'Session file names and references were removed.', 'success'); });
+  document.querySelectorAll('input[name="ollama-harness"]').forEach((input) => input.addEventListener('change', () => { state.ollamaPreferences.harness = input.value; persist('local-model harness preference changed', input.value); }));
+  $('ollama-chat-name').addEventListener('change', () => { state.ollamaPreferences.chatName = $('ollama-chat-name').value.trim() || defaults.ollamaPreferences.chatName; persist('local-model chat label changed', 'label only; prompts omitted'); });
+  $('ollama-troubleshoot').addEventListener('click', () => { $('ollama-troubleshooter-panel').hidden = false; $('ollama-troubleshooter-panel').focus(); notify('Troubleshooter opened', 'No process or network request was started.', 'info'); });
   $('schedule-form').addEventListener('submit', (event) => { event.preventDefault(); const weekdays = [...document.querySelectorAll('input[name="weekday"]:checked')].map((input) => Number(input.value)); if (!weekdays.length) return notify('Schedule rejected', 'Choose at least one weekday.', 'error'); const rule = { id: crypto.randomUUID(), label: $('schedule-label').value.trim(), setting: document.querySelector('input[name="schedule-setting"]:checked').value, value: $('schedule-value').value.trim(), start: $('schedule-start').value, end: $('schedule-end').value, startDate: $('schedule-start-date').value, endDate: $('schedule-end-date').value, weekdays, enabled: true }; state.schedules.push(rule); persist('schedule created', rule.label); renderSchedules(); applySchedules(); notify('Schedule saved', `${rule.label} is stored in this browser.`, 'success'); });
   $('schedule-list').addEventListener('click', (event) => { const toggle = event.target.closest('[data-toggle-rule]'); const remove = event.target.closest('[data-delete-rule]'); if (toggle) { const rule = state.schedules.find((item) => item.id === toggle.dataset.toggleRule); rule.enabled = !rule.enabled; persist('schedule state changed', rule.label); renderSchedules(); applySchedules(); } if (remove) { const rule = state.schedules.find((item) => item.id === remove.dataset.deleteRule); state.schedules = state.schedules.filter((item) => item.id !== remove.dataset.deleteRule); persist('schedule deleted', rule?.label || 'unknown'); renderSchedules(); } });
   $('appearance-apply').addEventListener('click', () => { state.appearance[appearanceTarget] = { accent: $('accent-color').value, scale: Number($('font-scale').value), radius: Number($('corner-radius').value) }; state.accent = $('accent-color').value; state.fontScale = Number($('font-scale').value); state.density = Number($('density-scale').value); persist('element appearance changed', appearanceTarget); applyAppearance(); notify('Appearance applied', appearanceTarget, 'success'); });
@@ -305,7 +372,7 @@
   document.addEventListener('keydown', (event) => { if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'f') { event.preventDefault(); openPalette(); } if (event.key === 'Escape') { if (!$('reset-confirmation').hidden) $('reset-cancel').click(); else if (!$('tab-context-menu').hidden) closeTabMenu(); else if (!$('command-palette').hidden) closePalette(); else closeRail(false); } });
   addEventListener('resize', () => { if (!matchMedia('(max-width: 900px)').matches) $('tab-rail').removeAttribute('inert'); else if (!$('tab-rail').classList.contains('open')) $('tab-rail').setAttribute('inert', ''); });
 
-  renderAll(); applySchedules(); showDimSumMaybe();
+  renderAll(); discardExpiredCustomLogo(); applySchedules(); showDimSumMaybe();
   scheduleTimer = setInterval(() => { applySchedules(); if (state.page === 'tools') renderTotp(); }, 1000);
   addEventListener('pagehide', () => clearInterval(scheduleTimer), { once: true });
   if (matchMedia('(max-width: 900px)').matches) $('tab-rail').setAttribute('inert', '');

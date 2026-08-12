@@ -5,6 +5,7 @@
   const defaults = { language: 'en', englishLevel: 2, cantoneseLevel: 3, theme: 'system', density: 'comfortable', dock: 'left', page: 'home' };
   let prefs = loadPreferences();
   let lastFocus = null;
+  let mobileRailOrigin = null;
 
   const copy = {
     en: {
@@ -51,6 +52,8 @@
     const shell = document.querySelector('.app-shell');
     shell.dataset.density = prefs.density;
     shell.dataset.dock = prefs.dock;
+    syncTabOrientation();
+    syncMobileRailState();
     document.getElementById('language').value = prefs.language;
     document.getElementById('theme').value = prefs.theme;
     document.getElementById('density').value = prefs.density;
@@ -72,6 +75,21 @@
     });
   }
 
+  function isMobileLayout() { return window.matchMedia('(max-width: 900px)').matches; }
+
+  function syncTabOrientation() {
+    const tabList = document.getElementById('documentation-tab-list');
+    const vertical = isMobileLayout() || !['top', 'bottom'].includes(prefs.dock);
+    tabList.setAttribute('aria-orientation', vertical ? 'vertical' : 'horizontal');
+  }
+
+  function syncMobileRailState() {
+    const rail = document.getElementById('tab-rail');
+    const closed = isMobileLayout() && !rail.classList.contains('open');
+    rail.setAttribute('aria-hidden', String(closed));
+    if (closed) rail.setAttribute('inert', ''); else rail.removeAttribute('inert');
+  }
+
   function activatePage(page, focus = true) {
     const panel = document.querySelector(`[data-panel="${page}"]`);
     const tab = document.querySelector(`[data-page="${page}"]`);
@@ -85,7 +103,7 @@
     tab.tabIndex = 0;
     prefs.page = page;
     savePreferences();
-    closeMobileRail();
+    closeMobileRail({ preserveOrigin: true });
     if (focus) { document.getElementById('main-content').focus({ preventScroll: true }); window.scrollTo({ top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); }
   }
 
@@ -163,6 +181,7 @@
   }
 
   function openPalette() {
+    if (!document.getElementById('command-palette').hidden) return;
     lastFocus = document.activeElement;
     document.getElementById('scrim').hidden = false;
     document.getElementById('command-palette').hidden = false;
@@ -172,10 +191,13 @@
   }
 
   function closePalette() {
+    if (document.getElementById('command-palette').hidden) return;
     document.getElementById('scrim').hidden = true;
     document.getElementById('command-palette').hidden = true;
     document.body.style.overflow = '';
-    if (lastFocus && lastFocus.focus) lastFocus.focus();
+    const origin = lastFocus;
+    lastFocus = null;
+    if (origin && origin.isConnected && origin.focus) origin.focus();
   }
 
   function renderCommands(query) {
@@ -194,9 +216,21 @@
       return button;
     }));
     document.getElementById('command-empty').hidden = found.length !== 0;
+    document.getElementById('command-result-count').textContent = `${found.length} command${found.length === 1 ? '' : 's'} available.`;
   }
 
   function paletteKeydown(event) {
+    if (event.key === 'Tab') {
+      const palette = document.getElementById('command-palette');
+      const focusable = [...palette.querySelectorAll('button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])')]
+        .filter((item) => !item.hidden && item.getClientRects().length > 0);
+      if (focusable.length) {
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
+    }
     const options = [...document.querySelectorAll('.command')];
     const active = options.findIndex((option) => option.classList.contains('active'));
     let next = active;
@@ -210,8 +244,22 @@
     if (event.key === 'Enter' && options[active]) { event.preventDefault(); options[active].click(); }
   }
 
-  function openMobileRail() { document.getElementById('tab-rail').classList.add('open'); document.getElementById('menu-button').setAttribute('aria-expanded', 'true'); }
-  function closeMobileRail() { document.getElementById('tab-rail').classList.remove('open'); document.getElementById('menu-button').setAttribute('aria-expanded', 'false'); }
+  function openMobileRail() {
+    mobileRailOrigin = document.activeElement;
+    document.getElementById('tab-rail').classList.add('open');
+    document.getElementById('menu-button').setAttribute('aria-expanded', 'true');
+    syncMobileRailState();
+    document.querySelector('.nav-tab[aria-selected="true"]')?.focus();
+  }
+
+  function closeMobileRail({ restoreFocus = false, preserveOrigin = false } = {}) {
+    const wasOpen = document.getElementById('tab-rail').classList.contains('open');
+    document.getElementById('tab-rail').classList.remove('open');
+    document.getElementById('menu-button').setAttribute('aria-expanded', 'false');
+    syncMobileRailState();
+    if (restoreFocus && wasOpen && mobileRailOrigin?.isConnected) mobileRailOrigin.focus();
+    if (!preserveOrigin) mobileRailOrigin = null;
+  }
 
   let snackTimer;
   function announce(message) {
@@ -225,7 +273,7 @@
   document.querySelectorAll('[data-page]').forEach((tab) => { tab.addEventListener('click', () => activatePage(tab.dataset.page)); tab.addEventListener('keydown', tabKeydown); });
   document.querySelectorAll('[data-go]').forEach((button) => button.addEventListener('click', () => activatePage(button.dataset.go)));
   document.getElementById('menu-button').addEventListener('click', openMobileRail);
-  document.getElementById('rail-close').addEventListener('click', closeMobileRail);
+  document.getElementById('rail-close').addEventListener('click', () => closeMobileRail({ restoreFocus: true }));
   document.getElementById('palette-launch').addEventListener('click', openPalette);
   document.getElementById('palette-close').addEventListener('click', closePalette);
   document.getElementById('scrim').addEventListener('click', closePalette);
@@ -248,8 +296,9 @@
   document.getElementById('reset-preferences').addEventListener('click', () => { prefs = { ...defaults, page: 'settings' }; savePreferences(); applyPreferences(); announce('Site preferences reset.'); });
   document.addEventListener('keydown', (event) => {
     if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'f') { event.preventDefault(); openPalette(); }
-    if (event.key === 'Escape') { if (!document.getElementById('command-palette').hidden) closePalette(); else closeMobileRail(); }
+    if (event.key === 'Escape') { if (!document.getElementById('command-palette').hidden) closePalette(); else closeMobileRail({ restoreFocus: true }); }
   });
+  window.addEventListener('resize', () => { syncTabOrientation(); syncMobileRailState(); });
 
   applyPreferences();
   activatePage(prefs.page, false);

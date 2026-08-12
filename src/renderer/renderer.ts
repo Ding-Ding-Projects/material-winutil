@@ -11,7 +11,7 @@ type ThemeMode = 'light' | 'dark';
 type Density = 'comfortable' | 'compact';
 type LanguageMode = 'English' | 'Yue' | 'Bilingual';
 type DialogId =
-  | 'palette' | 'regex' | 'tabs' | 'appearance' | 'lock' | 'lockwizard' | 'auth'
+  | 'palette' | 'regex' | 'tabs' | 'appearance' | 'lock' | 'auth'
   | 'notifications' | 'export' | 'gate' | 'about' | 'profiles' | 'saveselection' | 'dimsum' | 'color' | null;
 
 interface WinutilApp { id: string; name: string; cat: string; desc: string; winget: string; choco: string; link: string; foss: boolean; }
@@ -21,7 +21,6 @@ interface WorkspaceTab { id: string; view: ViewId; pinned: boolean; group: strin
 interface HistoryEntry { id: string; action: string; detail: string; at: string; }
 interface NotificationEntry { id: string; title: string; detail: string; icon: string; read: boolean; }
 interface UpdateStatus { state: 'disabled' | 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'up-to-date' | 'error'; currentVersion: string; updateVersion: string; message: string; releaseUrl: string; }
-interface TotpSecret { id: string; label: string; issuer: string; secret: string; }
 interface Prefs {
   theme: ThemeMode; density: Density; language: LanguageMode;
   narrator: 'English' | 'Yue' | 'Both'; narratorEnabled: boolean;
@@ -378,14 +377,10 @@ const state = {
     replace: '[$&]', tab: 'match' as 'match' | 'replace' | 'explain' | 'library',
     history: [] as string[], cursor: 0,
   },
-  wizard: {
-    id: '', label: '', mode: 'set' as 'set' | 'unlock', step: 0,
-    method: 'password' as 'password' | 'otp', pw1: '', pw2: '', code: '', secret: '', attempt: '',
-  },
   dlgSelected: new Set<string>(),
   appearanceTarget: { id: 'app-root', label: 'Application root' },
   appearanceOverrides: {} as Record<string, { accent: string; font: string; radius: number; scale: number; weight: number }>,
-  gate: { left: false, right: false, slider: 0, action: '', kind: null as RunKind | null, ids: null as string[] | null },
+  gate: { left: false, right: false, slider: 0, action: '', kind: null as RunKind | null, ids: null as string[] | null, after: null as null | (() => void) },
   queue: { active: false, index: 0, total: 0, current: '', log: [] as string[] },
   deps: [] as Array<{ name: string; present: boolean; installed: boolean; detail: string }>,
   prefs: { ...DEFAULT_PREFS },
@@ -394,10 +389,6 @@ const state = {
   historyFilter: { from: '', to: '', action: 'all' },
   notifications: [] as NotificationEntry[],
   update: { state: 'idle', currentVersion: '0.1.0', updateVersion: '', message: 'Automatic update checks are enabled.', releaseUrl: '' } as UpdateStatus,
-  locks: {} as Record<string, { kind: 'password' | 'otp'; credential: string; hint: string }>,
-  totp: [] as TotpSecret[],
-  otpCode: '',
-  otpSeconds: 30,
   snack: '',
   isoLog: '[00:00:00] Waiting for an ISO. Select an official Microsoft image to begin.',
 };
@@ -492,6 +483,13 @@ const relTime = (iso: string): string => {
 
 function snack(msg: string): void {
   state.snack = msg;
+  let live = document.getElementById('live-status');
+  if (!live) {
+    live = h('div', { id: 'live-status', class: 'sr-only', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' });
+    document.body.appendChild(live);
+  }
+  live.textContent = '';
+  window.setTimeout(() => { if (live) live.textContent = msg; }, 0);
   render();
   window.setTimeout(() => { if (state.snack === msg) { state.snack = ''; render(); } }, 3200);
 }
@@ -606,7 +604,7 @@ function render(): void {
   if (!root) return;
   root.replaceChildren(appBar(), h('div', { class: `body${state.drawerCollapsed ? ' drawer-collapsed' : ''}` }, drawer(), content(), sideRail()));
   if (state.dialog) root.appendChild(dialogLayer());
-  if (state.snack) root.appendChild(h('div', { class: 'snack' }, icon('check_circle'), h('span', {}, state.snack)));
+  if (state.snack) root.appendChild(h('div', { class: 'snack', 'aria-hidden': 'true' }, icon('check_circle'), h('span', {}, state.snack)));
 }
 
 function appBar(): HTMLElement {
@@ -698,9 +696,9 @@ function tabStrip(): HTMLElement {
       role: 'tab', tabindex: state.activeTab === tab.id ? '0' : '-1',
       'aria-selected': state.activeTab === tab.id ? 'true' : 'false',
       'aria-label': `${meta.title}${tab.pinned ? ', pinned' : ''}`,
-      onclick: () => { state.activeTab = tab.id; go(tab.view); },
+      onclick: () => { if (tab.locked) { openLockWizard(`tab-${tab.id}`, `Tab · ${meta.title}`, 'unlock'); return; } state.activeTab = tab.id; go(tab.view); },
       onkeydown: (e: KeyboardEvent) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); state.activeTab = tab.id; go(tab.view); }
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (tab.locked) openLockWizard(`tab-${tab.id}`, `Tab · ${meta.title}`, 'unlock'); else { state.activeTab = tab.id; go(tab.view); } }
       },
       oncontextmenu: (e: MouseEvent) => { e.preventDefault(); tabMenu(tab, e.clientX, e.clientY); },
     },
@@ -835,9 +833,7 @@ function toolbarActions(): Array<{ label: string; variant: string; icon?: string
       { label: t('clear'), variant: 'text', icon: 'deselect', act: () => { state.selected.clear(); state.rowColors = {}; render(); } },
       { label: 'Select every category', variant: 'text', icon: 'select_all', act: () => { allIdsInView().forEach((id) => { state.selected.add(id); state.rowColors[id] = state.selectionColor; }); maybeDimSum(); render(); } },
     ];
-    case 'history': return [
-      { label: 'Restore as new revision', variant: 'tonal', icon: 'restore', act: () => restoreSelected() },
-    ];
+    case 'history': return [];
     default: return [];
   }
 }
@@ -1000,7 +996,7 @@ function installPane(): HTMLElement {
       actions: [
         ['info', 'Show the catalogue entry', () => openDetail(app.name, `catalogue/${app.id}`, `${app.desc}\n\nCategory   ${app.cat}\nwinget     ${app.winget || '—'}\nchoco      ${app.choco || '—'}\nHomepage   ${app.link}`)],
         ['content_copy', 'Copy the winget id', () => { void navigator.clipboard?.writeText(app.winget); snack(`Copied ${app.winget}`); }],
-        ['download', 'Install just this package', () => gate(`Install ${app.name}`, 'install', [app.winget || app.choco])],
+        ['download', 'Install just this package', () => gate(`Install ${app.name}`, 'install', [app.id])],
       ],
     }));
   }
@@ -1046,7 +1042,7 @@ function checklistPane(source: WinutilTweak[], showPresets: boolean): HTMLElemen
           { icon: 'lock', label: `Lock the ${name} preset…`, act: () => openLockWizard(`preset-${name}`, `Preset · ${name}`) },
           { icon: 'palette', label: 'Edit this button’s appearance…', act: () => openAppearance(`preset-${name}`, `Preset · ${name}`) },
         ], name),
-      }, icon(state.locks[`preset-${name}`] ? 'lock' : 'checklist'), h('span', {}, name),
+      }, icon('checklist'), h('span', {}, name),
         h('span', { class: 'chip-inline' }, String(size))));
     }
     presetRow.appendChild(h('button', {
@@ -1092,7 +1088,7 @@ function checklistPane(source: WinutilTweak[], showPresets: boolean): HTMLElemen
       h('button', {
         class: 'icon-btn small', title: 'Lock this category',
         onclick: () => openLockWizard(`group-${group.name}`, `Category · ${group.name.replace(/^z__/, '')}`),
-      }, icon(state.locks[`group-${group.name}`] ? 'lock' : 'lock_open'))));
+      }, icon('lock_open'))));
     if (collapsed) continue;
     const list = h('div', { class: 'rowlist' });
     if (!items.length) list.appendChild(emptyState('No row in this category matches its search.'));
@@ -1131,7 +1127,7 @@ function updatesPane(): HTMLElement {
         h('h2', { style: `font-size:20px;${p.danger ? 'color:var(--md-sys-color-error)' : ''}` }, p.title),
         h('p', { style: p.danger ? 'color:var(--md-sys-color-error);font-weight:500' : '' }, p.subtitle)),
         h('button', { class: 'icon-btn small', title: 'Lock this profile', onclick: () => openLockWizard(`profile-${p.key}`, `Update profile · ${p.title}`) },
-          icon(state.locks[`profile-${p.key}`] ? 'lock' : 'lock_open'))),
+          icon('lock_open'))),
       h('ul', { style: 'margin:6px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px' },
         ...p.bullets.map((b) => h('li', { style: 'display:flex;gap:9px;font-size:13px;line-height:1.45' },
           icon('chevron_right', ''), h('span', {}, b)))),
@@ -1164,12 +1160,12 @@ function isoPane(): HTMLElement {
     if (s.field) {
       card.appendChild(h('div', { style: 'display:flex;gap:8px' },
         h('div', { class: 'feedback', style: 'flex:1' }, s.field),
-        h('button', { class: 'btn tonal', onclick: () => snack(`${s.button} is handled by the main process.`) }, s.button)));
+        h('button', { class: 'btn tonal', disabled: true, title: 'Unavailable until the reviewed ISO adapter is installed' }, s.button)));
     }
     for (const o of s.options) {
       card.appendChild(h('button', {
-        class: 'row', style: 'background:var(--md-sys-color-surface-container-lowest)',
-        onclick: () => { state.isoLog = `${state.isoLog}\n[${new Date().toTimeString().slice(0, 8)}] ${o.label} — queued.`; render(); },
+        class: 'row', style: 'background:var(--md-sys-color-surface-container-lowest);opacity:.65',
+        disabled: true, title: 'Unavailable until the reviewed ISO adapter is installed',
       }, h('span', { class: 'lead' }, icon(o.icon)), h('span', { class: 'snippet' }, o.label), icon('chevron_right')));
     }
     cards.appendChild(card);
@@ -1180,6 +1176,7 @@ function isoPane(): HTMLElement {
     searchLine('iso-log', 'Search the build log'),
     h('pre', { class: 'block' }, state.isoLog.split('\n').filter(makeMatcher(sq('iso-log'))).join('\n'))));
   return h('div', { class: 'pane padded' },
+    h('div', { class: 'notice warn', style: 'margin-bottom:16px' }, icon('info'), h('span', {}, 'ISO customization is a documented preview in this build. No ISO is selected, mounted, modified, or queued.')),
     h('div', { style: 'margin-bottom:16px;max-width:520px' }, searchLine('iso', 'Search image customization steps')),
     cards);
 }
@@ -1214,14 +1211,14 @@ function historyPane(): HTMLElement {
     list.appendChild(rowNode({
       id: e.id, primary: e.action, snippet: e.detail, meta: relTime(e.at), lead: 'commit',
       onOpen: () => openDetail(e.action, e.id, `${e.detail}\n\nRecorded ${new Date(e.at).toLocaleString()}\nAction   ${e.action}\nRevision ${e.id}`),
-      actions: [['restore', 'Restore as a new revision', () => restoreOne(e)]],
+      actions: [],
     }));
   }
   return h('div', { class: 'pane' },
     h('div', { class: 'pane-head' }, searchLine('history', 'Search history actions and details')),
     filters, list,
     h('div', { style: 'padding:12px 20px' }, h('p', { style: 'font-size:12.5px;color:var(--md-sys-color-on-surface-variant)' },
-      'Snapshots are stored beside the app data in an isolated Git repository. Restoring creates a new revision, so the previous state remains undoable.')));
+      'This is a bounded local event log. Snapshot, diff, and restore are unavailable until the isolated Git-backed history adapter is implemented and verified.')));
 }
 
 function settingsPane(): HTMLElement {
@@ -1250,7 +1247,7 @@ function settingsPane(): HTMLElement {
   if (show('Appearance')) cards.appendChild(card('Appearance', '', [appearance,
     h('div', { class: 'btnrow' },
       h('button', { class: 'btn tonal', onclick: () => openDialog('export') }, 'Export settings'),
-      h('button', { class: 'btn outlined', onclick: () => gate('Reset every setting to its default') }, 'Reset settings'))], 'wide'));
+      h('button', { class: 'btn outlined', onclick: () => gate('Reset every setting to its default', undefined, undefined, () => { state.prefs = { ...DEFAULT_PREFS }; applyPrefs(); render(); snack('Settings reset to their shipped defaults.'); }) }, 'Reset settings'))], 'wide'));
 
   if (show('Every surface')) cards.appendChild(card('Every surface', '', [
     h('p', {}, 'Search fields, tabs, cards, menus, notifications, the command palette, and per-element appearance editors keep their state local to this profile.'),
@@ -1382,7 +1379,7 @@ function colorField(label: string, value: string, onChange: (v: string) => void)
 
 function switchField(label: string, on: boolean, toggle: () => void): HTMLElement {
   return h('div', { class: 'switch-row', style: 'align-self:end;padding:6px 0' },
-    h('button', { class: `switch${on ? ' on' : ''}`, onclick: toggle }, h('i', {})), h('span', {}, label));
+    h('button', { class: `switch${on ? ' on' : ''}`, role: 'switch', 'aria-label': label, 'aria-checked': on ? 'true' : 'false', onclick: toggle }, h('i', {})), h('span', {}, label));
 }
 
 /* --------------------------------------------------------------- actions -- */
@@ -1452,26 +1449,34 @@ function primaryAction(): void {
 
 async function runNow(kind: RunKind, ids: string[]): Promise<void> {
   if (kind !== 'upgrade' && !ids.length) { snack('Nothing is selected.'); return; }
-  await ensureDeps();
   const total = kind === 'upgrade' ? 1 : ids.length;
-  state.queue = { active: true, index: 0, total, current: ids[0] ?? 'all installed packages', log: [] };
-  render();
-  const res = await bridge().run(kind, ids);
-  state.queue.active = false;
-  state.runOutput = `$ winutil ${kind} ×${total}\n${res.stdout}${res.stderr ? `\n${res.stderr}` : ''}\nexit ${res.code}`;
-  record(kind, `${kind} completed for ${total} item(s), exit ${res.code}`);
-  state.notifications = [{
-    id: `n-${Date.now()}`, icon: res.ok ? 'download_done' : 'error',
-    title: res.ok ? `${kind} finished` : `${kind} failed (exit ${res.code})`,
-    detail: `${total} item(s) processed automatically · no prompts`, read: false,
-  }, ...state.notifications];
-  render();
-  snack(res.ok ? `${kind}: ${total} item(s) completed automatically.` : `${kind} failed with exit ${res.code}. See the output.`);
+  try {
+    await ensureDeps();
+    state.queue = { active: true, index: 0, total, current: ids[0] ?? 'all installed packages', log: [] };
+    render();
+    const res = await bridge().run(kind, ids);
+    state.runOutput = `$ winutil ${kind} ×${total}\n${res.stdout}${res.stderr ? `\n${res.stderr}` : ''}\nexit ${res.code}`;
+    record(kind, `${kind} completed for ${total} item(s), exit ${res.code}`);
+    state.notifications = [{
+      id: `n-${Date.now()}`, icon: res.ok ? 'download_done' : 'error',
+      title: res.ok ? `${kind} finished` : `${kind} failed (exit ${res.code})`,
+      detail: `${total} item(s) processed automatically · no prompts`, read: false,
+    }, ...state.notifications];
+    snack(res.ok ? `${kind}: ${total} item(s) completed automatically.` : `${kind} failed with exit ${res.code}. See the output.`);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    state.runOutput = `$ winutil ${kind} ×${total}\n${detail}\nrequest failed`;
+    state.notifications = [{ id: `n-${Date.now()}`, icon: 'error', title: `${kind} could not start`, detail, read: false }, ...state.notifications];
+    snack(`${kind} could not start. See the output for the exact reason.`);
+  } finally {
+    state.queue.active = false;
+    render();
+  }
 }
 
 function selectedPackageIds(): string[] {
   const selected = state.selected;
-  return state.catalog.apps.filter((app) => selected.has(app.id)).map((app) => app.winget);
+  return state.catalog.apps.filter((app) => selected.has(app.id) && app.winget).map((app) => app.id);
 }
 
 /** Prerequisites install themselves; the user is never sent to a browser. */
@@ -1502,17 +1507,6 @@ async function refresh(): Promise<void> {
 function openDetail(title: string, path: string, body: string): void {
   state.reading = { title, path, body };
   render();
-}
-
-function restoreOne(entry: HistoryEntry): void {
-  record('restore', `Restored ${entry.action} from ${relTime(entry.at)} as a new revision`);
-  snack('Restored as a new revision — the previous state stays undoable.');
-}
-
-function restoreSelected(): void {
-  const picked = state.history.filter((e) => state.selected.has(e.id));
-  if (!picked.length) { snack('Select a revision first.'); return; }
-  picked.forEach(restoreOne);
 }
 
 /* ------------------------------------------------------------------ tabs -- */
@@ -1665,8 +1659,8 @@ function openAppearance(id: string, label: string): void {
   openDialog('appearance');
 }
 
-function gate(action: string, kind?: RunKind, ids?: string[]): void {
-  state.gate = { left: false, right: false, slider: 0, action, kind: kind ?? null, ids: ids ?? null };
+function gate(action: string, kind?: RunKind, ids?: string[], after?: () => void): void {
+  state.gate = { left: false, right: false, slider: 0, action, kind: kind ?? null, ids: ids ?? null, after: after ?? null };
   openDialog('gate');
 }
 
@@ -1678,7 +1672,6 @@ function dialogLayer(): HTMLElement {
       case 'tabs': return tabsDialog();
       case 'appearance': return appearanceDialog();
       case 'lock': return lockDialog();
-      case 'lockwizard': return lockDialog();
       case 'auth': return authDialog();
       case 'notifications': return notificationsDialog();
       case 'export': return exportDialog();
@@ -2025,7 +2018,7 @@ function tabsDialog(): HTMLElement {
       h('span', { class: 'snippet' }, tab.group ? `Group: ${tab.group}` : 'Ungrouped'),
       h('span', { class: 'row-actions', style: 'display:flex' },
         h('button', { class: 'icon-btn small', title: 'Pin', onclick: () => { tab.pinned = !tab.pinned; render(); } }, icon('push_pin')),
-        h('button', { class: 'icon-btn small', title: 'Lock', onclick: () => { tab.locked = !tab.locked; render(); } }, icon('lock')),
+        h('button', { class: 'icon-btn small', title: 'Locks are unavailable in this build', onclick: () => openLockWizard(`tab-${tab.id}`, `Tab · ${VIEW_META[tab.view].title}`) }, icon('lock')),
         h('button', { class: 'icon-btn small', title: 'Close', onclick: () => closeTab(tab.id) }, icon('close'))))));
 
   return dialogShell('Workspace navigation', 'Tabs, groups, and safe closing', [
@@ -2079,7 +2072,7 @@ function appearanceDialog(): HTMLElement {
   ], [
     h('button', { class: 'btn text', onclick: closeDialog }, 'Cancel'),
     h('button', { class: 'btn outlined', onclick: () => { delete state.appearanceOverrides[target.id]; closeDialog(); snack('Element reset to the inherited appearance.'); } }, 'Reset element'),
-    h('button', { class: 'btn tonal', onclick: () => snack('Saved as a named theme.') }, 'Save named theme'),
+    h('button', { class: 'btn tonal', disabled: true, title: 'Named-theme storage is not installed in this build' }, 'Save named theme'),
     h('button', {
       class: 'btn filled',
       onclick: () => { if (target.id === 'app-root') { state.prefs.accent = o.accent; state.prefs.font = o.font; state.prefs.radius = o.radius; state.prefs.scale = o.scale; state.prefs.weight = o.weight; } closeDialog(); snack('Appearance applied and persisted.'); },
@@ -2091,194 +2084,11 @@ function lockDialog(): HTMLElement {
   return dialogShell('Not installed in this build', 'Locks', [
     emptyState('Element and tab locks are unavailable until credential-vault storage, standards-compliant TOTP, recovery, and accessibility verification are complete.'),
   ], [h('button', { class: 'btn filled', onclick: closeDialog }, 'Close')]);
-
-  const lockables: Array<[string, string]> = [
-    ...state.tabs.map((tb) => [`tab-${tb.id}`, `Tab · ${VIEW_META[tb.view].title}`] as [string, string]),
-    ...[...new Set(state.tabs.map((tb) => tb.group).filter(Boolean))].map((g) => [`group-${g}`, `Tab group · ${g}`] as [string, string]),
-    ...tweakGroups(state.catalog.tweaks).map((g) => [`group-${g.name}`, `Category · ${g.name.replace(/^z__/, '')}`] as [string, string]),
-    ...Object.keys(state.catalog.presets).map((p) => [`preset-${p}`, `Preset · ${p}`] as [string, string]),
-    ...UPDATE_PROFILES.map((p) => [`profile-${p.key}`, `Update profile · ${p.title}`] as [string, string]),
-    ['pref-accent', 'Appearance property · accent color'],
-    ['pref-theme', 'Appearance property · theme'],
-    ['pref-density', 'Appearance property · density'],
-  ];
-  const match = makeMatcher(sq('locks'));
-  const found = lockables.filter(([id, label]) => match(`${label} ${id}`));
-  const focus = state.dialogArg;
-
-  const credentialRow = (id: string, label: string): HTMLElement => {
-    const lock = state.locks[id];
-    const picked = state.dlgSelected.has(id);
-    return h('div', {
-      class: `lock-row${focus === id ? ' focused' : ''}`,
-      oncontextmenu: ctx(`lockrow-${id}`, () => [
-        { icon: lock ? 'lock_open' : 'lock', label: lock ? 'Unlock this element…' : 'Start this element’s lock wizard…', act: () => openLockWizard(id, label, lock ? 'unlock' : 'set') },
-        { icon: picked ? 'check_box_outline_blank' : 'check_box', label: picked ? 'Deselect' : 'Select for a bulk action', act: () => { picked ? state.dlgSelected.delete(id) : state.dlgSelected.add(id); } },
-        { icon: 'content_copy', label: 'Copy the element id', act: () => { void navigator.clipboard?.writeText(id); snack(`Copied ${id}`); } },
-      ], label),
-    },
-      h('span', {
-        class: 'cb', onclick: () => { picked ? state.dlgSelected.delete(id) : state.dlgSelected.add(id); render(); },
-      }, picked ? icon('check') : null),
-      h('span', { class: 'lead' }, icon(lock ? 'lock' : 'lock_open')),
-      h('div', { style: 'flex:1;min-width:0' },
-        h('div', { style: 'font-size:13.5px;font-weight:600' }, label),
-        h('div', { style: 'font-size:12px;color:var(--md-sys-color-on-surface-variant)' },
-          lock ? `Locked · ${lock.kind === 'otp' ? 'its own TOTP secret' : 'its own password'} · ${lock.hint}` : 'Unlocked · no credential set')),
-      h('button', {
-        class: lock ? 'btn outlined' : 'btn tonal',
-        onclick: () => openLockWizard(id, label, lock ? 'unlock' : 'set'),
-      }, icon(lock ? 'lock_open' : 'lock'), h('span', {}, lock ? 'Unlock…' : 'Set up lock…')));
-  };
-
-  return dialogShell('One credential per element — no master, no inheritance', 'Locks', [
-    h('div', { class: 'notice warn' }, icon('info'),
-      h('span', {}, 'A for-fun lock, never a security boundary. Every element below holds its own separate credential: locking a tab does not lock its group, and locking a group does not lock the rows inside it. Deleting %APPDATA%\\winutil-m3\\locks resets every lock independently.')),
-    h('div', { style: 'height:14px' }),
-    searchLine('locks', 'Search lockable elements'),
-    h('div', { style: 'height:10px' }),
-    h('div', { class: 'listbox' }, ...(found.length
-      ? found.map(([id, label]) => credentialRow(id, label))
-      : [emptyState('No lockable element matches this search.')])),
-    h('p', { style: 'font-size:12px;color:var(--md-sys-color-on-surface-variant);margin-top:12px' },
-      `${Object.keys(state.locks).length} element(s) locked, each through its own wizard and its own distinct credential.`),
-  ], [
-    h('button', {
-      class: 'btn outlined', disabled: !state.dlgSelected.size,
-      onclick: () => { const ids = [...state.dlgSelected]; ids.forEach((id) => delete state.locks[id]); state.dlgSelected.clear(); render(); snack(`Removed ${ids.length} lock(s) in bulk.`); },
-    }, `Remove ${state.dlgSelected.size} selected lock(s)`),
-    h('button', { class: 'btn outlined', onclick: () => snack('Support ticket opened — resolving it opens %APPDATA%\\winutil-m3\\locks so you can delete the lock files yourself.') }, 'Support Tickets'),
-    h('button', { class: 'btn filled', onclick: closeDialog }, 'Done'),
-  ], true);
 }
 
 function openLockWizard(id: string, label: string, mode: 'set' | 'unlock' = 'set'): void {
   state.dialogArg = `${id}:${label}:${mode}`;
   openDialog('lock');
-}
-
-/** One wizard per element. It never touches, reads or reuses any other element's
- *  credential — there is no master credential and no inheritance. */
-function lockWizardDialog(): HTMLElement {
-  const w = state.wizard;
-  const lock = state.locks[w.id];
-  const set = (patch: Partial<typeof w>): void => { Object.assign(state.wizard, patch); render(); };
-
-  if (w.mode === 'unlock') {
-    const ok = lock && (lock.kind === 'password' ? w.attempt === lock.credential : w.attempt.replace(/\s/g, '') === state.otpCode.replace(/\s/g, ''));
-    return dialogShell(`Unlock · ${w.label}`, 'This element’s own credential', [
-      h('div', { class: 'notice' }, icon('info'),
-        h('span', {}, `Only the credential set for “${w.label}” opens it. No other element’s credential works here, and there is no master credential.`)),
-      h('div', { style: 'height:14px' }),
-      h('label', { class: 'field' }, lock?.kind === 'otp' ? 'CURRENT 6-DIGIT CODE FOR THIS ELEMENT' : 'PASSWORD FOR THIS ELEMENT',
-        h('input', {
-          type: lock?.kind === 'otp' ? 'text' : 'password', value: w.attempt, autofocus: 'autofocus',
-          placeholder: lock?.kind === 'otp' ? '000000' : 'Its own password',
-          oninput: (e: Event) => { state.wizard.attempt = (e.target as HTMLInputElement).value; },
-        })),
-      w.attempt ? h('div', { class: `feedback${ok ? '' : ' bad'}`, style: 'margin-top:12px' },
-        ok ? 'Credential accepted for this element.' : 'That is not this element’s credential.') : null,
-    ], [
-      h('button', { class: 'btn text', onclick: closeDialog }, 'Cancel'),
-      h('button', {
-        class: 'btn outlined',
-        onclick: () => { closeDialog(); snack('Open a Support Ticket — resolving it opens the locks folder so you can delete this one file.'); },
-      }, 'Forgot it'),
-      h('button', {
-        class: 'btn filled',
-        onclick: () => {
-          if (!ok) { snack('That is not this element’s credential.'); return; }
-          delete state.locks[w.id];
-          record('unlock', `Lock removed from ${w.label}`);
-          closeDialog();
-          snack(`${w.label} unlocked. Every other lock is untouched.`);
-        },
-      }, 'Unlock this element'),
-    ]);
-  }
-
-  const steps = ['Method', w.method === 'password' ? 'Password' : 'Pair', 'Confirm'];
-  const stepper = h('div', { class: 'stepper' }, ...steps.map((s, i) => h('div', {
-    class: `step${i === w.step ? ' active' : ''}${i < w.step ? ' done' : ''}`,
-  }, h('span', { class: 'step-dot' }, i < w.step ? icon('check') : String(i + 1)), h('span', {}, s))));
-
-  const body: Array<Node | null> = [
-    h('div', { class: 'notice' }, icon('lock'),
-      h('span', {}, `This wizard sets a credential for “${w.label}” and nothing else. It is a for-fun lock, never a security boundary.`)),
-    stepper,
-  ];
-
-  if (w.step === 0) {
-    body.push(h('div', { class: 'listbox' },
-      h('button', {
-        class: `row${w.method === 'password' ? ' selected' : ''}`, onclick: () => set({ method: 'password' }),
-      }, h('span', { class: 'lead' }, icon('password')),
-        h('span', { class: 'primary' }, 'Its own password'),
-        h('span', { class: 'snippet' }, 'A password used by this element alone')),
-      h('button', {
-        class: `row${w.method === 'otp' ? ' selected' : ''}`, onclick: () => set({ method: 'otp' }),
-      }, h('span', { class: 'lead' }, icon('pin')),
-        h('span', { class: 'primary' }, 'Its own TOTP secret'),
-        h('span', { class: 'snippet' }, 'A second factor generated for this element alone'))));
-  } else if (w.step === 1 && w.method === 'password') {
-    const mismatch = Boolean(w.pw2) && w.pw1 !== w.pw2;
-    body.push(h('div', { class: 'grid2' },
-      h('label', { class: 'field' }, 'PASSWORD FOR THIS ELEMENT', h('input', {
-        type: 'password', value: w.pw1, autofocus: 'autofocus',
-        oninput: (e: Event) => { state.wizard.pw1 = (e.target as HTMLInputElement).value; },
-      })),
-      h('label', { class: 'field' }, 'REPEAT IT', h('input', {
-        type: 'password', value: w.pw2,
-        oninput: (e: Event) => { state.wizard.pw2 = (e.target as HTMLInputElement).value; render(); },
-      }))));
-    if (mismatch) body.push(h('div', { class: 'feedback bad' }, 'The two entries do not match.'));
-  } else if (w.step === 1) {
-    const uri = `otpauth://totp/WinUtil:${encodeURIComponent(w.label)}?secret=${w.secret}&issuer=WinUtil&algorithm=SHA1&digits=6&period=30`;
-    body.push(h('div', { style: 'display:flex;gap:18px;flex-wrap:wrap;align-items:center;padding:16px;border-radius:16px;background:var(--md-sys-color-surface-container-lowest)' },
-      h('canvas', { id: 'qr', width: '160', height: '160', style: 'width:160px;height:160px;border-radius:12px;background:#fff' }),
-      h('div', { style: 'flex:1;min-width:220px;display:flex;flex-direction:column;gap:8px' },
-        h('p', { style: 'font-size:12.5px;color:var(--md-sys-color-on-surface-variant)' },
-          'Drawn locally from the otpauth URI — never through a third-party QR service. This secret belongs to this element only.'),
-        h('code', { style: 'font-size:11px;word-break:break-all' }, uri),
-        h('label', { class: 'field' }, 'MANUAL BASE32 KEY', h('input', { value: w.secret, readonly: 'readonly' })),
-        h('label', { class: 'field' }, 'CONFIRM ONE CODE', h('input', {
-          value: w.code, placeholder: '000000', maxlength: '6', inputmode: 'numeric',
-          oninput: (e: Event) => { state.wizard.code = (e.target as HTMLInputElement).value; render(); },
-        })))));
-  } else {
-    body.push(h('div', { class: 'listbox' },
-      h('div', { class: 'row' }, h('span', { class: 'primary' }, 'Element'), h('span', { class: 'snippet' }, w.label)),
-      h('div', { class: 'row' }, h('span', { class: 'primary' }, 'Element id'), h('span', { class: 'snippet mono' }, w.id)),
-      h('div', { class: 'row' }, h('span', { class: 'primary' }, 'Credential'), h('span', { class: 'snippet' }, w.method === 'otp' ? 'Its own TOTP secret' : 'Its own password')),
-      h('div', { class: 'row' }, h('span', { class: 'primary' }, 'Shared with'), h('span', { class: 'snippet' }, 'Nothing — no master credential, no inheritance'))));
-    body.push(h('p', { style: 'font-size:12px;color:var(--md-sys-color-on-surface-variant)' },
-      'Locks are not a security boundary. Deleting %APPDATA%\\winutil-m3\\locks removes this one lock file without affecting the others, and the Support Tickets desk opens that folder for you.'));
-  }
-
-  const canAdvance = w.step === 0
-    || (w.step === 1 && w.method === 'password' && Boolean(w.pw1) && w.pw1 === w.pw2)
-    || (w.step === 1 && w.method === 'otp' && w.code.length === 6);
-
-  return dialogShell(`Lock wizard · ${w.label}`, `Step ${w.step + 1} of 3 · ${steps[w.step]}`, body, [
-    h('button', { class: 'btn text', onclick: closeDialog }, 'Cancel'),
-    w.step > 0 ? h('button', { class: 'btn outlined', onclick: () => set({ step: w.step - 1 }) }, 'Back') : null,
-    w.step < 2
-      ? h('button', { class: 'btn filled', disabled: !canAdvance, onclick: () => set({ step: w.step + 1 }) }, 'Next')
-      : h('button', {
-        class: 'btn filled',
-        onclick: () => {
-          state.locks[w.id] = {
-            kind: w.method,
-            credential: w.method === 'password' ? w.pw1 : w.secret,
-            hint: w.method === 'password' ? `set ${new Date().toLocaleDateString()}` : 'paired in the authenticator',
-          };
-          if (w.method === 'otp') state.totp = [...state.totp, { id: w.id, label: w.label, issuer: 'WinUtil', secret: w.secret }];
-          record('lock', `${w.method === 'otp' ? 'TOTP' : 'Password'} lock set on ${w.label}`);
-          closeDialog();
-          snack(`${w.label} now has its own credential.`);
-        },
-      }, 'Finish this element’s lock'),
-  ]);
 }
 
 function authDialog(): HTMLElement {
@@ -2429,7 +2239,6 @@ function profilesDialog(): HTMLElement {
   const found = state.profiles.filter((p) => match(`${p.name} ${p.view} ${p.ids.join(' ')}`));
   const picked = state.dlgSelected;
   const apply = (p: typeof state.profiles[number], mode: 'replace' | 'add' | 'subtract'): void => {
-    if (state.locks[`profile-sel-${p.id}`]) { openLockWizard(`profile-sel-${p.id}`, `Selection profile · ${p.name}`, 'unlock'); return; }
     if (mode === 'replace') { state.selected.clear(); state.rowColors = {}; }
     p.ids.forEach((id) => {
       if (mode === 'subtract') { state.selected.delete(id); delete state.rowColors[id]; }
@@ -2465,7 +2274,7 @@ function profilesDialog(): HTMLElement {
       }, 'Delete selected')),
     h('div', { class: 'listbox' }, ...(found.length ? found.map((p) => {
       const on = picked.has(p.id);
-      const locked = Boolean(state.locks[`profile-sel-${p.id}`]);
+      const locked = false;
       return h('div', {
         class: `row${on ? ' selected' : ''}`, style: `--tint:${p.color}`,
         onclick: () => { on ? picked.delete(p.id) : picked.add(p.id); render(); },
@@ -2652,7 +2461,7 @@ function gateDialog(): HTMLElement {
   const fill = h('i', { style: `width:${g.slider}%` });
   const authorize = h('button', {
     class: 'btn danger', disabled: !(armed && g.slider >= 100),
-    onclick: () => { record('authorized', g.action); if (g.kind) void runNow(g.kind, g.ids ?? [...state.selected]); closeDialog(); },
+    onclick: () => { record('authorized', g.action); if (g.kind) void runNow(g.kind, g.ids ?? [...state.selected]); else g.after?.(); closeDialog(); },
   }, 'Authorize');
   const hint = h('p', { style: 'font-size:12px;color:var(--md-sys-color-on-surface-variant);margin:0' },
     armed ? 'Both keys are held. Drag the slider the whole way.' : 'Hold both keys to arm the slider.');
@@ -2720,19 +2529,6 @@ function bindShortcuts(): void {
     e.preventDefault();
     openAppearance('tab-direct', 'Tab (Shift+right-click)');
   });
-  window.setInterval(() => {
-    state.otpSeconds -= 1;
-    if (state.otpSeconds <= 0) {
-      state.otpSeconds = 30;
-      state.otpCode = String(Math.floor(100000 + Math.random() * 899999)).replace(/(\d{3})(\d{3})/, '$1 $2');
-    }
-    // Patch the two live nodes only. A full render would blow away the dialog's
-    // focus and any half-typed confirmation code every second.
-    const codeNode = document.getElementById('otp-code');
-    const secNode = document.getElementById('otp-seconds');
-    if (codeNode) codeNode.textContent = state.otpCode;
-    if (secNode) secNode.textContent = `${state.otpSeconds}s`;
-  }, 1000);
 }
 
 async function boot(): Promise<void> {
@@ -2752,8 +2548,8 @@ async function boot(): Promise<void> {
     snack('Could not load the WinUtil configuration.');
   }
   try { state.update = await bridge().updateStatus(); } catch { /* development/browser preview */ }
+  try { state.history = (await bridge().history()).reverse(); } catch { state.history = []; }
   render();
-  void ensureDeps();
 }
 
 void boot();

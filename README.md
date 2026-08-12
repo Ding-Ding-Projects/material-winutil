@@ -3,13 +3,13 @@
 Material System Utility is a Windows desktop application that presents the
 open-source WinUtil catalogue in a frameless Material Design 3 interface.
 
-[Download the Windows x64 installer](https://github.com/Ding-Ding-Projects/material-winutil/releases/download/v0.1.0-build.6.1/MaterialSystemUtility-Setup.exe) · [Documentation site](https://ding-ding-projects.github.io/material-winutil/) · [Release notes](https://github.com/Ding-Ding-Projects/material-winutil/releases/tag/v0.1.0-build.6.1)
+[Download the latest Windows x64 installer](https://github.com/Ding-Ding-Projects/material-winutil/releases/latest/download/MaterialSystemUtility-Setup.exe) · [Documentation site](https://ding-ding-projects.github.io/material-winutil/) · [Latest release notes](https://github.com/Ding-Ding-Projects/material-winutil/releases/latest)
 
 The installer is an unsigned Squirrel.Windows executable and may trigger an
 unknown-publisher or SmartScreen warning.
 
 > [!IMPORTANT]
-> The first baseline enables only exact, allowlisted WinGet package operations.
+> Release `v0.1.0-build.6.1` enables only exact, allowlisted WinGet package operations.
 > Tweaks, optional features, update profiles, AppX removal, ISO servicing, and
 > other higher-risk operations fail closed until their reviewed adapters ship.
 
@@ -35,6 +35,13 @@ Installed builds check the public Squirrel.Windows feed on startup and every fou
 hours. The app shows current, checking, available, ready, up-to-date, and error
 states without blocking work. A downloaded update stays staged until the user
 chooses **Restart to install update**; all release installers remain unsigned.
+
+> [!WARNING]
+> GitHub immutable releases are disabled for this repository. The unsigned update
+> feed and release assets are therefore mutable by repository administrators.
+> HTTPS and package hashes can detect corruption in transit, but they do not make
+> the feed immutable or prove a publisher identity. Review the published SHA-256
+> values before installing or restarting into an update.
 
 </details>
 
@@ -66,6 +73,7 @@ uses distinct branding and does not reuse upstream logos or screenshots.
 - System operations without a reviewed adapter return an explicit unsupported result.
 - The app bundles no remote fonts, analytics, credentials, sample history, or sample secrets.
 
-Long-form feature documentation, release automation,
-the landing page, real captures, and the remaining reviewed system adapters are part of
-the active release-grade implementation and are not claimed complete by this baseline.
+Release `v0.1.0-build.6.1`, its unsigned Squirrel.Windows assets, the documentation
+site, workflow timing, line counts, and two real captures are published. The broader
+capture matrix, installed-update end-to-end proof, reviewed system adapters, and
+universal product contracts remain active work and are not claimed complete.

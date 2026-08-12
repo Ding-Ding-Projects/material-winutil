@@ -91,6 +91,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 button { background: none; border: 0; cursor: pointer; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible,
 [tabindex]:focus-visible { outline: 3px solid var(--md-sys-color-primary); outline-offset: 2px; }
+.sr-only { position: fixed; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 a { color: var(--md-sys-color-primary); text-decoration: none; }
 a:hover { color: var(--md-sys-color-on-primary-container); text-decoration: underline; }
 code, pre, kbd, .mono { font-family: ui-monospace, Consolas, monospace; }

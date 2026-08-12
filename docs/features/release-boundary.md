@@ -21,7 +21,14 @@ The Windows image creator is a nonfunctional preview. Its controls do not mount,
 
 ## In development, not release-proven
 
-Source may contain work toward automatic unsigned Squirrel updates, notification behavior, history improvements, and other contracts. Until an installed build exercises the complete path and a release publishes the required feed assets, those paths remain in development.
+Release `v0.1.0-build.6.1` publishes the unsigned Squirrel.Windows setup, `RELEASES`,
+and full package required by the feed. The installed application exposes visible update
+states, a bounded background schedule, and an explicit restart action. End-to-end proof
+of download, staging, restart, replacement detection, and rollback remains in development.
+
+GitHub immutable releases are disabled. The unsigned feed and release assets are mutable
+administrator-controlled inputs even after publication. HTTPS and hashes do not make the
+release immutable and do not authenticate a software publisher.
 
 ## Explicitly unavailable
 
@@ -36,7 +43,7 @@ Source may contain work toward automatic unsigned Squirrel updates, notification
 - Git-backed snapshot, diff, and restore history.
 - Complete exports, archive export, and external-editor handoff.
 - A complete offline Markdown documentation browser and full changelog viewer.
-- A verified public installer, release, hosted documentation site, and automatic-update feed at the time this article was written.
+- End-to-end installed-update download, staging, restart, replacement detection, and rollback proof.
 
 Unavailable behavior must remain visibly unavailable. The application must not simulate completion, display deterministic fake QR data, or turn a decorative preview into a safety claim.
 

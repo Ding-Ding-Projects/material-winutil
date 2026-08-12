@@ -19,6 +19,9 @@ The current verified baseline includes:
 - `config/winutil.json` is declarative data. It must never become an executable-script transport.
 - Unsupported tweak, optional-feature, AppX, update-profile, and image-servicing work must remain unavailable until a bounded adapter exists.
 - Code signing is intentionally disabled. Do not add signing discovery or credentials.
+- GitHub immutable releases are disabled. Treat the unsigned Squirrel.Windows feed
+  and release assets as mutable administrator-controlled inputs, and keep hash checks
+  and the visible unsigned-feed warning intact.
 - The tracked application capture is evidence for the package catalogue surface only.
 
 ## Verification
@@ -32,7 +35,9 @@ The current verified baseline includes:
 
 - Installed-build automatic-update proof is not yet established here.
 - Complete narrow-layout, high-scale, keyboard, and screen-reader runtime evidence remains required.
-- The public release workflow, unsigned assets, workflow timing, release line counts, and documentation endpoint are published and independently verified.
+- Release `v0.1.0-build.6.1`, its three unsigned Squirrel.Windows assets, workflow timing,
+  release line counts, and the documentation endpoint are published and independently
+  verified. This is release evidence, not proof of the unfinished universal contracts.
 - Higher-risk system adapters and the broader universal product contracts remain intentionally unavailable.
 
 ## Next owner

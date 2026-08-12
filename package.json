@@ -11,14 +11,16 @@
     "build:ts": "tsc -p tsconfig.json",
     "build:assets": "node scripts/copy-assets.mjs",
     "build": "npm run clean && npm run build:ts && npm run build:assets",
-    "check": "npm run build && node scripts/verify-baseline.mjs",
+    "test:contracts": "npm run build && node --test scripts/tests/*.test.mjs",
+    "check": "npm run build && node scripts/verify-baseline.mjs && npm run test:contracts",
     "prestart": "node scripts/ensure-electron-binary.mjs",
     "start": "npm run build && electron .",
-    "dist": "npm run check && electron-builder --win squirrel --publish never"
+    "dist": "npm run check && electron-builder --win squirrel --publish never",
+    "dist:package": "npm run build && electron-builder --win squirrel --publish never"
   },
   "devDependencies": {
     "@types/node": "22.15.30",
-    "electron": "37.0.0",
+    "electron": "39.8.10",
     "electron-builder": "26.15.3",
     "electron-builder-squirrel-windows": "26.15.3",
     "typescript": "5.8.3"
@@ -30,10 +32,24 @@
     "appId": "org.dingdingprojects.materialsystemutility",
     "productName": "Material System Utility",
     "asar": true,
-    "directories": { "output": "release" },
-    "files": ["dist/**/*", "package.json", "LICENSE", "THIRD_PARTY_NOTICES.md"],
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md"
+    ],
     "win": {
-      "target": [{ "target": "squirrel", "arch": ["x64"] }],
+      "target": [
+        {
+          "target": "squirrel",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "forceCodeSigning": false,
       "signExecutable": false,
       "signAndEditExecutable": false
@@ -50,7 +66,7 @@
     }
   },
   "allowScripts": {
-    "electron@37.0.0": true,
+    "electron@39.8.10": true,
     "electron-winstaller@5.4.0": true
   }
 }

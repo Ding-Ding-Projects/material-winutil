@@ -1,6 +1,7 @@
 param(
     [switch]$Installer,
-    [switch]$Silent
+    [switch]$Silent,
+    [switch]$SkipLocalChecks
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,20 +49,22 @@ try {
 
     if ($Installer) {
         Write-Phase 'Building and validating the unsigned Squirrel.Windows installer.'
-        & $npm run dist
+        if ($SkipLocalChecks) { & $npm run dist:package } else { & $npm run dist }
         if ($LASTEXITCODE -ne 0) { throw "Installer build failed with exit code $LASTEXITCODE." }
-        $setup = Get-ChildItem -LiteralPath (Join-Path $root 'release') -Recurse -File -Filter '*Setup.exe' | Select-Object -First 1
-        $releases = Get-ChildItem -LiteralPath (Join-Path $root 'release') -Recurse -File -Filter 'RELEASES' | Select-Object -First 1
-        $package = Get-ChildItem -LiteralPath (Join-Path $root 'release') -Recurse -File -Filter '*-full.nupkg' | Select-Object -First 1
-        if (-not $setup -or -not $releases -or -not $package) { throw 'Squirrel.Windows output is incomplete: Setup.exe, RELEASES, or the full .nupkg is missing.' }
-        $signature = Get-AuthenticodeSignature -LiteralPath $setup.FullName
-        if ($signature.Status -ne 'NotSigned') { throw "Signing is prohibited, but $($setup.Name) reported signature status $($signature.Status)." }
-        $hash = Get-FileHash -LiteralPath $setup.FullName -Algorithm SHA256
-        Write-Phase "Unsigned installer: $($setup.FullName)"
-        Write-Phase "SHA-256: $($hash.Hash)"
+        $version = (& $node -p "require('./package.json').version").Trim()
+        $commit = (& git rev-parse HEAD).Trim()
+        if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the source commit for installer provenance.' }
+        $manifest = Join-Path $root 'release\release-assets.json'
+        $provenance = Join-Path $root 'release\release-provenance.json'
+        & (Join-Path $PSScriptRoot 'validate-squirrel.ps1') -ReleaseRoot (Join-Path $root 'release') -ManifestPath $manifest -ProvenancePath $provenance -ExpectedVersion $version -ExpectedCommit $commit
+        if ($LASTEXITCODE -ne 0) { throw "Squirrel.Windows validation failed with exit code $LASTEXITCODE." }
+        $assets = @(Get-Content -Raw -LiteralPath $manifest | ConvertFrom-Json)
+        $setupAsset = @($assets | Where-Object { $_.name -like '*Setup.exe' })[0]
+        Write-Phase "Unsigned installer: $(Join-Path $root ('release\squirrel-windows\' + $setupAsset.name))"
+        Write-Phase "SHA-256: $($setupAsset.sha256)"
     } else {
         Write-Phase 'Building the runnable application.'
-        & $npm run check
+        if ($SkipLocalChecks) { & $npm run build } else { & $npm run check }
         if ($LASTEXITCODE -ne 0) { throw "Application build failed with exit code $LASTEXITCODE." }
     }
 } finally {

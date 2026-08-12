@@ -14,9 +14,10 @@ for (const app of catalog.apps) {
 
 const main = await readFile(new URL('../src/main/main.ts', import.meta.url), 'utf8');
 assert.doesNotMatch(main, /ScriptBlock::Create|DownloadString\(|Invoke-WinUtilTweaks|Set-WinUtilUpdateProfile/);
-assert.match(main, /PACKAGE_ID/);
-assert.match(main, /value\.startsWith\('msstore:'\)/);
-assert.match(main, /'--source', item\.source/);
+assert.match(main, /resolvePackageRequest/);
+assert.match(main, /sandbox: true/);
+assert.match(main, /setWindowOpenHandler/);
+assert.match(main, /setPermissionRequestHandler/);
 
 const html = await readFile(new URL('../src/renderer/index.html', import.meta.url), 'utf8');
 assert.doesNotMatch(html, /fonts\.googleapis|fonts\.gstatic|https?:\/\//);
@@ -24,10 +25,19 @@ assert.doesNotMatch(html, /fonts\.googleapis|fonts\.gstatic|https?:\/\//);
 const renderer = await readFile(new URL('../src/renderer/renderer.ts', import.meta.url), 'utf8');
 const styles = await readFile(new URL('../src/renderer/styles.css', import.meta.url), 'utf8');
 assert.match(renderer, /function selectedPackageIds\(\): string\[\]/);
-assert.match(renderer, /\.map\(\(app\) => app\.winget\)/);
+assert.match(renderer, /\.map\(\(app\) => app\.id\)/);
 assert.doesNotMatch(renderer, /locked: true/);
 assert.doesNotMatch(renderer, /requestAnimationFrame\(drawQr\)/);
-assert.match(renderer, /case 'lockwizard': return lockDialog\(\);/);
+assert.doesNotMatch(renderer, /lockWizardDialog|credential:\s*w\.|Math\.random\(\).*899999/);
+assert.match(renderer, /Element and tab locks are unavailable/);
+assert.match(renderer, /ISO customization is a documented preview/);
+assert.match(renderer, /bounded local event log/);
+assert.match(renderer, /\[app\.id\]\)/);
+assert.match(renderer, /bridge\(\)\.history\(\)/);
+assert.match(renderer, /role: 'switch'/);
+assert.match(renderer, /id: 'live-status'/);
+assert.match(renderer, /finally \{\s*state\.queue\.active = false;/);
+assert.match(main, /electron-squirrel-startup/);
 assert.match(renderer, /role: 'tab'/);
 assert.match(renderer, /role: 'checkbox'/);
 assert.match(styles, /\[tabindex\]:focus-visible/);

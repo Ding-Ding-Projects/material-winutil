@@ -99,6 +99,7 @@ p { color: var(--on-surface-variant); line-height: 1.7; }
 .outlined-button { border: 1px solid var(--outline); background: transparent; color: var(--primary); }
 .filled-button:hover, .outlined-button:hover { box-shadow: var(--shadow); }
 .availability-note { display: inline-block; padding: 12px 16px; border-radius: var(--radius-sm); background: var(--warning-container); color: var(--on-surface); }
+.mutable-feed-note { max-width: 720px; padding: 12px 16px; border-left: 4px solid var(--warning); color: var(--on-surface); background: var(--warning-container); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
 .hero-stats { display: grid; gap: 12px; }
 .hero-stats article { display: flex; align-items: baseline; justify-content: space-between; gap: 20px; padding: 24px; border-radius: var(--radius-md); background: var(--surface-container); }
 .hero-stats strong { color: var(--primary); font-size: clamp(2rem, 5vw, 3.2rem); }

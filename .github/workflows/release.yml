@@ -2,7 +2,6 @@ name: Build and publish Windows release
 
 on:
   push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -23,8 +22,7 @@ jobs:
       name: github-pages
       url: ${{ steps.pages.outputs.page_url }}
     env:
-      GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || secrets.GITHUB_TOKEN }}
-      RELEASE_TAG: v0.1.0-build.${{ github.run_number }}.${{ github.run_attempt }}
+      RELEASE_TAG: v0.1.${{ github.run_number }}-${{ github.run_attempt }}
     steps:
       - name: Record workflow start
         id: timing_start
@@ -66,8 +64,22 @@ jobs:
             "GitHub CLI: $(gh --version | Select-Object -First 1)"
           ) | Set-Content -Encoding utf8 workflow-evidence/runner-context.txt
 
+      - name: Set the monotonic package version
+        id: package_version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:RELEASE_TAG.TrimStart('v')
+          npm version $version --no-git-tag-version
+          $actual = node -p "require('./package.json').version"
+          if ($actual -ne $version) { throw "Package version $actual did not equal expected $version." }
+          "value=$actual" >> $env:GITHUB_OUTPUT
+          "Package version: $actual" | Add-Content -Encoding utf8 workflow-evidence/runner-context.txt
+
       - name: Build the runnable application through the one-click path
         shell: pwsh
+        env:
+          SKIP_LOCAL_CHECKS: '1'
         run: |
           $ErrorActionPreference = 'Continue'
           & .\build.bat /s 2>&1 | Tee-Object -FilePath workflow-evidence/build.log
@@ -76,6 +88,8 @@ jobs:
 
       - name: Build the unsigned installer through the one-click path
         shell: pwsh
+        env:
+          SKIP_LOCAL_CHECKS: '1'
         run: |
           $ErrorActionPreference = 'Continue'
           & .\build-installer.bat /s 2>&1 | Tee-Object -FilePath workflow-evidence/build-installer.log
@@ -90,31 +104,27 @@ jobs:
           $releaseRoot = Join-Path $env:GITHUB_WORKSPACE 'release'
           $stage = Join-Path $env:GITHUB_WORKSPACE 'release-staging'
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
-
-          $setup = Get-ChildItem -LiteralPath $releaseRoot -Recurse -File -Filter '*Setup.exe'
-          $indexes = Get-ChildItem -LiteralPath $releaseRoot -Recurse -File -Filter 'RELEASES'
-          $packages = Get-ChildItem -LiteralPath $releaseRoot -Recurse -File -Filter '*.nupkg'
-          $fullPackages = @($packages | Where-Object Name -Like '*-full.nupkg')
-          if ($setup.Count -ne 1) { throw "Expected exactly one Setup.exe; found $($setup.Count)." }
-          if ($indexes.Count -ne 1) { throw "Expected exactly one RELEASES; found $($indexes.Count)." }
-          if ($fullPackages.Count -lt 1) { throw 'No full Squirrel.Windows .nupkg was generated.' }
-
-          $signature = Get-AuthenticodeSignature -LiteralPath $setup[0].FullName
-          if ($signature.Status -ne 'NotSigned') { throw "Signing is prohibited, but Setup.exe reported $($signature.Status)." }
-          "signature_status=$($signature.Status)" >> $env:GITHUB_OUTPUT
-
-          $files = @($setup[0], $indexes[0]) + @($packages)
-          $manifest = foreach ($file in $files) {
-            Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $stage $file.Name) -Force
-            $hash = Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256
-            [ordered]@{ name = $file.Name; size = $file.Length; sha256 = $hash.Hash }
+          & .\scripts\validate-squirrel.ps1 `
+            -ReleaseRoot $releaseRoot `
+            -ManifestPath workflow-evidence/release-assets.json `
+            -ProvenancePath workflow-evidence/release-provenance.json `
+            -ExpectedVersion '${{ steps.package_version.outputs.value }}' `
+            -ExpectedCommit $env:GITHUB_SHA
+          $provenance = Get-Content -Raw workflow-evidence/release-provenance.json | ConvertFrom-Json
+          "signature_status=$($provenance.signatureStatus)" >> $env:GITHUB_OUTPUT
+          $manifest = @(Get-Content -Raw workflow-evidence/release-assets.json | ConvertFrom-Json)
+          foreach ($asset in $manifest) {
+            $source = Get-ChildItem -LiteralPath $releaseRoot -Recurse -File -Filter $asset.name
+            if ($source.Count -ne 1) { throw "Expected one source for $($asset.name); found $($source.Count)." }
+            Copy-Item -LiteralPath $source[0].FullName -Destination (Join-Path $stage $asset.name) -Force
           }
-          $manifest | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 workflow-evidence/release-assets.json
-          "Release assets staged: $($files.Count)" | Add-Content -Encoding utf8 workflow-evidence/runner-context.txt
+          "Release assets staged: $($manifest.Count)" | Add-Content -Encoding utf8 workflow-evidence/runner-context.txt
 
       - name: Resolve an unused published dim-sum code name
         id: dim_sum
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           $ErrorActionPreference = 'Stop'
           node scripts/select-dim-sum.mjs workflow-evidence/dim-sum.json
@@ -169,6 +179,8 @@ jobs:
 
       - name: Publish one non-draft GitHub release
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           $ErrorActionPreference = 'Stop'
           $assets = Get-ChildItem -LiteralPath release-staging -File | ForEach-Object FullName
@@ -190,6 +202,7 @@ jobs:
           DIM_SUM_IMAGE_URL: ${{ steps.dim_sum.outputs.dish_image_url }}
           DIM_SUM_ALT_EN: ${{ steps.dim_sum.outputs.dish_image_alt_en }}
           DIM_SUM_CATALOG_TAG: ${{ steps.dim_sum.outputs.dish_catalog_tag }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           $ErrorActionPreference = 'Stop'
           $completed = (Get-Date).ToUniversalTime().ToString('o')
@@ -201,15 +214,27 @@ jobs:
 
       - name: Verify the published release
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           $ErrorActionPreference = 'Stop'
           $release = gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName,targetCommitish,isDraft,isPrerelease,url,assets,body | ConvertFrom-Json
           if ($release.isDraft -or $release.isPrerelease) { throw 'The release is not a final public release.' }
           if ($release.targetCommitish -ne $env:GITHUB_SHA) { throw "Release target $($release.targetCommitish) does not equal $env:GITHUB_SHA." }
           $expected = Get-Content -Raw workflow-evidence/release-assets.json | ConvertFrom-Json
+          $downloadRoot = Join-Path $env:RUNNER_TEMP "published-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          New-Item -ItemType Directory -Force -Path $downloadRoot | Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $downloadRoot
           foreach ($asset in $expected) {
             $published = @($release.assets | Where-Object name -EQ $asset.name)
             if ($published.Count -ne 1 -or $published[0].size -ne $asset.size) { throw "Published asset verification failed for $($asset.name)." }
+            $downloaded = Join-Path $downloadRoot $asset.name
+            if (-not (Test-Path -LiteralPath $downloaded -PathType Leaf)) { throw "Published asset did not download: $($asset.name)." }
+            $digest = (Get-FileHash -LiteralPath $downloaded -Algorithm SHA256).Hash
+            if ($digest -ne $asset.sha256) { throw "Published SHA-256 verification failed for $($asset.name)." }
+            if ($published[0].digest -and $published[0].digest -ne "sha256:$($asset.sha256.ToLowerInvariant())") {
+              throw "GitHub asset digest verification failed for $($asset.name)."
+            }
           }
           foreach ($needle in @('Workflow started', 'Workflow completed', 'Workflow duration', 'Surviving-line attribution', 'NotSigned')) {
             if (-not $release.body.Contains($needle)) { throw "Release notes are missing required evidence: $needle" }

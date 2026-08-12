@@ -41,7 +41,15 @@ The scripts do not install secrets or credentials and do not weaken the machine'
 
 ## Verification
 
-The build scripts are the supported manual release path. A release claim additionally requires exact-commit artifact provenance, a published immutable release, downloadable assets, and final remote workflow evidence. A local setup executable alone is not a public release.
+The build scripts are the supported manual release path. Release `v0.1.0-build.6.1`
+publishes downloadable `Setup.exe`, `RELEASES`, and full `.nupkg` assets with SHA-256,
+workflow timing, and exact-commit evidence. A local setup executable alone is not a
+public release.
+
+GitHub immutable releases are disabled for this repository. The published unsigned
+assets and update feed can be replaced by repository administrators after publication.
+Consumers should compare the published SHA-256 values; transport and hashes reduce
+risk but do not create immutability or publisher authentication.
 
 ## Suggested articles
 

@@ -18,7 +18,7 @@
         <strong>Material System Utility</strong>
         <span data-copy="docsLabel">Documentation</span>
       </div>
-      <button class="search-launch" id="palette-launch" type="button">
+      <button class="search-launch" id="palette-launch" type="button" aria-label="Open command palette">
         <span aria-hidden="true">⌕</span>
         <span data-copy="paletteHint">Find a page or command</span>
         <kbd>Ctrl</kbd><span>+</span><kbd>Shift</kbd><span>+</span><kbd>F</kbd>
@@ -30,7 +30,7 @@
         <span data-copy="browse">Browse</span>
         <button class="icon-button rail-close" id="rail-close" aria-label="Close navigation">×</button>
       </div>
-      <div class="tab-list" role="tablist" aria-orientation="vertical">
+      <div class="tab-list" id="documentation-tab-list" role="tablist" aria-orientation="vertical">
         <button class="nav-tab active" role="tab" aria-selected="true" aria-controls="panel-home" id="tab-home" data-page="home">
           <span aria-hidden="true">⌂</span><span data-copy="home">Home</span>
         </button>
@@ -62,9 +62,10 @@
             <p class="hero-lede" data-copy="heroBody">Browse a reviewed catalogue, search locally, and run exact install, uninstall, or upgrade operations from a Material Design desktop shell.</p>
             <div class="hero-actions">
               <button class="filled-button" type="button" data-go="capabilities" data-copy="seeCapabilities">See verified capabilities</button>
-              <a class="outlined-button" href="https://github.com/Ding-Ding-Projects/material-winutil/releases/download/v0.1.0-build.6.1/MaterialSystemUtility-Setup.exe" data-copy="downloadInstaller">Download Windows installer</a>
+              <a class="outlined-button" href="https://github.com/Ding-Ding-Projects/material-winutil/releases/latest/download/MaterialSystemUtility-Setup.exe" data-copy="downloadInstaller">Download latest Windows installer</a>
             </div>
             <p class="availability-note"><strong data-copy="installerStatus">Installer status:</strong> <span data-copy="publishedInstaller">Version v0.1.0-build.6.1 · Windows x64 · unsigned Squirrel.Windows</span></p>
+            <p class="mutable-feed-note"><strong>Mutable unsigned feed:</strong> GitHub immutable releases are disabled. Repository administrators can replace these unsigned assets after publication; compare the published SHA-256 values before installation.</p>
           </div>
           <div class="hero-stats" aria-label="Verified catalogue totals">
             <article><strong>227</strong><span data-copy="apps">applications</span></article>
@@ -114,13 +115,13 @@
           <article data-search="available catalogue search regex tabs groups appearance settings"><span class="state available">✓ Available</span><h2>Catalogue and workspace</h2><p>Local application catalogue, installed-package detection, search, regex mode, category filters, tabs, pinning, groups, and a persisted theme, density, accent, font, scale, and weight subset.</p><a href="features/workspace-and-search.md">Read the workspace guide</a></article>
           <article data-search="available build installer squirrel unsigned"><span class="state available">✓ Available</span><h2>One-click build paths</h2><p><code>build.bat</code> builds the runnable application. <code>build-installer.bat</code> produces and verifies unsigned Squirrel.Windows setup and update artifacts.</p><a href="features/build-and-installer.md">Read the build guide</a></article>
           <article data-search="catalogued unavailable tweaks features update profile image creator win11"><span class="state unavailable">— Unavailable</span><h2>Higher-risk system adapters</h2><p>The catalogue contains tweak and optional-feature records, but execution is deliberately refused with exit code 78 until bounded, reviewed adapters exist.</p><a href="features/release-boundary.md">Read the release boundary</a></article>
-          <article data-search="partial application updater unavailable lock authenticator totp scheduled school narration personal vocabulary exports"><span class="state partial">◐ Partial</span><h2>Application updater and additional contracts</h2><p>Installed builds have visible Squirrel update states, a bounded background schedule, an unsigned-installer warning, and explicit restart control. Release-backed download and restart proof still needs the first immutable release. Locks, TOTP, scheduled settings, shared modes, narration, personal-vocabulary loading, and complete export coverage remain unavailable.</p></article>
+          <article data-search="partial application updater mutable unsigned feed replacement rollback unavailable lock authenticator totp scheduled school narration personal vocabulary exports"><span class="state partial">◐ Partial</span><h2>Application updater and additional contracts</h2><p>Installed builds have visible Squirrel update states, a bounded background schedule, an unsigned-installer warning, and explicit restart control. Version v0.1.0-build.6.1 publishes the feed assets, but end-to-end installed download, restart, replacement detection, and rollback proof remains incomplete. GitHub immutable releases are disabled, so repository administrators can replace the unsigned feed assets. Locks, TOTP, scheduled settings, shared modes, narration, personal-vocabulary loading, and complete export coverage remain unavailable.</p></article>
         </div>
         <p class="empty-state" id="capability-empty" hidden>No capabilities match this filter.</p>
       </section>
 
       <section class="page-panel" id="panel-guides" role="tabpanel" aria-labelledby="tab-guides" data-panel="guides" hidden>
-        <header class="page-header"><span class="eyebrow" data-copy="guides">Guides</span><h1 data-copy="buildUse">Build and use the verified baseline</h1><p>No installer link is shown until a public release asset has been independently verified.</p></header>
+        <header class="page-header"><span class="eyebrow" data-copy="guides">Guides</span><h1 data-copy="buildUse">Build and use the verified baseline</h1><p>The verified unsigned Windows x64 installer for version v0.1.0-build.6.1 is linked on Home. Immutable releases are disabled, so verify its published SHA-256 before use.</p></header>
         <div class="card-grid two">
           <article class="guide-card"><span class="step">1</span><h2>Build the runnable application</h2><p>From a checkout on Windows, run the root build script. It checks or obtains the required toolchain, installs project dependencies, builds the TypeScript application, copies local assets, and runs the baseline verifier.</p><pre><code>build.bat /s</code></pre></article>
           <article class="guide-card"><span class="step">2</span><h2>Build the installer</h2><p>The installer route performs the same checks, creates unsigned Squirrel.Windows artifacts, verifies that the setup executable is unsigned, and prints its path and SHA-256.</p><pre><code>build-installer.bat /s</code></pre></article>
@@ -173,6 +174,7 @@
     <header><div><span class="eyebrow">Ctrl+Shift+F</span><h2 id="palette-title">Command palette</h2></div><button class="icon-button" id="palette-close" aria-label="Close command palette">×</button></header>
     <label class="search-field"><span class="sr-only">Search commands</span><span aria-hidden="true">⌕</span><input id="palette-search" type="search" placeholder="Search pages and commands" autocomplete="off"></label>
     <div class="command-list" id="command-list" role="listbox" aria-label="Commands"></div>
+    <p class="sr-only" id="command-result-count" role="status" aria-live="polite" aria-atomic="true"></p>
     <p class="empty-state" id="command-empty" hidden>No commands match.</p>
   </section>
 

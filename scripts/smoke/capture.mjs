@@ -154,6 +154,10 @@ async function prepareSite(client, capture, defaults) {
   await client.setViewport(viewport.width, viewport.height, viewport.scale ?? 1);
   const requestedPage = capture.page ?? 'home';
   const applied = await client.evaluate(`(()=>{
+    ['capability-regex','settings-regex','command-palette','scrim','snackbar'].forEach((id)=>{const node=document.getElementById(id);if(node)node.hidden=true});
+    ['capability-regex-button','settings-regex-button'].forEach((id)=>document.getElementById(id)?.setAttribute('aria-expanded','false'));
+    ['capability-filter','capability-pattern','settings-search','settings-pattern','palette-search'].forEach((id)=>{const input=document.getElementById(id);if(input){input.value='';input.dispatchEvent(new Event('input',{bubbles:true}))}});
+    document.getElementById('tab-rail')?.classList.remove('open');document.body.style.overflow='';
     const set=(id,value)=>{const control=document.getElementById(id);if(!control)return false;control.value=value;control.dispatchEvent(new Event('change',{bubbles:true}));return true};
     const ok=set('language',${literal(capture.language ?? 'en')})&&set('theme',${literal(capture.theme ?? 'dark')})&&set('density','comfortable')&&set('dock',${literal(capture.dock ?? 'left')});
     document.querySelector('[data-page=${literal(requestedPage)}]')?.click();

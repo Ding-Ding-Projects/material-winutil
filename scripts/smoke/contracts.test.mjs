@@ -129,6 +129,9 @@ test('site preparation drives the live preference controls and real page tab', a
   const siteSource = await readFile(join(repo, 'docs', 'site', 'app.js'), 'utf8');
   const storageKey = /const STORAGE_KEY = '([^']+)'/u.exec(siteSource)?.[1];
   assert.ok(storageKey, 'site source must declare its preference storage key');
+  assert.match(source, /\['capability-regex','settings-regex','command-palette','scrim','snackbar'\]/u);
+  assert.match(source, /\['capability-filter','capability-pattern','settings-search','settings-pattern','palette-search'\]/u);
+  assert.match(source, /document\.getElementById\('tab-rail'\)\?\.classList\.remove\('open'\)/u);
   assert.match(source, /\['language','theme','density','dock','documentation-tab-list'\]\.every/u);
   assert.match(source, /else await waitForSite\(client\)/u);
   assert.match(source, /set\('language'.*set\('theme'.*set\('density'.*set\('dock'/su);

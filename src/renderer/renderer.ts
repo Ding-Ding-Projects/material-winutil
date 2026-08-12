@@ -974,7 +974,7 @@ function snack(msg: string): void {
   window.setTimeout(() => { if (state.snack === msg) { state.snack = ''; render(); } }, 3200);
 }
 
-function record(action: string, detail: string): void {
+function recordHistory(action: string, detail: string): void {
   const entry: HistoryEntry = { id: `h-${Date.now()}`, action, detail, at: new Date().toISOString() };
   state.history = [entry, ...state.history];
   void bridge().appendHistory({ action, detail }).catch(() => undefined);
@@ -2651,7 +2651,7 @@ function applyPreset(name: string): void {
   state.selected = new Set(ids);
   state.rowColors = {};
   ids.forEach((id) => { state.rowColors[id] = state.selectionColor; });
-  record('preset', `Applied the ${name} tweak preset (${ids.length} items)`);
+  recordHistory('preset', `Applied the ${name} tweak preset (${ids.length} items)`);
   maybeDimSum();
   snack(`${name} preset selected — ${ids.length} tweaks.`);
 }
@@ -2672,7 +2672,7 @@ async function runNow(kind: RunKind, ids: string[]): Promise<void> {
     render();
     const res = await bridge().run(kind, ids);
     state.runOutput = `$ winutil ${kind} ×${total}\n${res.stdout}${res.stderr ? `\n${res.stderr}` : ''}\nexit ${res.code}`;
-    record(kind, `${kind} completed for ${total} item(s), exit ${res.code}`);
+    recordHistory(kind, `${kind} completed for ${total} item(s), exit ${res.code}`);
     state.notifications = [{
       id: `n-${Date.now()}`, icon: res.ok ? 'download_done' : 'error',
       title: res.ok ? `${kind} finished` : `${kind} failed (exit ${res.code})`,
@@ -4289,7 +4289,7 @@ function saveSelectionDialog(): HTMLElement {
         state.profiles = [...state.profiles, { id: `p-${Date.now()}`, name, color: d.color, view: state.view, ids: [...state.selected] }];
         state.selectionColor = d.color;
         state.selected.forEach((i) => { state.rowColors[i] = d.color; });
-        record('profile', `Saved the selection profile “${name}” with ${state.selected.size} row(s)`);
+        recordHistory('profile', `Saved the selection profile “${name}” with ${state.selected.size} row(s)`);
         d.name = '';
         closeDialog();
         snack(`Saved “${name}”. Profiles are unlimited.`);
@@ -4630,7 +4630,7 @@ function gateDialog(): HTMLElement {
   const fill = h('i', { style: `width:${g.slider}%` });
   const authorize = h('button', {
     class: 'btn danger', disabled: !(armed && g.slider >= 100),
-    onclick: () => { record('authorized', g.action); if (g.kind) void runNow(g.kind, g.ids ?? [...state.selected]); else g.after?.(); closeDialog(); },
+    onclick: () => { recordHistory('authorized', g.action); if (g.kind) void runNow(g.kind, g.ids ?? [...state.selected]); else g.after?.(); closeDialog(); },
   }, 'Authorize');
   const hint = h('p', { style: 'font-size:12px;color:var(--md-sys-color-on-surface-variant);margin:0' },
     armed ? 'Both keys are held. Drag the slider the whole way.' : 'Hold both keys to arm the slider.');

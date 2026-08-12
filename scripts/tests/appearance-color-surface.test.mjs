@@ -15,6 +15,8 @@ test('renderer loads the shared appearance colour runtime before the main surfac
   assert.match(start, /window[\s\S]*exports/u);
   assert.match(finish, /appearanceColor[\s\S]*convertColor[\s\S]*contrastRatio/u);
   assert.match(finish, /Object\.freeze\(appearanceRuntimeExports\)/u);
+  assert.doesNotMatch(renderer, /function\s+record\s*\(/u, 'classic scripts share global names, so renderer history must not replace appearance.ts record()');
+  assert.match(renderer, /function\s+recordHistory\s*\(/u);
 });
 
 test('colour picker uses every shared representation with bounded editable input and copy', () => {

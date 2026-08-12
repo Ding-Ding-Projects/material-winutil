@@ -111,6 +111,8 @@ export interface Preferences {
   language: LanguageMode;
   narrator: 'English' | 'Yue' | 'Both';
   narratorEnabled: boolean;
+  narratorQuiet: boolean;
+  narratorReducedSound: boolean;
   enFunny: number;
   yueFunny: number;
   accent: string;
@@ -121,6 +123,34 @@ export interface Preferences {
   reducedMotion: boolean;
   exportFormat: ExportFormat;
 }
+
+export interface NarrationEvent {
+  category: string;
+  English: string;
+  Yue: string;
+  kind?: 'event' | 'error';
+}
+
+export interface NarrationSpeechRequest {
+  id: number;
+  text: string;
+  language: 'English' | 'Yue';
+}
+
+export interface NarrationSpeechCancel {
+  id: number;
+}
+
+export interface NarrationRuntimeState {
+  platformSpeechAvailable: boolean;
+  screenReaderActive: boolean;
+}
+
+export type NarrationClientResult =
+  | { status: 'spoken'; languages: readonly ('English' | 'Yue')[] }
+  | { status: 'suppressed'; reason: string }
+  | { status: 'superseded' | 'cancelled' | 'stopped' }
+  | { status: 'failed'; error: string };
 
 export type ExportFormat =
   | 'md' | 'txt' | 'json' | 'jsonl' | 'yaml' | 'toml' | 'xml' | 'csv' | 'tsv'
@@ -225,6 +255,13 @@ export interface Bridge {
   personalVocabularyLoad(): Promise<PersonalVocabularyState>;
   personalVocabularyUpload(payload: Uint8Array): Promise<PersonalVocabularyUploadResult>;
   personalVocabularyClear(): Promise<PersonalVocabularyState>;
+  narrationState(): Promise<NarrationRuntimeState>;
+  narrate(event: NarrationEvent): Promise<NarrationClientResult>;
+  stopNarration(): Promise<void>;
+  onNarrationSpeech(cb: (request: NarrationSpeechRequest) => void): void;
+  onNarrationCancel(cb: (request: NarrationSpeechCancel) => void): void;
+  narrationSpeechResult(id: number, ok: boolean, error?: string): void;
+  onNarrationState(cb: (state: NarrationRuntimeState) => void): void;
 }
 
 declare global {

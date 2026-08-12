@@ -33,6 +33,13 @@ const bridge: Bridge = {
   personalVocabularyLoad: () => ipcRenderer.invoke('personal-vocabulary:load'),
   personalVocabularyUpload: (payload) => ipcRenderer.invoke('personal-vocabulary:upload', payload),
   personalVocabularyClear: () => ipcRenderer.invoke('personal-vocabulary:clear'),
+  narrationState: () => ipcRenderer.invoke('narration:state'),
+  narrate: (event) => ipcRenderer.invoke('narration:enqueue', event),
+  stopNarration: () => ipcRenderer.invoke('narration:stop'),
+  onNarrationSpeech: (cb) => { ipcRenderer.on('narration:speech', (_e, request) => cb(request)); },
+  onNarrationCancel: (cb) => { ipcRenderer.on('narration:cancel', (_e, request) => cb(request)); },
+  narrationSpeechResult: (id, ok, error) => ipcRenderer.send('narration:speech-result', id, ok, error),
+  onNarrationState: (cb) => { ipcRenderer.on('narration:state', (_e, state) => cb(state)); },
 };
 
 contextBridge.exposeInMainWorld('winutil', bridge);

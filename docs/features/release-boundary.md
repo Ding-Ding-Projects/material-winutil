@@ -38,8 +38,7 @@ release immutable and do not authenticate a software publisher.
 - AppX removal and update-policy profiles.
 - ISO mounting, servicing, and output creation.
 - Password or OTP locks and support-ticket recovery.
-- Shared School mode, app renaming, personal-vocabulary upload, and scheduled/external settings.
-- Production TTS narration.
+- Shared School mode, app renaming, and the complete scheduled/external-settings surface.
 - Complete per-element appearance editing and color-space translation.
 - Git-backed snapshot, diff, and restore history.
 - Complete exports, archive export, and external-editor handoff.

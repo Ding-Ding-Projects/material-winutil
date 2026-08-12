@@ -7,13 +7,14 @@ import { pathToFileURL } from 'node:url';
 import squirrelStartup from 'electron-squirrel-startup';
 import type {
   AuthenticatorBeginRequest, AuthenticatorCodes, AuthenticatorEntry, AuthenticatorRegistration,
-  CommandResult, ExportFormat, HistoryEntry, PersonalVocabularyState, PersonalVocabularyUploadResult,
-  Preferences, RunKind, UpdateStatus, WinutilCatalog,
+  CommandResult, ExportFormat, HistoryEntry, NarrationClientResult, NarrationEvent, NarrationRuntimeState,
+  PersonalVocabularyState, PersonalVocabularyUploadResult, Preferences, RunKind, UpdateStatus, WinutilCatalog,
 } from '../shared/types';
 import { resolvePackageRequest, validateCatalog, wingetArgs } from './package-policy';
 import { AuthenticatorService } from './authenticator-service';
 import { PersonalVocabularyStore } from './personal-vocabulary-store';
 import { PERSONAL_VOCABULARY_LIMITS } from '../shared/personal-vocabulary';
+import { IpcNarrationTransport, NarratorRuntime } from './narrator-runtime';
 
 const ROOT = path.join(__dirname, '..', '..');
 const CONFIG_DIR = path.join(__dirname, '..', 'config');
@@ -29,6 +30,12 @@ let packageMutationActive = false;
 let historyWriteQueue: Promise<void> = Promise.resolve();
 let authenticatorService: AuthenticatorService | null = null;
 let personalVocabularyStore: PersonalVocabularyStore | null = null;
+const narrationTransport = new IpcNarrationTransport(() => {
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return undefined;
+  return win.webContents;
+});
+const narratorRuntime = new NarratorRuntime(narrationTransport);
+let currentNarratorPreferences: Preferences | null = null;
 const UPDATE_FEED = 'https://github.com/Ding-Ding-Projects/material-winutil/releases/latest/download/';
 const COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_TEXT_PAYLOAD = 2 * 1024 * 1024;
@@ -188,6 +195,8 @@ function projectPreferences(value: unknown): Preferences | null {
     || !['English', 'Yue', 'Bilingual'].includes(String(input.language))
     || !['English', 'Yue', 'Both'].includes(String(input.narrator))
     || typeof input.narratorEnabled !== 'boolean'
+    || (input.narratorQuiet !== undefined && typeof input.narratorQuiet !== 'boolean')
+    || (input.narratorReducedSound !== undefined && typeof input.narratorReducedSound !== 'boolean')
     || !isNumber('enFunny', 1, 5) || !isNumber('yueFunny', 1, 5)
     || typeof input.accent !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(input.accent)
     || typeof input.font !== 'string' || input.font.length < 1 || input.font.length > 120 || /[\u0000-\u001F\u007F]/.test(input.font)
@@ -197,7 +206,9 @@ function projectPreferences(value: unknown): Preferences | null {
   return {
     theme: input.theme as Preferences['theme'], density: input.density as Preferences['density'],
     language: input.language as Preferences['language'], narrator: input.narrator as Preferences['narrator'],
-    narratorEnabled: input.narratorEnabled, enFunny: Number(input.enFunny), yueFunny: Number(input.yueFunny),
+    narratorEnabled: input.narratorEnabled, narratorQuiet: input.narratorQuiet === true,
+    narratorReducedSound: input.narratorReducedSound === true,
+    enFunny: Number(input.enFunny), yueFunny: Number(input.yueFunny),
     accent: input.accent, font: input.font, scale: Number(input.scale), weight: Number(input.weight),
     radius: Number(input.radius), reducedMotion: input.reducedMotion, exportFormat: input.exportFormat as ExportFormat,
   };
@@ -392,7 +403,14 @@ ipcMain.handle('view:export', async (_e, payload: { view: string; format: Export
 
 ipcMain.handle('prefs:read', async (event): Promise<Partial<Preferences>> => {
   requireTrustedSender(event);
-  try { return projectPreferences(JSON.parse(await fs.readFile(PREFS_FILE(), 'utf8')) as unknown) ?? {}; }
+  try {
+    const preferences = projectPreferences(JSON.parse(await fs.readFile(PREFS_FILE(), 'utf8')) as unknown);
+    if (preferences) {
+      currentNarratorPreferences = preferences;
+      narratorRuntime.configure(preferences, app.isAccessibilitySupportEnabled());
+    }
+    return preferences ?? {};
+  }
   catch { return {}; }
 });
 
@@ -400,6 +418,8 @@ ipcMain.handle('prefs:write', async (_e, prefs: Preferences): Promise<void> => {
   if (!trustedSender(_e)) throw new Error('The preferences request did not originate from the application renderer.');
   const projected = projectPreferences(prefs);
   if (!projected) throw new Error('Preferences did not pass validation.');
+  currentNarratorPreferences = projected;
+  narratorRuntime.configure(projected, app.isAccessibilitySupportEnabled());
   await fs.mkdir(USER_DIR(), { recursive: true });
   await atomicWrite(PREFS_FILE(), JSON.stringify(projected, null, 2));
 });
@@ -487,11 +507,42 @@ ipcMain.handle('personal-vocabulary:clear', async (event): Promise<PersonalVocab
   return personalVocabulary().clear();
 });
 
+function narrationState(): NarrationRuntimeState {
+  return {
+    platformSpeechAvailable: process.platform === 'win32',
+    screenReaderActive: app.isAccessibilitySupportEnabled(),
+  };
+}
+
+ipcMain.handle('narration:state', (event): NarrationRuntimeState => {
+  requireTrustedSender(event);
+  return narrationState();
+});
+ipcMain.handle('narration:enqueue', async (event, narration: NarrationEvent): Promise<NarrationClientResult> => {
+  requireTrustedSender(event);
+  if (!narration || typeof narration !== 'object') throw new Error('Narration event did not pass validation.');
+  return narratorRuntime.narrate(narration);
+});
+ipcMain.handle('narration:stop', async (event): Promise<void> => {
+  requireTrustedSender(event);
+  await narratorRuntime.stop();
+  narrationTransport.stop();
+});
+ipcMain.on('narration:speech-result', (event, id: number, ok: boolean, error?: string) => {
+  if (!trustedSender(event) || !Number.isSafeInteger(id) || id < 1 || typeof ok !== 'boolean') return;
+  narrationTransport.complete(id, ok, typeof error === 'string' ? error : undefined);
+});
+
 app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   createWindow();
   configureUpdater();
 });
+app.on('accessibility-support-changed', (_event, enabled) => {
+  if (currentNarratorPreferences) narratorRuntime.configure(currentNarratorPreferences, enabled);
+  win?.webContents.send('narration:state', narrationState());
+});
+app.on('before-quit', () => { narrationTransport.stop(); void narratorRuntime.stop(); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

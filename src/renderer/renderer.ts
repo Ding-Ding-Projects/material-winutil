@@ -40,7 +40,7 @@ type PersonalVocabularyUploadResult =
 const MAX_PERSONAL_VOCABULARY_BYTES = 64 * 1024;
 interface Prefs {
   theme: ThemeMode; density: Density; language: LanguageMode;
-  narrator: 'English' | 'Yue' | 'Both'; narratorEnabled: boolean;
+  narrator: 'English' | 'Yue' | 'Both'; narratorEnabled: boolean; narratorQuiet: boolean; narratorReducedSound: boolean;
   enFunny: number; yueFunny: number; accent: string; font: string;
   scale: number; weight: number; radius: number; reducedMotion: boolean; exportFormat: string;
   tabDock: TabDock;
@@ -72,6 +72,13 @@ interface Bridge {
   personalVocabularyLoad(): Promise<PersonalVocabularyState>;
   personalVocabularyUpload(payload: Uint8Array): Promise<PersonalVocabularyUploadResult>;
   personalVocabularyClear(): Promise<PersonalVocabularyState>;
+  narrationState(): Promise<{ platformSpeechAvailable: boolean; screenReaderActive: boolean }>;
+  narrate(event: { category: string; English: string; Yue: string; kind?: 'event' | 'error' }): Promise<{ status: string; reason?: string; error?: string }>;
+  stopNarration(): Promise<void>;
+  onNarrationSpeech(cb: (request: { id: number; text: string; language: 'English' | 'Yue' }) => void): void;
+  onNarrationCancel(cb: (request: { id: number }) => void): void;
+  narrationSpeechResult(id: number, ok: boolean, error?: string): void;
+  onNarrationState(cb: (state: { platformSpeechAvailable: boolean; screenReaderActive: boolean }) => void): void;
 }
 
 /* ------------------------------------------------------------- constants -- */
@@ -440,6 +447,7 @@ const CATEGORY_YUE: Record<string, string> = {
 
 const DEFAULT_PREFS: Prefs = {
   theme: 'dark', density: 'comfortable', language: 'English', narrator: 'English', narratorEnabled: false,
+  narratorQuiet: false, narratorReducedSound: false,
   enFunny: 3, yueFunny: 4, accent: '#6750A4', font: 'Segoe UI Variable', scale: 1, weight: 400, radius: 16,
   reducedMotion: false, exportFormat: 'md', tabDock: 'left',
 };
@@ -511,6 +519,7 @@ const state = {
     data: { state: 'empty', entryCount: 0, mappings: {} } as PersonalVocabularyState,
     status: 'empty' as 'empty' | 'loaded' | 'invalid', loading: false,
   },
+  narration: { platformSpeechAvailable: true, screenReaderActive: false, activeSpeechId: 0 },
   snack: '',
   isoLog: '[00:00:00] Waiting for an ISO. Select an official Microsoft image to begin.',
 };
@@ -867,9 +876,81 @@ function bridge(): Bridge {
     personalVocabularyLoad: async () => ({ state: 'empty', entryCount: 0, mappings: {} }),
     personalVocabularyUpload: async () => ({ ok: false, code: 'invalid-schema', message: 'Personal vocabulary data is invalid.' }),
     personalVocabularyClear: async () => ({ state: 'empty', entryCount: 0, mappings: {} }),
+    narrationState: async () => ({ platformSpeechAvailable: typeof window.speechSynthesis !== 'undefined', screenReaderActive: false }),
+    narrate: async () => ({ status: 'suppressed', reason: 'preview' }),
+    stopNarration: async () => { window.speechSynthesis?.cancel(); },
+    onNarrationSpeech: () => undefined,
+    onNarrationCancel: () => undefined,
+    narrationSpeechResult: () => undefined,
+    onNarrationState: () => undefined,
   };
   w.winutil = fake;
   return fake;
+}
+
+const activeUtterances = new Map<number, SpeechSynthesisUtterance>();
+
+function platformVoice(language: 'English' | 'Yue'): SpeechSynthesisVoice | undefined {
+  const candidates = window.speechSynthesis?.getVoices() ?? [];
+  const locale = language === 'Yue' ? /^(yue|zh-HK)/i : /^en/i;
+  return candidates
+    .filter((voice) => locale.test(voice.lang))
+    .sort((left, right) => {
+      const natural = (voice: SpeechSynthesisVoice): number => /natural|online/i.test(voice.name) ? 2 : voice.localService ? 1 : 0;
+      const exact = (voice: SpeechSynthesisVoice): number => language === 'Yue' && /^(yue|zh-HK)/i.test(voice.lang) ? 2 : 0;
+      return (exact(right) + natural(right)) - (exact(left) + natural(left));
+    })[0];
+}
+
+function bindPlatformNarration(): void {
+  bridge().onNarrationSpeech(({ id, text, language }) => {
+    if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') {
+      bridge().narrationSpeechResult(id, false, 'Platform speech synthesis is unavailable.');
+      return;
+    }
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = language === 'Yue' ? 'zh-HK' : 'en-US';
+    utterance.voice = platformVoice(language) ?? null;
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+    const settle = (ok: boolean, error?: string): void => {
+      if (!activeUtterances.delete(id)) return;
+      bridge().narrationSpeechResult(id, ok, error);
+    };
+    utterance.onend = () => settle(true);
+    utterance.onerror = (event) => settle(false, event.error || 'Platform speech synthesis failed.');
+    activeUtterances.set(id, utterance);
+    window.speechSynthesis.speak(utterance);
+  });
+  bridge().onNarrationCancel(({ id }) => {
+    if (!activeUtterances.has(id)) return;
+    activeUtterances.delete(id);
+    window.speechSynthesis?.cancel();
+  });
+  bridge().onNarrationState((runtime) => {
+    state.narration = { ...state.narration, ...runtime };
+    if (runtime.screenReaderActive) window.speechSynthesis?.cancel();
+    render();
+  });
+}
+
+function narrateFact(category: string, English: string, Yue: string, kind: 'event' | 'error' = 'event'): void {
+  void bridge().narrate({ category, English, Yue, kind }).then((result) => {
+    if (result.status === 'failed') {
+      state.notifications = [{
+        id: `narration-${Date.now()}`, icon: 'volume_off', title: narratorText('failedTitle'),
+        detail: result.error || narratorText('failedBody'), read: false,
+      }, ...state.notifications];
+      render();
+    }
+  }).catch((error) => {
+    state.notifications = [{
+      id: `narration-${Date.now()}`, icon: 'volume_off', title: narratorText('failedTitle'),
+      detail: error instanceof Error ? error.message : String(error), read: false,
+    }, ...state.notifications];
+    render();
+  });
 }
 
 function lighten(hex: string, amount = 0.55): string {
@@ -1625,12 +1706,18 @@ function settingsPane(): HTMLElement {
   const cards = h('div', { class: 'cards' });
 
   const lang = h('div', { class: 'grid2' },
-    selectField('Language mode', ['English', 'Yue', 'Bilingual'], p.language, (v) => { p.language = v as LanguageMode; render(); }),
-    selectField('Narrator language', ['English', 'Yue', 'Both'], p.narrator, (v) => { p.narrator = v as Prefs['narrator']; render(); }),
-    rangeField('English funny level', 1, 5, 1, p.enFunny, (v) => { p.enFunny = v; }),
-    rangeField('Cantonese funny level', 1, 5, 1, p.yueFunny, (v) => { p.yueFunny = v; }),
-    switchField('Optional narrator, off by default', p.narratorEnabled, () => { p.narratorEnabled = !p.narratorEnabled; render(); }));
-  if (show('Language and voice')) cards.appendChild(card('Language and voice', '', [lang], 'wide'));
+    selectField(narratorText('displayLanguage'), ['English', 'Yue', 'Bilingual'], p.language, (v) => { p.language = v as LanguageMode; render(); }),
+    selectField(narratorText('language'), ['English', 'Yue', 'Both'], p.narrator, (v) => { p.narrator = v as Prefs['narrator']; applyPrefs(); render(); narrateFact('settings', NARRATOR_COPY.English.settings, NARRATOR_COPY.Yue.settings); }),
+    rangeField(narratorText('englishFunny'), 1, 5, 1, p.enFunny, (v) => { p.enFunny = v; applyPrefs(); }),
+    rangeField(narratorText('cantoneseFunny'), 1, 5, 1, p.yueFunny, (v) => { p.yueFunny = v; applyPrefs(); }),
+    switchField(narratorText('enabled'), p.narratorEnabled, () => { p.narratorEnabled = !p.narratorEnabled; applyPrefs(); render(); if (p.narratorEnabled) narrateFact('settings', NARRATOR_COPY.English.settings, NARRATOR_COPY.Yue.settings); else void bridge().stopNarration(); }),
+    switchField(narratorText('quiet'), p.narratorQuiet, () => { p.narratorQuiet = !p.narratorQuiet; applyPrefs(); render(); }),
+    switchField(narratorText('reducedSound'), p.narratorReducedSound, () => { p.narratorReducedSound = !p.narratorReducedSound; applyPrefs(); render(); }),
+    h('p', {}, narratorText('disclosure')),
+    h('p', { class: 'feedback', role: 'status' }, state.narration.screenReaderActive ? narratorText('screenReader')
+      : !state.narration.platformSpeechAvailable ? narratorText('unavailable')
+        : p.narratorEnabled ? narratorText('active') : narratorText('off')));
+  if (show(`${NARRATOR_COPY.English.section} ${NARRATOR_COPY.Yue.section}`)) cards.appendChild(card(narratorText('section'), '', [lang], 'wide'));
 
   const vocabulary = state.vocabulary;
   const vocabularyStatus = vocabulary.loading ? vocabularyCopy('loading')
@@ -1848,6 +1935,7 @@ function go(view: ViewId): void {
   }
   persistWorkspace();
   render();
+  narrateFact('navigation', NARRATOR_COPY.English.navigation.replace('{view}', VIEW_META[view].title), NARRATOR_COPY.Yue.navigation.replace('{view}', categoryLabel(VIEW_META[view].title)));
 }
 
 function toggleSelect(id: string): void {
@@ -1916,11 +2004,14 @@ async function runNow(kind: RunKind, ids: string[]): Promise<void> {
       detail: `${total} item(s) processed automatically · no prompts`, read: false,
     }, ...state.notifications];
     snack(res.ok ? `${kind}: ${total} item(s) completed automatically.` : `${kind} failed with exit ${res.code}. See the output.`);
+    if (res.ok) narrateFact('operation', NARRATOR_COPY.English.operationDone.replace('{kind}', kind).replace('{count}', String(total)).replace('{code}', String(res.code)), NARRATOR_COPY.Yue.operationDone.replace('{kind}', kind).replace('{count}', String(total)).replace('{code}', String(res.code)));
+    else narrateFact('operation', NARRATOR_COPY.English.operationFailed.replace('{kind}', kind).replace('{count}', String(total)).replace('{code}', String(res.code)), NARRATOR_COPY.Yue.operationFailed.replace('{kind}', kind).replace('{count}', String(total)).replace('{code}', String(res.code)), 'error');
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     state.runOutput = `$ winutil ${kind} ×${total}\n${detail}\nrequest failed`;
     state.notifications = [{ id: `n-${Date.now()}`, icon: 'error', title: `${kind} could not start`, detail, read: false }, ...state.notifications];
     snack(`${kind} could not start. See the output for the exact reason.`);
+    narrateFact('operation', NARRATOR_COPY.English.operationStartFailed.replace('{kind}', kind).replace('{detail}', detail), NARRATOR_COPY.Yue.operationStartFailed.replace('{kind}', kind).replace('{detail}', detail), 'error');
   } finally {
     state.queue.active = false;
     render();
@@ -2712,6 +2803,42 @@ function authText(key: keyof typeof AUTH_COPY.English): string {
   return state.prefs.language === 'English' ? en : state.prefs.language === 'Yue' ? yue : `${en} · ${yue}`;
 }
 
+const NARRATOR_COPY = {
+  English: {
+    section: 'Language and voice', displayLanguage: 'Display language', englishFunny: 'English funny level', cantoneseFunny: 'Cantonese funny level',
+    enabled: 'Spoken narrator', language: 'Narrator language', quiet: 'Quiet hours (mute narration)',
+    reducedSound: 'Reduce sound (mute narration)', active: 'Narration is ready and uses local platform speech.',
+    disclosure: 'Funny levels style every spoken event, including errors and warnings. Exact facts and recovery steps are never removed.',
+    off: 'Narration is off by default. Turn it on only when you want app events spoken.',
+    screenReader: 'Narration is yielding because assistive technology is active.', unavailable: 'Platform speech synthesis is unavailable in this runtime.',
+    failedTitle: 'Narration could not speak', failedBody: 'The platform speech engine did not complete the request.',
+    startup: 'The app is ready.', settings: 'Narrator settings were updated.', navigation: 'Opened {view}.',
+    operationDone: '{kind} completed for {count} item(s), exit {code}.',
+    operationFailed: '{kind} failed for {count} item(s), exit {code}. See the exact output.',
+    operationStartFailed: '{kind} could not start: {detail}',
+  },
+  Yue: {
+    section: '語言同語音', displayLanguage: '顯示語言', englishFunny: '英文幽默程度', cantoneseFunny: '粵語幽默程度',
+    enabled: '語音旁述', language: '旁述語言', quiet: '靜音時段（停止旁述）',
+    reducedSound: '減少聲音（停止旁述）', active: '旁述已準備好，會使用本機平台語音。',
+    disclosure: '幽默程度會調整所有旁述，包括錯誤同警告；準確事實同復原步驟永遠唔會刪走。',
+    off: '旁述預設關閉。只喺你想聽到應用程式事件時先開啟。',
+    screenReader: '偵測到輔助技術，旁述而家會讓路。', unavailable: '呢個執行環境未有平台語音合成功能。',
+    failedTitle: '旁述未能讀出', failedBody: '平台語音引擎未能完成要求。',
+    startup: '應用程式已準備好。', settings: '旁述設定已更新。', navigation: '已開啟 {view}。',
+    operationDone: '{kind} 已處理 {count} 個項目，結束碼 {code}。',
+    operationFailed: '{kind} 處理 {count} 個項目時失敗，結束碼 {code}。請查看完整輸出。',
+    operationStartFailed: '{kind} 未能開始：{detail}',
+  },
+} as const;
+
+function narratorText(key: keyof typeof NARRATOR_COPY.English, values: Record<string, string | number> = {}): string {
+  const fill = (source: string): string => Object.entries(values).reduce((result, [name, value]) => result.replaceAll(`{${name}}`, String(value)), source);
+  const en = fill(NARRATOR_COPY.English[key]);
+  const yue = fill(NARRATOR_COPY.Yue[key]);
+  return state.prefs.language === 'English' ? en : state.prefs.language === 'Yue' ? yue : `${en} · ${yue}`;
+}
+
 function authErrorText(error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error);
   if (/did not match/i.test(detail)) return authText('invalidMatch');
@@ -3428,6 +3555,8 @@ function bindShortcuts(): void {
 async function boot(): Promise<void> {
   const saved = await bridge().readPrefs();
   state.prefs = { ...DEFAULT_PREFS, ...saved };
+  bindPlatformNarration();
+  try { state.narration = { ...state.narration, ...await bridge().narrationState() }; } catch { state.narration.platformSpeechAvailable = false; }
   await loadPersonalVocabulary();
   try { state.profiles = JSON.parse(localStorage.getItem('winutil.profiles') ?? '[]'); } catch { state.profiles = []; }
   loadWorkspace();
@@ -3437,7 +3566,11 @@ async function boot(): Promise<void> {
     state.queue = { active: p.state !== 'done', index: p.index, total: p.total, current: p.detail || p.id, log: state.queue.log };
     render();
   });
-  bridge().onUpdateStatus((status) => { state.update = status; render(); });
+  bridge().onUpdateStatus((status) => {
+    state.update = status;
+    render();
+    narrateFact('update', `Update status ${status.state}: ${status.message}`, `更新狀態 ${status.state}：${status.message}`, status.state === 'error' ? 'error' : 'event');
+  });
   render();
   try {
     state.catalog = await bridge().loadCatalog();
@@ -3447,6 +3580,7 @@ async function boot(): Promise<void> {
   try { state.update = await bridge().updateStatus(); } catch { /* development/browser preview */ }
   try { state.history = (await bridge().history()).reverse(); } catch { state.history = []; }
   render();
+  narrateFact('startup', NARRATOR_COPY.English.startup, NARRATOR_COPY.Yue.startup);
 }
 
 void boot();

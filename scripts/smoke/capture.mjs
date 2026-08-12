@@ -1,9 +1,9 @@
 import { createServer } from 'node:net';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { assertBuiltArtifactFresh, gitCommit, parseArgs, sha256File } from './lib/contracts.mjs';
+import { assertBuiltArtifactFresh, assertGitClean, extractSquirrelApplication, findCurrentSquirrelPackage, gitCommit, parseArgs, selectCaptureManifests, sha256File } from './lib/contracts.mjs';
 import { CdpClient, assertSingleTarget, waitForTargets } from './lib/cdp.mjs';
 import { commandLine, lowlevel } from './lib/lowlevel.mjs';
 import { assertUniquePngs, inspectPng } from './lib/png.mjs';
@@ -12,15 +12,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '..', '..');
 const options = parseArgs(process.argv.slice(2));
 const captureRoot = options.captureRoot || join(repo, 'docs', 'screenshots', 'smoke');
-
-function selected(entries) {
-  if (!options.ids.length) return entries;
-  const wanted = new Set(options.ids);
-  const found = entries.filter((entry) => wanted.has(entry.id));
-  const missing = [...wanted].filter((id) => !found.some((entry) => entry.id === id));
-  if (missing.length) throw new Error(`unknown capture id(s): ${missing.join(', ')}`);
-  return found;
-}
 
 async function loadManifest(name) {
   const path = join(here, `${name}-manifest.json`);
@@ -33,7 +24,57 @@ async function loadManifest(name) {
     ids.add(capture.id);
     files.add(capture.file);
   }
-  return { ...manifest, captures: selected(manifest.captures) };
+  return manifest;
+}
+
+async function filesBelow(root) {
+  const output = [];
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const full = join(root, entry.name);
+    if (entry.isDirectory()) output.push(...await filesBelow(full));
+    else if (entry.isFile()) output.push(full);
+  }
+  return output;
+}
+
+async function resolveAppArtifact(commit) {
+  const squirrel = await findCurrentSquirrelPackage(repo, commit);
+  if (squirrel) {
+    const extractedRoot = await mkdtemp(join(tmpdir(), 'material-winutil-squirrel-'));
+    await extractSquirrelApplication(repo, squirrel, extractedRoot);
+    const packageJson = JSON.parse(await readFile(join(repo, 'package.json'), 'utf8'));
+    const expectedName = `${packageJson.productName}.exe`.toLowerCase();
+    const executables = (await filesBelow(extractedRoot)).filter((file) => file.toLowerCase().endsWith(`\\${expectedName}`));
+    if (executables.length !== 1) {
+      await rm(extractedRoot, { recursive: true, force: true });
+      throw new Error(`validated Squirrel package did not contain exactly one ${packageJson.productName}.exe payload`);
+    }
+    return {
+      executable: executables[0],
+      args: (profile, port) => [`--user-data-dir=${profile}`, `--remote-debugging-port=${port}`, '--remote-allow-origins=*', '--no-first-run'],
+      cleanupRoot: extractedRoot,
+      metadata: {
+        kind: 'validated-squirrel-full-package',
+        developmentFallback: false,
+        sourceCommit: squirrel.provenance.commit,
+        packagePath: squirrel.packagePath,
+        packageSha256: squirrel.packageSha256,
+        provenancePath: squirrel.provenancePath,
+      },
+    };
+  }
+  const executable = join(repo, 'node_modules', 'electron', 'dist', 'electron.exe');
+  return {
+    executable,
+    args: (profile, port) => [repo, `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`, '--remote-allow-origins=*', '--no-first-run'],
+    cleanupRoot: '',
+    metadata: {
+      kind: 'development-electron-fallback',
+      developmentFallback: true,
+      sourceCommit: commit,
+      fallbackReason: 'No current validated Squirrel full package and matching provenance manifest were present.',
+    },
+  };
 }
 
 async function freePort() {
@@ -85,7 +126,8 @@ async function prepareApp(client, capture, defaults) {
     const active=document.querySelector('.pane,.reader');
     const dialog=document.querySelector('.dialog');
     const overflow=Math.max(root.scrollWidth,document.body.scrollWidth)-root.clientWidth;
-    return {ready:document.readyState,heading:Boolean(document.querySelector('.appbar')),active:Boolean(active),dialog:${capture.dialog ? 'Boolean(dialog)' : 'true'},overflow,clientWidth:root.clientWidth,expectedWidth};
+    const offenders=[...document.querySelectorAll('body *')].map((node)=>{const rect=node.getBoundingClientRect();return {tag:node.tagName,className:String(node.className||'').slice(0,100),id:node.id,right:Math.round(rect.right),left:Math.round(rect.left),width:Math.round(rect.width),scrollWidth:node.scrollWidth}}).filter((item)=>item.right>root.clientWidth+2||item.left < -2).sort((a,b)=>b.right-a.right).slice(0,12);
+    return {ready:document.readyState,heading:Boolean(document.querySelector('.appbar')),active:Boolean(active),dialog:${capture.dialog ? 'Boolean(dialog)' : 'true'},overflow,clientWidth:root.clientWidth,expectedWidth,offenders};
   })()`);
   if (!audit.heading || !audit.active || !audit.dialog || audit.overflow > 2) throw new Error(`${capture.id} failed DOM audit: ${JSON.stringify(audit)}`);
   return { ...result, audit, viewport };
@@ -113,7 +155,7 @@ async function prepareSite(client, capture, defaults) {
   return { page: capture.page ?? 'home', theme: capture.theme ?? 'dark', language: capture.language ?? 'en', audit, viewport };
 }
 
-async function captureSession(kind, manifest, executable, argsForLaunch, expectedTarget, prepare, executableHash, commit) {
+async function captureSession(kind, manifest, executable, argsForLaunch, expectedTarget, prepare, executableHash, commit, artifact) {
   const desktop = `material-winutil-smoke-${kind}-${process.pid}-${Date.now()}`;
   const profile = await mkdtemp(join(tmpdir(), `material-winutil-${kind}-`));
   const port = await freePort();
@@ -145,6 +187,7 @@ async function captureSession(kind, manifest, executable, argsForLaunch, expecte
         commit,
         executable,
         executableSha256: executableHash,
+        artifact,
         captureMethod: 'cheap Lowlevel MCP hidden desktop + isolated loopback CDP Page.captureScreenshot',
         state,
         png,
@@ -181,27 +224,28 @@ async function verifyOnly(manifests, commit) {
 
 async function main() {
   const commit = await gitCommit(repo);
-  const manifests = [];
+  let manifests = [];
   if (options.mode === 'app' || options.mode === 'all') manifests.push(['app', await loadManifest('app')]);
   if (options.mode === 'site' || options.mode === 'all') manifests.push(['site', await loadManifest('site')]);
+  manifests = selectCaptureManifests(manifests, options.ids);
   if (options.verifyOnly) return verifyOnly(manifests, commit);
 
+  const cleanTree = await assertGitClean(repo);
   const freshness = await assertBuiltArtifactFresh(repo);
   const all = [];
   for (const [kind, manifest] of manifests) {
     if (kind === 'app') {
-      const executable = join(repo, 'node_modules', 'electron', 'dist', 'electron.exe');
-      const hash = await sha256File(executable);
-      all.push(...await captureSession(
-        kind,
-        manifest,
-        executable,
-        (profile, port) => [repo, `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`, '--remote-allow-origins=*', '--no-first-run'],
-        (target) => target.url.startsWith('file:') && /renderer\/index\.html$/u.test(new URL(target.url).pathname),
-        prepareApp,
-        hash,
-        commit,
-      ));
+      const artifact = await resolveAppArtifact(commit);
+      try {
+        const hash = await sha256File(artifact.executable);
+        all.push(...await captureSession(
+          kind, manifest, artifact.executable, artifact.args,
+          (target) => target.url.startsWith('file:') && /renderer\/index\.html$/u.test(new URL(target.url).pathname),
+          prepareApp, hash, commit, artifact.metadata,
+        ));
+      } finally {
+        if (artifact.cleanupRoot) await rm(artifact.cleanupRoot, { recursive: true, force: true });
+      }
     } else {
       const executable = process.env.EDGE_EXE || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
       const hash = await sha256File(executable);
@@ -215,6 +259,7 @@ async function main() {
         prepareSite,
         hash,
         commit,
+        { kind: 'installed-edge', developmentFallback: false, sourceCommit: commit },
       ));
     }
   }
@@ -228,6 +273,7 @@ async function main() {
     generatedAt: new Date().toISOString(),
     commit,
     captureRoot,
+    cleanTree,
     freshness,
     safety: {
       systemChangingActions: 0,

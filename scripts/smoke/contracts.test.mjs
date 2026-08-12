@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { assertBuiltArtifactFresh, parseArgs } from './lib/contracts.mjs';
+import { spawn } from 'node:child_process';
+import { assertBuiltArtifactFresh, assertGitClean, parseArgs, selectCaptureManifests } from './lib/contracts.mjs';
 import { assertSingleTarget } from './lib/cdp.mjs';
 import { assertUniquePngs, inspectPng } from './lib/png.mjs';
 import { commandLine } from './lib/lowlevel.mjs';
@@ -39,6 +40,32 @@ test('argument parser supports verify-only and capture selection', () => {
     mode: 'app', verifyOnly: true, allowPartial: false, ids: ['install-dark-en'], captureRoot: '', siteUrl: 'https://ding-ding-projects.github.io/material-winutil/',
   });
   assert.throws(() => parseArgs(['--mode', 'banana']), /invalid --mode/u);
+});
+
+test('capture ids are selected across only the active mode manifests', () => {
+  const app = ['app', { captures: [{ id: 'app-only' }, { id: 'shared' }] }];
+  const site = ['site', { captures: [{ id: 'site-only' }, { id: 'shared' }] }];
+  assert.deepEqual(selectCaptureManifests([app, site], ['app-only']).map(([kind, manifest]) => [kind, manifest.captures.map((item) => item.id)]), [
+    ['app', ['app-only']], ['site', []],
+  ]);
+  assert.deepEqual(selectCaptureManifests([site], ['site-only'])[0][1].captures.map((item) => item.id), ['site-only']);
+  assert.throws(() => selectCaptureManifests([app], ['site-only']), /unknown capture id.*selected mode/iu);
+  assert.throws(() => selectCaptureManifests([app, site], ['definitely-unknown']), /definitely-unknown/iu);
+});
+
+test('capture cleanliness check fails closed on tracked and untracked changes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'material-winutil-clean-'));
+  try {
+    const run = async (...args) => new Promise((resolveRun, reject) => {
+      const child = spawn('git', args, { cwd: root, windowsHide: true, stdio: 'ignore' });
+      child.once('error', reject); child.once('close', (code) => code === 0 ? resolveRun() : reject(new Error(`git ${args[0]} exited ${code}`)));
+    });
+    await run('init'); await run('config', 'user.name', 'Smoke Fixture'); await run('config', 'user.email', 'smoke@example.invalid');
+    await writeFile(join(root, 'tracked.txt'), 'one\n'); await run('add', 'tracked.txt'); await run('commit', '-m', 'fixture');
+    assert.deepEqual((await assertGitClean(root)).clean, true);
+    await writeFile(join(root, 'untracked.txt'), 'two\n');
+    await assert.rejects(() => assertGitClean(root), /clean working tree.*untracked\.txt/iu);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('PNG inspector decodes a real capture and duplicate check fails closed', async () => {

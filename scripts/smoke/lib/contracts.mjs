@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { access, readdir, readFile, stat } from 'node:fs/promises';
-import { join, relative, resolve } from 'node:path';
+import { basename, join, relative, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 
 export async function sha256File(file) {
@@ -56,8 +56,12 @@ export async function assertBuiltArtifactFresh(repo) {
 }
 
 export async function gitCommit(repo) {
+  return gitText(repo, ['rev-parse', 'HEAD'], /^[0-9a-f]{40}\s*$/u, 'cannot resolve Git commit');
+}
+
+async function gitText(repo, args, expected, label) {
   const result = await new Promise((resolveResult, reject) => {
-    const child = spawn('git', ['rev-parse', 'HEAD'], { cwd: repo, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('git', args, { cwd: repo, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     child.stdout.setEncoding('utf8');
@@ -67,8 +71,102 @@ export async function gitCommit(repo) {
     child.once('error', reject);
     child.once('close', (code) => resolveResult({ code, stdout, stderr }));
   });
-  if (result.code !== 0 || !/^[0-9a-f]{40}\s*$/u.test(result.stdout)) throw new Error(`cannot resolve Git commit: ${result.stderr.trim()}`);
+  if (result.code !== 0 || (expected && !expected.test(result.stdout))) throw new Error(`${label}: ${result.stderr.trim() || result.stdout.trim()}`);
   return result.stdout.trim();
+}
+
+export async function assertGitClean(repo) {
+  const status = await gitText(repo, ['status', '--porcelain=v1', '--untracked-files=all'], null, 'cannot inspect Git status');
+  const entries = status ? status.split(/\r?\n/u).filter(Boolean) : [];
+  if (entries.length) {
+    const paths = entries.slice(0, 12).join(', ');
+    throw new Error(`capture requires a clean working tree; preserve or commit every change first: ${paths}`);
+  }
+  return { clean: true, commit: await gitCommit(repo) };
+}
+
+export function selectCaptureManifests(manifests, ids) {
+  if (!ids.length) return manifests;
+  const wanted = new Set(ids);
+  const available = new Set(manifests.flatMap(([, manifest]) => manifest.captures.map((capture) => capture.id)));
+  const missing = [...wanted].filter((id) => !available.has(id));
+  if (missing.length) throw new Error(`unknown capture id(s) for selected mode: ${missing.join(', ')}`);
+  return manifests.map(([kind, manifest]) => [kind, {
+    ...manifest,
+    captures: manifest.captures.filter((capture) => wanted.has(capture.id)),
+  }]);
+}
+
+async function findFiles(root, predicate) {
+  const found = [];
+  for (const file of await filesBelow(root)) if (predicate(file)) found.push(file);
+  return found;
+}
+
+export async function findCurrentSquirrelPackage(repo, expectedCommit) {
+  const releaseRoot = join(repo, 'release');
+  const provenancePath = join(releaseRoot, 'release-provenance.json');
+  const assetsPath = join(releaseRoot, 'release-assets.json');
+  try { await access(provenancePath); await access(assetsPath); }
+  catch { return null; }
+  const provenance = JSON.parse(await readFile(provenancePath, 'utf8'));
+  if (String(provenance.commit).toLowerCase() !== expectedCommit.toLowerCase()) {
+    throw new Error(`Squirrel provenance commit ${provenance.commit ?? '(missing)'} does not match current commit ${expectedCommit}`);
+  }
+  if (!provenance.fullPackage || basename(provenance.fullPackage) !== provenance.fullPackage) throw new Error('Squirrel provenance has an invalid fullPackage name');
+  const assets = JSON.parse(await readFile(assetsPath, 'utf8'));
+  const asset = assets.find((item) => item.name === provenance.fullPackage);
+  if (!asset || !/^[0-9a-f]{64}$/iu.test(asset.sha256 ?? '')) throw new Error('Squirrel asset manifest does not describe the full package');
+  const matches = await findFiles(releaseRoot, (file) => basename(file) === provenance.fullPackage);
+  if (matches.length !== 1) throw new Error(`expected exactly one current Squirrel full package; found ${matches.length}`);
+  const actual = await sha256File(matches[0]);
+  if (actual.toLowerCase() !== asset.sha256.toLowerCase()) throw new Error('Squirrel full package hash does not match release-assets.json');
+  return {
+    packagePath: matches[0],
+    packageSha256: actual,
+    provenancePath,
+    assetsPath,
+    provenance,
+  };
+}
+
+export async function extractSquirrelApplication(repo, squirrel, destination) {
+  const script = `
+param([string]$Archive,[string]$Destination)
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$archivePath = [IO.Path]::GetFullPath($Archive)
+$destinationPath = [IO.Path]::GetFullPath($Destination)
+[IO.Directory]::CreateDirectory($destinationPath) | Out-Null
+$zip = [IO.Compression.ZipFile]::OpenRead($archivePath)
+try {
+  foreach ($entry in $zip.Entries) {
+    if (-not $entry.FullName.StartsWith('lib/net45/')) { continue }
+    $relative = $entry.FullName.Substring('lib/net45/'.Length).Replace('/', [IO.Path]::DirectorySeparatorChar)
+    if ([string]::IsNullOrWhiteSpace($relative)) { continue }
+    $target = [IO.Path]::GetFullPath((Join-Path $destinationPath $relative))
+    if (-not $target.StartsWith($destinationPath + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe path in package.' }
+    if ($entry.FullName.EndsWith('/')) { [IO.Directory]::CreateDirectory($target) | Out-Null; continue }
+    [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target)) | Out-Null
+    $input = $entry.Open()
+    try {
+      $output = [IO.File]::Create($target)
+      try { $input.CopyTo($output) } finally { $output.Dispose() }
+    } finally { $input.Dispose() }
+  }
+} finally { $zip.Dispose() }
+`;
+  const result = await new Promise((resolveResult, reject) => {
+    const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script, squirrel.packagePath, destination], {
+      cwd: repo, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = ''; let stderr = '';
+    child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; }); child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.once('error', reject); child.once('close', (code) => resolveResult({ code, stdout, stderr }));
+  });
+  if (result.code !== 0) throw new Error(`Squirrel application extraction failed: ${result.stderr.trim() || result.stdout.trim()}`);
 }
 
 export function parseArgs(argv) {

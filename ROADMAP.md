@@ -44,6 +44,6 @@ This roadmap separates shipped behavior from future work. Dates are intentionall
 - [x] Ship the non-blocking public-catalog dim-sum startup surprise with cache integrity checks and protected-startup suppression.
 - [x] Wire the validated local app-logo core into settings, the command palette, derived-only app-data persistence, title-bar presentation, and packaged capture state without changing installed identity.
 - [ ] Build bundled offline conversion adapters and their accessible picker/queue surface; keep every unavailable catalog entry disabled until package proof exists.
-- [ ] Complete reviewed official-catalog and hardware-evidence adapters for the local Ollama Model Store; retain the existing guided local UI, pull queue, chat, and harness planner as fail-closed while those facts are unavailable.
+- [ ] Complete a reviewed official-catalog adapter and stronger available-VRAM/accelerator evidence for the local Ollama Model Store; retain the existing guided local UI, pull queue, chat, and harness planner as fail-closed while those facts are unavailable.
 
 Items remain unchecked until their actual runtime behavior, documentation, tests, artifacts, and release evidence exist.

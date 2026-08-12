@@ -34,6 +34,7 @@ Code signing is intentionally disabled. The installer is unsigned and may trigge
 
 - An unobtainable toolchain component stops the build with the failed phase.
 - An Electron package without a runnable binary is recovered only from a checksum-verified local package cache; missing or mismatched cache material fails closed.
+- A transient Squirrel download or packaging failure is retried up to three times with bounded backoff; the third failure reports the exact installer phase and exit code.
 - Missing Squirrel.Windows output fails the installer build.
 - A signed setup executable fails the unsigned-artifact verification.
 

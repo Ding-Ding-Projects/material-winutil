@@ -45,6 +45,22 @@ function Install-LockedDependencies([string]$NpmPath) {
     }
 }
 
+function Build-InstallerPackage([string]$NpmPath, [bool]$SkipChecks) {
+    $attempts = 3
+    for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+        Write-Phase "Packaging the unsigned Squirrel.Windows installer (attempt $attempt of $attempts)."
+        if ($SkipChecks) { & $NpmPath run dist:package } else { & $NpmPath run dist }
+        if ($LASTEXITCODE -eq 0) { return }
+        $code = $LASTEXITCODE
+        if ($attempt -eq $attempts) {
+            throw "Installer build failed with exit code $code after $attempts packaging attempts."
+        }
+        $delaySeconds = 10 * $attempt
+        Write-Phase "Installer packaging failed with exit code $code; retrying after $delaySeconds seconds because Squirrel downloads can be transient."
+        Start-Sleep -Seconds $delaySeconds
+    }
+}
+
 $node = Find-Node
 $nodeDir = Split-Path -Parent $node
 $npm = Join-Path $nodeDir 'npm.cmd'
@@ -62,8 +78,7 @@ try {
 
     if ($Installer) {
         Write-Phase 'Building and validating the unsigned Squirrel.Windows installer.'
-        if ($SkipLocalChecks) { & $npm run dist:package } else { & $npm run dist }
-        if ($LASTEXITCODE -ne 0) { throw "Installer build failed with exit code $LASTEXITCODE." }
+        Build-InstallerPackage -NpmPath $npm -SkipChecks $SkipLocalChecks
         $version = (& $node -p "require('./package.json').version").Trim()
         $commit = (& git rev-parse HEAD).Trim()
         if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the source commit for installer provenance.' }

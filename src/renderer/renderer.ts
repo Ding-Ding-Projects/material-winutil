@@ -153,6 +153,8 @@ interface Bridge {
   restartToUpdate(): void;
   onUpdateStatus(cb: (status: UpdateStatus) => void): void;
   authenticatorBegin(request: { mode: 'generate'; account: string; issuer?: string; label?: string; algorithm?: TotpAlgorithm; digits?: number; period?: number } | { mode: 'import'; uri: string }): Promise<AuthenticatorRegistration>;
+  authenticatorImportPngFile(): Promise<AuthenticatorRegistration | null>;
+  authenticatorImportClipboardPng(): Promise<AuthenticatorRegistration>;
   authenticatorConfirm(registrationId: string, code: string): Promise<AuthenticatorEntry>;
   authenticatorCancel(registrationId: string): Promise<boolean>;
   authenticatorList(): Promise<AuthenticatorEntry[]>;
@@ -904,7 +906,7 @@ const ICONS: Record<string, string> = {
   system_update_alt: '⇩', tab: '▰', tab_group: '▤', terminal: '>_', translate: '文',
   tune: '≡', undo: '↶', upgrade: '↑', verified: '✓', warning: '⚠', description: '▧',
   cast_connected: '▣', expand_less: '⌃', expand_more: '⌄', folder: '▤', inventory_2: '▣',
-  keep_off: '⌖×', play_circle: '▷', article: '▧',
+  keep_off: '⌖×', play_circle: '▷', article: '▧', image: '▧', content_paste: '▤',
   security: '◈', volume_off: '♪×', help: '?',
 };
 const icon = (name: string, cls = ''): HTMLElement => h('span', {
@@ -1024,6 +1026,8 @@ function bridge(): Bridge {
     restartToUpdate: () => undefined,
     onUpdateStatus: () => undefined,
     authenticatorBegin: async () => { throw new Error('Authenticator registration is available only in the installed application.'); },
+    authenticatorImportPngFile: async () => { throw new Error('Authenticator PNG import is available only in the installed application.'); },
+    authenticatorImportClipboardPng: async () => { throw new Error('Authenticator clipboard import is available only in the installed application.'); },
     authenticatorConfirm: async () => { throw new Error('Authenticator confirmation is available only in the installed application.'); },
     authenticatorCancel: async () => false,
     authenticatorList: async () => [],
@@ -3683,6 +3687,7 @@ const AUTH_COPY = {
     eyebrow: 'Local RFC 6238 codes', title: 'Authenticator', search: 'Search issuer, account, or label',
     empty: 'No authenticator entries yet. Generate a local secret or import an otpauth URI to begin.',
     generate: 'Generate registration', import: 'Import otpauth URI', refresh: 'Refresh codes', close: 'Close',
+    importPng: 'Choose QR PNG', importClipboard: 'Read QR PNG from clipboard', cameraUnavailable: 'Camera scanning needs camera hardware and permission, so it is unavailable in this build.',
     loading: 'Loading authenticator entries…', current: 'Current code', next: 'Next code', seconds: 'seconds remaining',
     copy: 'Copy', remove: 'Remove entry', reveal: 'Reveal manual secret', hide: 'Hide manual secret',
     registration: 'Pair this registration', confirm: 'Confirm pairing', back: 'Back to entries',
@@ -3707,6 +3712,7 @@ const AUTH_COPY = {
     eyebrow: '本機 RFC 6238 驗證碼', title: '驗證器', search: '搜尋發行者、帳戶或者標籤',
     empty: '未有驗證器項目。可以喺本機產生密鑰，或者匯入 otpauth URI。',
     generate: '產生配對資料', import: '匯入 otpauth URI', refresh: '重新整理驗證碼', close: '關閉',
+    importPng: '揀 QR PNG', importClipboard: '由剪貼簿讀取 QR PNG', cameraUnavailable: '相機掃描需要相機硬件同權限，所以呢個版本未提供。',
     loading: '載入緊驗證器項目…', current: '目前驗證碼', next: '下一個驗證碼', seconds: '秒後更新',
     copy: '複製', remove: '移除項目', reveal: '顯示手動密鑰', hide: '收起手動密鑰',
     registration: '配對呢個項目', confirm: '確認配對', back: '返去項目列表',
@@ -3905,21 +3911,44 @@ async function beginAuthenticatorRegistration(mode: 'generate' | 'import'): Prom
     const registration = await bridge().authenticatorBegin(mode === 'generate'
       ? { mode, account: d.account.trim(), issuer: d.issuer.trim() || undefined, label: d.label.trim() || undefined, algorithm: d.algorithm, digits: d.digits, period: d.period }
       : { mode, uri: d.uri.trim() });
-    if (generation !== authenticatorOperationGeneration || state.dialog !== 'auth') {
-      void bridge().authenticatorCancel(registration.registrationId).catch(() => undefined);
-      return;
-    }
-    state.auth.registration = registration;
-    scheduleAuthenticatorExpiry(registration, generation);
-    d.uri = '';
-    state.auth.phase = 'confirm'; state.auth.revealSecret = false;
-    state.auth.status = authText('prepared');
+    acceptAuthenticatorRegistration(registration, generation);
   } catch (error) {
     if (generation === authenticatorOperationGeneration) state.auth.error = authErrorText(error);
   } finally {
     if (generation === authenticatorOperationGeneration) {
       state.auth.loading = false;
       if (state.dialog === 'auth') renderAuthenticatorFocus(state.auth.phase === 'confirm' ? '#auth-confirm-code' : '#auth-account, .dialog textarea');
+    }
+  }
+}
+
+function acceptAuthenticatorRegistration(registration: AuthenticatorRegistration, generation: number): void {
+  if (generation !== authenticatorOperationGeneration || state.dialog !== 'auth') {
+    void bridge().authenticatorCancel(registration.registrationId).catch(() => undefined);
+    return;
+  }
+  state.auth.registration = registration;
+  scheduleAuthenticatorExpiry(registration, generation);
+  state.auth.draft.uri = '';
+  state.auth.phase = 'confirm'; state.auth.revealSecret = false;
+  state.auth.status = authText('prepared');
+}
+
+async function importAuthenticatorPng(source: 'file' | 'clipboard'): Promise<void> {
+  if (state.auth.loading) return;
+  const generation = ++authenticatorOperationGeneration;
+  state.auth.loading = true; state.auth.error = ''; state.auth.status = authText('preparing'); render();
+  try {
+    const registration = source === 'file'
+      ? await bridge().authenticatorImportPngFile()
+      : await bridge().authenticatorImportClipboardPng();
+    if (registration) acceptAuthenticatorRegistration(registration, generation);
+  } catch (error) {
+    if (generation === authenticatorOperationGeneration) state.auth.error = authErrorText(error);
+  } finally {
+    if (generation === authenticatorOperationGeneration) {
+      state.auth.loading = false;
+      if (state.dialog === 'auth') renderAuthenticatorFocus(state.auth.phase === 'confirm' ? '#auth-confirm-code' : '.auth-create-actions button');
     }
   }
 }
@@ -4026,7 +4055,10 @@ function authDialog(): HTMLElement {
     h('p', { class: 'auth-hint' }, authText('localVault')),
     h('div', { class: 'btnrow auth-create-actions' },
       h('button', { class: 'btn filled', onclick: () => { a.phase = 'generate'; a.error = ''; renderAuthenticatorFocus('#auth-issuer'); } }, icon('add'), authText('generate')),
-      h('button', { class: 'btn outlined', onclick: () => { a.phase = 'import'; a.error = ''; renderAuthenticatorFocus('.dialog textarea'); } }, icon('download'), authText('import'))),
+      h('button', { class: 'btn outlined', onclick: () => { a.phase = 'import'; a.error = ''; renderAuthenticatorFocus('.dialog textarea'); } }, icon('download'), authText('import')),
+      h('button', { class: 'btn outlined', disabled: a.loading, onclick: () => void importAuthenticatorPng('file') }, icon('image'), authText('importPng')),
+      h('button', { class: 'btn outlined', disabled: a.loading, onclick: () => void importAuthenticatorPng('clipboard') }, icon('content_paste'), authText('importClipboard'))),
+    h('p', { class: 'auth-hint' }, authText('cameraUnavailable')),
     searchLine('auth-entries', authText('search')),
     a.loading ? h('div', { class: 'auth-state', role: 'status' }, authText('loading')) : null,
     h('div', { class: 'feedback bad', role: 'alert', 'data-auth-feedback': 'true', hidden: !a.error }, a.error),

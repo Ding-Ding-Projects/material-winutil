@@ -349,6 +349,8 @@ export interface Bridge {
   restartToUpdate(): void;
   onUpdateStatus(cb: (status: UpdateStatus) => void): void;
   authenticatorBegin(request: AuthenticatorBeginRequest): Promise<AuthenticatorRegistration>;
+  authenticatorImportPngFile(): Promise<AuthenticatorRegistration | null>;
+  authenticatorImportClipboardPng(): Promise<AuthenticatorRegistration>;
   authenticatorConfirm(registrationId: string, code: string): Promise<AuthenticatorEntry>;
   authenticatorCancel(registrationId: string): Promise<boolean>;
   authenticatorList(): Promise<AuthenticatorEntry[]>;

@@ -2,6 +2,8 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import QRCode from 'qrcode';
+import jsQR from 'jsqr';
+import { PNG } from 'pngjs';
 import type {
   AuthenticatorBeginRequest, AuthenticatorCodes, AuthenticatorEntry,
   AuthenticatorRegistration,
@@ -50,6 +52,11 @@ const MAX_ENTRIES = 256;
 const MAX_PENDING = 16;
 const MAX_CONFIRM_ATTEMPTS = 5;
 const PENDING_LIFETIME_MS = 5 * 60 * 1000;
+export const AUTHENTICATOR_PNG_LIMITS = Object.freeze({
+  maxBytes: 1_048_576,
+  maxDimension: 2_048,
+  maxPixels: 4_194_304,
+});
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ALGORITHMS = new Set<TotpAlgorithm>(['SHA1', 'SHA256', 'SHA512']);
 
@@ -118,6 +125,47 @@ function validPngDataUrl(value: string): boolean {
     return bytes.length >= 24 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   } catch {
     return false;
+  }
+}
+
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+
+export function decodeAuthenticatorQrPng(payload: Uint8Array): string {
+  if (!(payload instanceof Uint8Array) || payload.byteLength < 24 || payload.byteLength > AUTHENTICATOR_PNG_LIMITS.maxBytes) {
+    throw new Error('The QR image must be a bounded PNG file no larger than 1 MiB.');
+  }
+  const bytes = Buffer.from(payload.buffer, payload.byteOffset, payload.byteLength);
+  if (!bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)
+    || bytes.toString('ascii', 12, 16) !== 'IHDR') {
+    throw new Error('Only PNG QR images are supported.');
+  }
+  const width = bytes.readUInt32BE(16);
+  const height = bytes.readUInt32BE(20);
+  if (!width || !height || width > AUTHENTICATOR_PNG_LIMITS.maxDimension
+    || height > AUTHENTICATOR_PNG_LIMITS.maxDimension
+    || width * height > AUTHENTICATOR_PNG_LIMITS.maxPixels) {
+    throw new Error('The QR PNG dimensions exceed the supported bound.');
+  }
+  let png: PNG;
+  try {
+    png = PNG.sync.read(bytes, { checkCRC: true });
+  } catch {
+    throw new Error('The QR PNG could not be decoded safely.');
+  }
+  if (png.width !== width || png.height !== height || png.data.byteLength !== width * height * 4) {
+    png.data.fill(0);
+    throw new Error('The QR PNG decoded to an unexpected shape.');
+  }
+  try {
+    const decoded = jsQR(new Uint8ClampedArray(png.data.buffer, png.data.byteOffset, png.data.byteLength), width, height, {
+      inversionAttempts: 'dontInvert',
+    });
+    if (!decoded || typeof decoded.data !== 'string' || decoded.data.length === 0 || decoded.data.length > 4096) {
+      throw new Error('The PNG does not contain one supported QR code.');
+    }
+    return decoded.data;
+  } finally {
+    png.data.fill(0);
   }
 }
 
@@ -245,6 +293,11 @@ export class AuthenticatorService {
       this.pending.set(registrationId, { entry, secret, imported, expiresAt, failedAttempts: 0, nextAttemptAt: 0, timer });
       return { registrationId, entry, manualSecret, uri, qrDataUrl, imported, expiresAt: new Date(expiresAt).toISOString() };
     });
+  }
+
+  async beginFromPng(payload: Uint8Array): Promise<AuthenticatorRegistration> {
+    const uri = decodeAuthenticatorQrPng(payload);
+    return this.begin({ mode: 'import', uri });
   }
 
   async confirm(registrationId: string, code: string): Promise<AuthenticatorEntry> {

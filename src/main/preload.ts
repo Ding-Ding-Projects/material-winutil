@@ -37,6 +37,8 @@ const bridge: Bridge = {
   restartToUpdate: () => ipcRenderer.send('update:restart'),
   onUpdateStatus: (cb) => { ipcRenderer.on('update:status', (_e, status) => cb(status)); },
   authenticatorBegin: (request) => ipcRenderer.invoke('authenticator:begin', request),
+  authenticatorImportPngFile: () => ipcRenderer.invoke('authenticator:import-png-file'),
+  authenticatorImportClipboardPng: () => ipcRenderer.invoke('authenticator:import-clipboard-png'),
   authenticatorConfirm: (registrationId, code) => ipcRenderer.invoke('authenticator:confirm', registrationId, code),
   authenticatorCancel: (registrationId) => ipcRenderer.invoke('authenticator:cancel', registrationId),
   authenticatorList: () => ipcRenderer.invoke('authenticator:list'),

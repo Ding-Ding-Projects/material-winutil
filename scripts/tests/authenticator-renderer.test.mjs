@@ -2,14 +2,37 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const renderer = await readFile(new URL('../../src/renderer/renderer.ts', import.meta.url), 'utf8');
+const [renderer, main, preload, types, docs] = await Promise.all([
+  readFile(new URL('../../src/renderer/renderer.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../../src/main/main.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../../src/main/preload.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../../src/shared/types.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../../docs/features/locks-and-authenticator.md', import.meta.url), 'utf8'),
+]);
 const styles = await readFile(new URL('../../src/renderer/styles.css', import.meta.url), 'utf8');
 const manifest = JSON.parse(await readFile(new URL('../smoke/app-manifest.json', import.meta.url), 'utf8'));
 
 test('authenticator renderer calls every reviewed bridge operation', () => {
-  for (const call of ['authenticatorBegin(', 'authenticatorConfirm(', 'authenticatorCancel(', 'authenticatorList(', 'authenticatorCodes(', 'authenticatorRemove(']) {
+  for (const call of ['authenticatorBegin(', 'authenticatorImportPngFile(', 'authenticatorImportClipboardPng(', 'authenticatorConfirm(', 'authenticatorCancel(', 'authenticatorList(', 'authenticatorCodes(', 'authenticatorRemove(']) {
     assert.match(renderer, new RegExp(call.replace('(', '\\(')));
   }
+});
+
+test('trusted file and clipboard image routes decode bounded PNG locally and reuse confirmation', () => {
+  for (const method of ['authenticatorImportPngFile', 'authenticatorImportClipboardPng']) {
+    assert.match(types, new RegExp(`\\b${method}\\(`));
+    assert.match(preload, new RegExp(`${method}:`));
+    assert.match(renderer, new RegExp(`${method}\\(`));
+  }
+  assert.match(main, /authenticator:import-png-file[\s\S]*?showOpenDialog[\s\S]*?extensions: \['png'\][\s\S]*?beginFromPng/u);
+  assert.match(main, /authenticator:import-clipboard-png[\s\S]*?clipboard\.readImage\(\)[\s\S]*?toPNG\(\)[\s\S]*?beginFromPng/u);
+  assert.match(main, /AUTHENTICATOR_PNG_LIMITS\.maxBytes/u);
+  assert.match(renderer, /importAuthenticatorPng\('file'\)/u);
+  assert.match(renderer, /importAuthenticatorPng\('clipboard'\)/u);
+  assert.match(renderer, /acceptAuthenticatorRegistration\(registration, generation\)/u);
+  assert.match(docs, /up to 1 MiB, 2048 pixels on either edge, and 4,194,304 total pixels/u);
+  assert.match(docs, /Camera scanning remains unavailable because it requires camera hardware and permission/u);
+  assert.doesNotMatch(preload, /node:fs|clipboard\.readImage|PNG\.sync|jsQR/u);
 });
 
 test('registration keeps one-time secrets inside confirmation and clears imported URI state', () => {

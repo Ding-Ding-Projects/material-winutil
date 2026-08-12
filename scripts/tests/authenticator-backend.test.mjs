@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import jsQR from 'jsqr';
 import { PNG } from 'pngjs';
-import { AuthenticatorService } from '../../dist/main/authenticator-service.js';
+import { AUTHENTICATOR_PNG_LIMITS, AuthenticatorService, decodeAuthenticatorQrPng } from '../../dist/main/authenticator-service.js';
 import { base32Decode, generateTotp } from '../../dist/shared/totp.js';
 
 const ID = '12345678-1234-4123-8123-123456789abc';
@@ -73,6 +73,38 @@ test('import parses a bounded otpauth URI and records an imported redacted mutat
     assert.equal(f.history[0].action, 'imported');
     assert.doesNotMatch(JSON.stringify(f.history), /GEZDGNB|otpauth|"secret"/i);
   } finally { await f.cleanup(); }
+});
+
+test('bounded PNG QR import converges on the existing confirmation and vault flow', async () => {
+  const f = await fixture();
+  try {
+    const uri = 'otpauth://totp/Example%3Aperson?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Example&algorithm=SHA1&digits=6&period=30';
+    const generated = await f.service.begin({ mode: 'import', uri });
+    const pngBytes = Buffer.from(generated.qrDataUrl.split(',')[1], 'base64');
+    await f.service.cancel(generated.registrationId);
+    assert.equal(decodeAuthenticatorQrPng(pngBytes), uri);
+
+    const registration = await f.service.beginFromPng(pngBytes);
+    assert.equal(registration.imported, true);
+    assert.equal(registration.entry.account, 'person');
+    await f.service.confirm(registration.registrationId, generateTotp(SECRET, { timestampMs: NOW }));
+    assert.equal(f.vault.size, 1);
+    assert.equal(f.history[0].action, 'imported');
+    assert.doesNotMatch(JSON.stringify(f.history), /GEZDGNB|otpauth|qrDataUrl|png/i);
+  } finally { await f.cleanup(); }
+});
+
+test('PNG QR decoder rejects non-PNG, oversized, oversized-dimension, and QR-free data', async () => {
+  assert.throws(() => decodeAuthenticatorQrPng(Buffer.from('not a PNG')), /bounded PNG|Only PNG/);
+  assert.throws(() => decodeAuthenticatorQrPng(Buffer.alloc(AUTHENTICATOR_PNG_LIMITS.maxBytes + 1)), /no larger than 1 MiB/);
+
+  const tooWide = PNG.sync.write(new PNG({ width: 2, height: 2, fill: true }));
+  tooWide.writeUInt32BE(AUTHENTICATOR_PNG_LIMITS.maxDimension + 1, 16);
+  assert.throws(() => decodeAuthenticatorQrPng(tooWide), /dimensions exceed/);
+
+  const blank = new PNG({ width: 128, height: 128 });
+  blank.data.fill(255);
+  assert.throws(() => decodeAuthenticatorQrPng(PNG.sync.write(blank)), /does not contain one supported QR code/);
 });
 
 test('codes expose current and next values without returning the secret, then remove vault before metadata', async () => {

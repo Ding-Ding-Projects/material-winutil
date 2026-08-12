@@ -1,4 +1,4 @@
-import { app, autoUpdater, BrowserWindow, ipcMain, dialog, nativeTheme, session, shell } from 'electron';
+import { app, autoUpdater, BrowserWindow, clipboard, ipcMain, dialog, nativeTheme, session, shell } from 'electron';
 import { execFile, spawn } from 'node:child_process';
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { promises as fs } from 'node:fs';
@@ -12,7 +12,7 @@ import type {
   ScheduledSettingsState, SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateStatus, WinutilCatalog,
 } from '../shared/types';
 import { resolvePackageRequest, validateCatalog, wingetArgs } from './package-policy';
-import { AuthenticatorService } from './authenticator-service';
+import { AUTHENTICATOR_PNG_LIMITS, AuthenticatorService } from './authenticator-service';
 import { PersonalVocabularyStore } from './personal-vocabulary-store';
 import { PERSONAL_VOCABULARY_LIMITS } from '../shared/personal-vocabulary';
 import { IpcNarrationTransport, NarratorRuntime } from './narrator-runtime';
@@ -930,6 +930,44 @@ ipcMain.handle('locks:open-recovery-folder', async (event) => {
 ipcMain.handle('authenticator:begin', async (event, request: AuthenticatorBeginRequest): Promise<AuthenticatorRegistration> => {
   requireTrustedSender(event);
   return authenticator().begin(request);
+});
+ipcMain.handle('authenticator:import-png-file', async (event): Promise<AuthenticatorRegistration | null> => {
+  requireTrustedSender(event);
+  if (!win || win.isDestroyed()) throw new Error('The application window is unavailable.');
+  const choice = await dialog.showOpenDialog(win, {
+    title: 'Import authenticator QR PNG',
+    properties: ['openFile'],
+    filters: [{ name: 'PNG images', extensions: ['png'] }],
+  });
+  if (choice.canceled || choice.filePaths.length !== 1) return null;
+  const filePath = choice.filePaths[0];
+  const info = await fs.stat(filePath);
+  if (!info.isFile() || info.size < 24 || info.size > AUTHENTICATOR_PNG_LIMITS.maxBytes) {
+    throw new Error('The QR image must be a bounded PNG file no larger than 1 MiB.');
+  }
+  const bytes = await fs.readFile(filePath);
+  try {
+    return await authenticator().beginFromPng(bytes);
+  } finally {
+    bytes.fill(0);
+  }
+});
+ipcMain.handle('authenticator:import-clipboard-png', async (event): Promise<AuthenticatorRegistration> => {
+  requireTrustedSender(event);
+  const image = clipboard.readImage();
+  if (image.isEmpty()) throw new Error('The clipboard does not contain a PNG image.');
+  const size = image.getSize();
+  if (!Number.isInteger(size.width) || !Number.isInteger(size.height) || size.width < 1 || size.height < 1
+    || size.width > AUTHENTICATOR_PNG_LIMITS.maxDimension || size.height > AUTHENTICATOR_PNG_LIMITS.maxDimension
+    || size.width * size.height > AUTHENTICATOR_PNG_LIMITS.maxPixels) {
+    throw new Error('The clipboard image dimensions exceed the supported bound.');
+  }
+  const bytes = image.toPNG();
+  try {
+    return await authenticator().beginFromPng(bytes);
+  } finally {
+    bytes.fill(0);
+  }
 });
 ipcMain.handle('authenticator:confirm', async (event, registrationId: string, code: string): Promise<AuthenticatorEntry> => {
   requireTrustedSender(event);

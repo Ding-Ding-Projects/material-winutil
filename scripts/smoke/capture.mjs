@@ -142,26 +142,14 @@ async function prepareApp(client, capture, defaults) {
 async function prepareSite(client, capture, defaults) {
   const viewport = capture.viewport ?? defaults;
   await client.setViewport(viewport.width, viewport.height, viewport.scale ?? 1);
-  const expression = `(()=>{
-    localStorage.setItem('material-system-utility-docs-v1',JSON.stringify({page:${literal(capture.page ?? 'home')},language:${literal(capture.language ?? 'en')},englishLevel:3,cantoneseLevel:4,theme:${literal(capture.theme ?? 'dark')},density:'comfortable',dock:${literal(capture.dock ?? 'left')}}));
-    location.reload(); return true;
-  })()`;
-  try { await client.evaluate(expression); }
-  catch (error) {
-    if (!/Runtime\.evaluate failed: (?:Uncaught|Execution context)/iu.test(String(error))) throw error;
-  }
-  const deadline = Date.now() + 10000;
-  let ready = false;
-  while (Date.now() < deadline) {
-    try {
-      ready = await client.evaluate(`document.readyState==='complete' && document.querySelector('[data-page=${literal(capture.page ?? 'home')}]')!==null && document.querySelector('[data-panel=${literal(capture.page ?? 'home')}]')!==null`);
-      if (ready) break;
-    } catch { /* reload reconnects the execution context */ }
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 150));
-  }
-  if (!ready) throw new Error(`${capture.id} did not finish navigation to its requested panel`);
   const requestedPage = capture.page ?? 'home';
-  await client.evaluate(`document.querySelector('[data-page=${literal(requestedPage)}]')?.click()`);
+  const applied = await client.evaluate(`(()=>{
+    const set=(id,value)=>{const control=document.getElementById(id);if(!control)return false;control.value=value;control.dispatchEvent(new Event('change',{bubbles:true}));return true};
+    const ok=set('language',${literal(capture.language ?? 'en')})&&set('theme',${literal(capture.theme ?? 'dark')})&&set('density','comfortable')&&set('dock',${literal(capture.dock ?? 'left')});
+    document.querySelector('[data-page=${literal(requestedPage)}]')?.click();
+    return ok;
+  })()`);
+  if (!applied) throw new Error(`${capture.id} could not apply the live site controls`);
   const activated = await client.evaluate(`document.querySelector('[data-panel=${literal(requestedPage)}]:not([hidden])')!==null`);
   if (!activated) throw new Error(`${capture.id} could not activate its requested page`);
   if (capture.prepare) await client.evaluate(`(()=>{${capture.prepare};return true})()`);

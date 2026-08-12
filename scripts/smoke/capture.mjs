@@ -146,15 +146,20 @@ async function prepareSite(client, capture, defaults) {
     localStorage.setItem('material-winutil-site-v1',JSON.stringify({page:${literal(capture.page ?? 'home')},language:${literal(capture.language ?? 'en')},englishLevel:3,cantoneseLevel:4,theme:${literal(capture.theme ?? 'dark')},density:'comfortable',dock:${literal(capture.dock ?? 'left')}}));
     location.reload(); return true;
   })()`;
-  await client.evaluate(expression);
+  try { await client.evaluate(expression); }
+  catch (error) {
+    if (!/Runtime\.evaluate failed: (?:Uncaught|Execution context)/iu.test(String(error))) throw error;
+  }
   const deadline = Date.now() + 10000;
+  let ready = false;
   while (Date.now() < deadline) {
     try {
-      const ready = await client.evaluate(`document.readyState==='complete' && document.querySelector('[data-panel=${literal(capture.page ?? 'home')}]:not([hidden])')!==null`);
+      ready = await client.evaluate(`document.readyState==='complete' && document.querySelector('[data-panel=${literal(capture.page ?? 'home')}]:not([hidden])')!==null`);
       if (ready) break;
     } catch { /* reload reconnects the execution context */ }
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 150));
   }
+  if (!ready) throw new Error(`${capture.id} did not finish navigation to its requested panel`);
   if (capture.prepare) await client.evaluate(`(()=>{${capture.prepare};return true})()`);
   const audit = await client.evaluate(`(()=>{const root=document.documentElement;return {page:${literal(capture.page ?? 'home')},panel:Boolean(document.querySelector('[data-panel=${literal(capture.page ?? 'home')}]:not([hidden])')),overflow:Math.max(root.scrollWidth,document.body.scrollWidth)-root.clientWidth,clientWidth:root.clientWidth}})()`);
   if (!audit.panel || audit.overflow > 2) throw new Error(`${capture.id} failed DOM audit: ${JSON.stringify(audit)}`);

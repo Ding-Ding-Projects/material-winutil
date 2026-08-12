@@ -124,6 +124,12 @@ test('capture verifier requires unsigned exact-set Squirrel provenance', async (
   assert.equal(valid.packageCount, 1);
 });
 
+test('site reload preparation waits for a new document instead of trusting the destroyed context', async () => {
+  const source = await readFile(join(repo, 'scripts', 'smoke', 'capture.mjs'), 'utf8');
+  assert.match(source, /Runtime\\\.evaluate failed: \(\?:Uncaught\|Execution context\)/u);
+  assert.match(source, /if \(!ready\) throw new Error\(`\$\{capture\.id\} did not finish navigation/u);
+});
+
 test('PNG inspector decodes a real capture and duplicate check fails closed', async () => {
   const file = join(repo, 'docs', 'screenshots', 'safe-package-catalogue-dark.png');
   const png = await inspectPng(file);

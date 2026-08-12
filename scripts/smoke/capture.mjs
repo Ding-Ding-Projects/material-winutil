@@ -191,6 +191,12 @@ async function captureSession(kind, manifest, executable, argsForLaunch, expecte
     await client.call('Runtime.enable');
     if (kind === 'app') await waitForApp(client);
     else await waitForSite(client);
+    let sessionArtifact = artifact;
+    if (kind === 'site') {
+      const deployedCommit = await client.evaluate(`document.querySelector('meta[name="material-winutil-source-commit"]')?.content||''`);
+      if (deployedCommit !== commit) throw new Error(`live documentation deployment ${deployedCommit || '(missing)'} does not match current commit ${commit}`);
+      sessionArtifact = { ...artifact, deployedCommit };
+    }
     for (const capture of manifest.captures) {
       const state = await prepare(client, capture, manifest.defaultViewport);
       const output = join(captureRoot, kind, capture.file);
@@ -205,7 +211,7 @@ async function captureSession(kind, manifest, executable, argsForLaunch, expecte
         commit,
         executable: basename(executable),
         executableSha256: executableHash,
-        artifact,
+        artifact: sessionArtifact,
         captureMethod: 'cheap Lowlevel MCP hidden desktop + isolated loopback CDP Page.captureScreenshot',
         state,
         png,

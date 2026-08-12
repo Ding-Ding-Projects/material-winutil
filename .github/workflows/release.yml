@@ -147,6 +147,10 @@ jobs:
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path pages-site | Out-Null
           Get-ChildItem -LiteralPath docs/site | Copy-Item -Destination pages-site -Recurse -Force
+          $indexPath = Join-Path $PWD 'pages-site/index.html'
+          $index = [IO.File]::ReadAllText($indexPath)
+          if (-not $index.Contains('__SOURCE_COMMIT__')) { throw 'Pages source commit placeholder is missing.' }
+          [IO.File]::WriteAllText($indexPath, $index.Replace('__SOURCE_COMMIT__', $env:GITHUB_SHA), [Text.UTF8Encoding]::new($false))
           New-Item -ItemType Directory -Force -Path pages-site/screenshots | Out-Null
           Get-ChildItem -LiteralPath docs/screenshots | Copy-Item -Destination pages-site/screenshots -Recurse -Force
           New-Item -ItemType Directory -Force -Path pages-site/features | Out-Null

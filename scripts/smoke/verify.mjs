@@ -1,7 +1,7 @@
 import { access, readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { gitChangedPaths, gitCommit, sha256File } from './lib/contracts.mjs';
+import { assertCaptureArtifactProvenance, gitChangedPaths, gitCommit } from './lib/contracts.mjs';
 import { assertUniquePngs, inspectPng } from './lib/png.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -26,15 +26,11 @@ async function main() {
   const verified = [];
   for (const capture of metadata.captures) {
     if (/^[A-Za-z]:[\\/]|^\\\\/u.test(capture.file ?? '') || /^[A-Za-z]:[\\/]|^\\\\/u.test(capture.executable ?? '')) throw new Error(`${capture.id} exposes an absolute local path`);
-    if (capture.artifact?.developmentFallback || capture.artifact?.kind !== 'validated-squirrel-full-package') throw new Error(`${capture.id} was not captured from a validated Squirrel package`);
-    if (capture.artifact?.sourceCommit !== metadata.commit) throw new Error(`${capture.id} package provenance does not match the photographed commit`);
-    if (capture.artifact?.signatureStatus !== 'NotSigned') throw new Error(`${capture.id} does not prove the unsigned installer policy`);
-    if (capture.artifact?.setup !== 'MaterialSystemUtility-Setup.exe' || capture.artifact?.releases !== 'RELEASES' || capture.artifact?.packageCount !== 1) throw new Error(`${capture.id} does not describe the exact Squirrel asset set`);
-    if (capture.artifact?.fullPackage !== capture.artifact?.packagePath) throw new Error(`${capture.id} full package identity is inconsistent`);
+    assertCaptureArtifactProvenance(capture, metadata.commit);
     const file = join(repo, 'docs', 'screenshots', capture.relativeFile);
     const png = await inspectPng(file);
     if (png.sha256 !== capture.png.sha256 || png.width !== capture.png.width || png.height !== capture.png.height) throw new Error(`${capture.id} does not match its metadata`);
-    if (!/^[0-9a-f]{64}$/iu.test(capture.executableSha256 ?? '') || !/^[0-9a-f]{64}$/iu.test(capture.artifact?.packageSha256 ?? '')) throw new Error(`${capture.id} lacks artifact hashes`);
+    if (!/^[0-9a-f]{64}$/iu.test(capture.executableSha256 ?? '')) throw new Error(`${capture.id} lacks an executable hash`);
     if (!String(capture.captureMethod).includes('cheap Lowlevel MCP hidden desktop')) throw new Error(`${capture.id} has an unsupported capture method`);
     verified.push({ file, png });
   }

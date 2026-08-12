@@ -90,6 +90,31 @@ export async function gitChangedPaths(repo, fromCommit, toCommit = 'HEAD') {
   return output ? output.split(/\r?\n/u).filter(Boolean).map((path) => path.replaceAll('\\', '/')) : [];
 }
 
+export function assertCaptureArtifactProvenance(capture, expectedCommit) {
+  const artifact = capture.artifact ?? {};
+  if (artifact.developmentFallback || artifact.sourceCommit !== expectedCommit) {
+    throw new Error(`${capture.id} artifact provenance does not match the photographed commit`);
+  }
+  if (capture.surface === 'desktop application') {
+    if (artifact.kind !== 'validated-squirrel-full-package') throw new Error(`${capture.id} was not captured from a validated Squirrel package`);
+    if (artifact.signatureStatus !== 'NotSigned') throw new Error(`${capture.id} does not prove the unsigned installer policy`);
+    if (artifact.setup !== 'MaterialSystemUtility-Setup.exe' || artifact.releases !== 'RELEASES' || artifact.packageCount !== 1) {
+      throw new Error(`${capture.id} does not describe the exact Squirrel asset set`);
+    }
+    if (artifact.fullPackage !== artifact.packagePath || !/^[0-9a-f]{64}$/iu.test(artifact.packageSha256 ?? '')) {
+      throw new Error(`${capture.id} full package identity is inconsistent`);
+    }
+    return;
+  }
+  if (capture.surface === 'live documentation site') {
+    if (artifact.kind !== 'installed-edge' || artifact.deployedCommit !== expectedCommit) {
+      throw new Error(`${capture.id} does not prove the live documentation deployment`);
+    }
+    return;
+  }
+  throw new Error(`${capture.id} has an unknown photographed surface`);
+}
+
 export function selectCaptureManifests(manifests, ids) {
   if (!ids.length) return manifests;
   const wanted = new Set(ids);

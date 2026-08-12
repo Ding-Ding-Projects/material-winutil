@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promise
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
-import { assertBuiltArtifactFresh, assertGitClean, extractSquirrelApplication, gitChangedPaths, parseArgs, selectCaptureManifests } from './lib/contracts.mjs';
+import { assertBuiltArtifactFresh, assertCaptureArtifactProvenance, assertGitClean, extractSquirrelApplication, gitChangedPaths, parseArgs, selectCaptureManifests } from './lib/contracts.mjs';
 import { assertSingleTarget } from './lib/cdp.mjs';
 import { assertUniquePngs, inspectPng } from './lib/png.mjs';
 import { commandLine } from './lib/lowlevel.mjs';
@@ -117,11 +117,17 @@ test('capture verifier requires unsigned exact-set Squirrel provenance', async (
     releases: 'RELEASES', fullPackage: 'MaterialSystemUtility-0.1.0-full.nupkg',
     packagePath: 'MaterialSystemUtility-0.1.0-full.nupkg', packageCount: 1,
   };
-  assert.equal(valid.signatureStatus, 'NotSigned');
-  assert.equal(valid.setup, 'MaterialSystemUtility-Setup.exe');
-  assert.equal(valid.releases, 'RELEASES');
-  assert.equal(valid.fullPackage, valid.packagePath);
-  assert.equal(valid.packageCount, 1);
+  valid.sourceCommit = 'a'.repeat(40);
+  valid.packageSha256 = 'b'.repeat(64);
+  assert.doesNotThrow(() => assertCaptureArtifactProvenance({ id: 'app', surface: 'desktop application', artifact: valid }, valid.sourceCommit));
+  assert.throws(() => assertCaptureArtifactProvenance({ id: 'app', surface: 'desktop application', artifact: { ...valid, signatureStatus: 'Valid' } }, valid.sourceCommit), /unsigned installer policy/u);
+});
+
+test('capture verifier distinguishes live deployment provenance from packaged app provenance', () => {
+  const commit = 'c'.repeat(40);
+  const site = { kind: 'installed-edge', developmentFallback: false, sourceCommit: commit, deployedCommit: commit };
+  assert.doesNotThrow(() => assertCaptureArtifactProvenance({ id: 'site', surface: 'live documentation site', artifact: site }, commit));
+  assert.throws(() => assertCaptureArtifactProvenance({ id: 'site', surface: 'live documentation site', artifact: { ...site, deployedCommit: 'd'.repeat(40) } }, commit), /live documentation deployment/u);
 });
 
 test('site preparation drives the live preference controls and real page tab', async () => {
@@ -134,6 +140,8 @@ test('site preparation drives the live preference controls and real page tab', a
   assert.match(source, /document\.getElementById\('tab-rail'\)\?\.classList\.remove\('open'\)/u);
   assert.match(source, /\['language','theme','density','dock','documentation-tab-list'\]\.every/u);
   assert.match(source, /else await waitForSite\(client\)/u);
+  assert.match(source, /meta\[name="material-winutil-source-commit"\]/u);
+  assert.match(source, /deployedCommit !== commit/u);
   assert.match(source, /set\('language'.*set\('theme'.*set\('density'.*set\('dock'/su);
   assert.match(source, /dispatchEvent\(new Event\('change',\{bubbles:true\}\)\)/u);
   assert.doesNotMatch(source, /location\.reload\(\)/u);

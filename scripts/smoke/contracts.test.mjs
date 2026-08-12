@@ -20,6 +20,11 @@ test('manifests have unique ids and filenames and only in-memory preparation', a
     for (const item of manifest.captures) {
       assert.match(item.file, /^[a-z0-9-]+\.png$/u);
       assert.doesNotMatch(item.prepare ?? '', /\.click\(\).*?(Authorize|install|uninstall|upgrade)|bridge\(\)\.run|restartToUpdate|exportView/iu);
+      if ((item.prepare ?? '').includes('state.tabs=[')) {
+        const active = /state\.activeTab='([^']+)'/u.exec(item.prepare)?.[1];
+        assert.ok(active, `${item.id} must select an active tab after replacing the tab list`);
+        assert.match(item.prepare, new RegExp(`id:'${active}'`, 'u'), `${item.id} active tab must exist in its replacement list`);
+      }
     }
   }
 });

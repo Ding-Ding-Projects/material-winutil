@@ -160,6 +160,10 @@ async function prepareSite(client, capture, defaults) {
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 150));
   }
   if (!ready) throw new Error(`${capture.id} did not finish navigation to its requested panel`);
+  const requestedPage = capture.page ?? 'home';
+  await client.evaluate(`document.querySelector('[data-page=${literal(requestedPage)}]')?.click()`);
+  const activated = await client.evaluate(`document.querySelector('[data-panel=${literal(requestedPage)}]:not([hidden])')!==null`);
+  if (!activated) throw new Error(`${capture.id} could not activate its requested page`);
   if (capture.prepare) await client.evaluate(`(()=>{${capture.prepare};return true})()`);
   const audit = await client.evaluate(`(()=>{const root=document.documentElement;return {page:${literal(capture.page ?? 'home')},panel:Boolean(document.querySelector('[data-panel=${literal(capture.page ?? 'home')}]:not([hidden])')),overflow:Math.max(root.scrollWidth,document.body.scrollWidth)-root.clientWidth,clientWidth:root.clientWidth}})()`);
   if (!audit.panel || audit.overflow > 2) throw new Error(`${capture.id} failed DOM audit: ${JSON.stringify(audit)}`);

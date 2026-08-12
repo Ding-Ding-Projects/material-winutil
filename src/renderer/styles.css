@@ -213,18 +213,6 @@ code, pre, kbd, .mono { font-family: ui-monospace, Consolas, monospace; }
 .content.tab-dock-bottom .toolbar { grid-row: 1; }
 .content.tab-dock-bottom .workspace-panels { grid-row: 2; }
 
-@media (max-width: 720px) {
-  .body { grid-template-columns: 64px minmax(0, 1fr); }
-  .siderail { display: none; }
-  .content.tab-dock-left, .content.tab-dock-right { grid-template-columns: 56px minmax(0, 1fr); }
-  .content.tab-dock-left .wtab, .content.tab-dock-right .wtab { padding: 0; justify-content: center; }
-  .content.tab-dock-left .wtab b, .content.tab-dock-right .wtab b,
-  .content.tab-dock-left .group-chip, .content.tab-dock-right .group-chip,
-  .content.tab-dock-left .tab-close-mark, .content.tab-dock-right .tab-close-mark { display: none; }
-  .toolbar { grid-template-columns: 1fr; }
-  .toolbar-right { overflow-x: auto; }
-}
-
 .toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px;
   padding: 6px 10px; overflow-x: hidden;
   border-bottom: 1px solid var(--md-sys-color-outline-variant); min-height: 52px; }
@@ -500,4 +488,47 @@ input[type="range"].gradient::-webkit-slider-thumb { -webkit-appearance: none; a
 .empty .mi { font-size: 44px; opacity: .5; }
 
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+/* Keep the compact shell last so its declarations win over the component rules
+   above. The shell must fit the supported 360px viewport without relying on
+   clipped document overflow. */
+@media (max-width: 720px) {
+  html, body, #app, .appbar, .body, .content, .workspace-panels, .workspace-panel,
+  .toolbar, .toolbar-left, .toolbar-right, .pane { min-width: 0; max-width: 100%; }
+  #app, .body { width: 100%; overflow: hidden; }
+  .appbar { gap: 2px; padding-inline: 2px; }
+  .appbar .brand { padding: 0; }
+  .appbar .brand-name, .appbar > div[style*="flex:1"],
+  .appbar > button[title="Notification centre"], .appbar > button[title="Theme"],
+  .appbar > button[title="Settings"] { display: none; }
+  .appbar .searchbar { min-width: 0; max-width: none; flex: 1 1 44px; height: 44px; padding-inline: 2px; }
+  .appbar .searchbar > .icon-btn { display: none; }
+  .appbar .searchbar .regex-btn { width: 44px; height: 44px; padding: 0; border-radius: 22px; }
+  .win-controls { margin-left: 0; gap: 0; flex: none; }
+  .win-controls button { width: 40px; }
+  .body { grid-template-columns: 64px minmax(0, 1fr); }
+  .siderail { display: none; }
+  .drawer { padding-inline: 4px; overflow-x: hidden; }
+  .drawer .fab-extended { padding: 0; justify-content: center; margin-inline: 0; }
+  .drawer .fab-extended span:not(.mi), .drawer .nav-item b, .drawer .nav-count,
+  .drawer .drawer-heading, .drawer > .searchline { display: none; }
+  .drawer .nav-item { justify-content: center; padding: 0; }
+  .content { margin-left: 0; }
+  .content.tab-dock-left, .content.tab-dock-right { grid-template-columns: 56px minmax(0, 1fr); }
+  .content.tab-dock-left .wtab, .content.tab-dock-right .wtab { padding: 0; justify-content: center; }
+  .content.tab-dock-left .wtab b, .content.tab-dock-right .wtab b,
+  .content.tab-dock-left .group-chip, .content.tab-dock-right .group-chip,
+  .content.tab-dock-left .tab-close-mark, .content.tab-dock-right .tab-close-mark { display: none; }
+  .toolbar { grid-template-columns: minmax(0, 1fr); overflow: hidden; }
+  .toolbar-left, .toolbar-right { width: 100%; overflow-x: auto; }
+  .toolbar-right { flex: 1 1 auto; }
+  .row { gap: 8px; padding-inline: 8px; }
+  .row .snippet, .row .meta, .row .chip-inline { display: none; }
+  .row .primary { flex: 1 1 auto; max-width: none; min-width: 0; }
+  .row .row-actions .icon-btn:not(:last-child) { display: none; }
+  .row .row-actions { margin-left: auto; flex: none; }
+  .pane.padded, .reader { padding-inline: 12px; }
+  .dialog { width: calc(100vw - 16px); max-width: calc(100vw - 16px); }
+}
+
 @media print { .drawer, .siderail, .appbar, .tabstrip { display: none; } }

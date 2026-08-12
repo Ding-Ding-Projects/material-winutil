@@ -131,6 +131,14 @@ export interface CommandResult {
   stderr: string;
 }
 
+export interface UpdateStatus {
+  state: 'disabled' | 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'up-to-date' | 'error';
+  currentVersion: string;
+  updateVersion: string;
+  message: string;
+  releaseUrl: string;
+}
+
 export interface TotpSecret {
   id: string;
   label: string;
@@ -157,6 +165,10 @@ export interface Bridge {
   writePrefs(prefs: Preferences): Promise<void>;
   history(): Promise<HistoryEntry[]>;
   appendHistory(entry: Omit<HistoryEntry, 'id' | 'at'>): Promise<HistoryEntry>;
+  updateStatus(): Promise<UpdateStatus>;
+  checkForUpdates(): Promise<UpdateStatus>;
+  restartToUpdate(): void;
+  onUpdateStatus(cb: (status: UpdateStatus) => void): void;
 }
 
 declare global {

@@ -1,9 +1,9 @@
-import { app, BrowserWindow, ipcMain, dialog, nativeTheme } from 'electron';
+import { app, autoUpdater, BrowserWindow, ipcMain, dialog, nativeTheme } from 'electron';
 import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import type {
-  CommandResult, ExportFormat, HistoryEntry, Preferences, RunKind, WinutilCatalog,
+  CommandResult, ExportFormat, HistoryEntry, Preferences, RunKind, UpdateStatus, WinutilCatalog,
 } from '../shared/types';
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -13,6 +13,46 @@ const PREFS_FILE = () => path.join(USER_DIR(), 'preferences.json');
 const HISTORY_FILE = () => path.join(USER_DIR(), 'history.jsonl');
 
 let win: BrowserWindow | null = null;
+const UPDATE_FEED = 'https://github.com/Ding-Ding-Projects/material-winutil/releases/latest/download/';
+let updateStatus: UpdateStatus = {
+  state: app.isPackaged ? 'idle' : 'disabled', currentVersion: app.getVersion(), updateVersion: '',
+  message: app.isPackaged ? 'Automatic update checks are enabled.' : 'Update checks run only in an installed build.',
+  releaseUrl: 'https://github.com/Ding-Ding-Projects/material-winutil/releases/latest',
+};
+
+function setUpdateStatus(patch: Partial<UpdateStatus>): UpdateStatus {
+  updateStatus = { ...updateStatus, ...patch };
+  win?.webContents.send('update:status', updateStatus);
+  return updateStatus;
+}
+
+async function checkForUpdates(): Promise<UpdateStatus> {
+  if (!app.isPackaged) return updateStatus;
+  setUpdateStatus({ state: 'checking', message: 'Checking the unsigned HTTPS update feed…' });
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (error) {
+    setUpdateStatus({ state: 'error', message: error instanceof Error ? error.message : String(error) });
+  }
+  return updateStatus;
+}
+
+function configureUpdater(): void {
+  if (!app.isPackaged || process.platform !== 'win32') return;
+  autoUpdater.setFeedURL({ url: UPDATE_FEED });
+  autoUpdater.on('checking-for-update', () => setUpdateStatus({ state: 'checking', message: 'Checking the unsigned HTTPS update feed…' }));
+  autoUpdater.on('update-available', () => setUpdateStatus({
+    state: 'available', message: 'An update is available and will download in the background.',
+  }));
+  autoUpdater.on('update-not-available', () => setUpdateStatus({ state: 'up-to-date', updateVersion: '', message: 'This is the latest published version.' }));
+  autoUpdater.on('error', (error) => setUpdateStatus({ state: 'error', message: error.message }));
+  autoUpdater.on('update-downloaded', (_event, releaseNotes, releaseName) => setUpdateStatus({
+    state: 'ready', updateVersion: String(releaseName ?? '').replace(/^v/, ''),
+    message: typeof releaseNotes === 'string' ? releaseNotes.slice(0, 240) : 'The update is ready to install.',
+  }));
+  setTimeout(() => { void checkForUpdates(); }, 15_000);
+  setInterval(() => { void checkForUpdates(); }, 4 * 60 * 60 * 1000);
+}
 
 function createWindow(): void {
   win = new BrowserWindow({
@@ -194,6 +234,10 @@ ipcMain.handle('history:append', async (_e, entry: Omit<HistoryEntry, 'id' | 'at
   return full;
 });
 
-app.whenReady().then(createWindow);
+ipcMain.handle('update:status', (): UpdateStatus => updateStatus);
+ipcMain.handle('update:check', async (): Promise<UpdateStatus> => checkForUpdates());
+ipcMain.on('update:restart', () => { if (updateStatus.state === 'ready') autoUpdater.quitAndInstall(); });
+
+app.whenReady().then(() => { createWindow(); configureUpdater(); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

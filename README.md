@@ -21,6 +21,18 @@ operator's visible desktop.
 
 </details>
 
+<details>
+<summary>Application update status</summary>
+
+![The real built Updates surface showing local development status, an unsigned-installer warning, and unavailable system-policy profiles](docs/screenshots/updates-status-dark.png)
+
+Installed builds check the public Squirrel.Windows feed on startup and every four
+hours. The app shows current, checking, available, ready, up-to-date, and error
+states without blocking work. A downloaded update stays staged until the user
+chooses **Restart to install update**; all release installers remain unsigned.
+
+</details>
+
 ## Build
 
 Double-click `build.bat` on a fresh Windows installation. It installs Node.js LTS

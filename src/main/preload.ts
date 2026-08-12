@@ -20,6 +20,10 @@ const bridge: Bridge = {
   writePrefs: (prefs) => ipcRenderer.invoke('prefs:write', prefs),
   history: () => ipcRenderer.invoke('history:read'),
   appendHistory: (entry) => ipcRenderer.invoke('history:append', entry),
+  updateStatus: () => ipcRenderer.invoke('update:status'),
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
+  restartToUpdate: () => ipcRenderer.send('update:restart'),
+  onUpdateStatus: (cb) => { ipcRenderer.on('update:status', (_e, status) => cb(status)); },
 };
 
 contextBridge.exposeInMainWorld('winutil', bridge);

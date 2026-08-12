@@ -20,6 +20,7 @@ interface Catalog { apps: WinutilApp[]; tweaks: WinutilTweak[]; features: Winuti
 interface WorkspaceTab { id: string; view: ViewId; pinned: boolean; group: string | null; locked: boolean; }
 interface HistoryEntry { id: string; action: string; detail: string; at: string; }
 interface NotificationEntry { id: string; title: string; detail: string; icon: string; read: boolean; }
+interface UpdateStatus { state: 'disabled' | 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'up-to-date' | 'error'; currentVersion: string; updateVersion: string; message: string; releaseUrl: string; }
 interface TotpSecret { id: string; label: string; issuer: string; secret: string; }
 interface Prefs {
   theme: ThemeMode; density: Density; language: LanguageMode;
@@ -41,6 +42,10 @@ interface Bridge {
   writePrefs(p: Prefs): Promise<void>;
   history(): Promise<HistoryEntry[]>;
   appendHistory(e: { action: string; detail: string }): Promise<HistoryEntry>;
+  updateStatus(): Promise<UpdateStatus>;
+  checkForUpdates(): Promise<UpdateStatus>;
+  restartToUpdate(): void;
+  onUpdateStatus(cb: (status: UpdateStatus) => void): void;
 }
 
 /* ------------------------------------------------------------- constants -- */
@@ -392,6 +397,7 @@ const state = {
   history: [] as HistoryEntry[],
   historyFilter: { from: '', to: '', action: 'all' },
   notifications: [] as NotificationEntry[],
+  update: { state: 'idle', currentVersion: '0.1.0', updateVersion: '', message: 'Automatic update checks are enabled.', releaseUrl: '' } as UpdateStatus,
   locks: {} as Record<string, { kind: 'password' | 'otp'; credential: string; hint: string }>,
   totp: [] as TotpSecret[],
   otpCode: '',
@@ -528,6 +534,10 @@ function bridge(): Bridge {
     writePrefs: async (p) => localStorage.setItem('winutil.prefs', JSON.stringify(p)),
     history: async () => [],
     appendHistory: async (e) => ({ ...e, id: `h-${Date.now()}`, at: new Date().toISOString() }),
+    updateStatus: async () => state.update,
+    checkForUpdates: async () => ({ ...state.update, state: 'disabled', message: 'Update checks run only in an installed build.' }),
+    restartToUpdate: () => undefined,
+    onUpdateStatus: () => undefined,
   };
   w.winutil = fake;
   return fake;
@@ -1108,6 +1118,17 @@ function checklistPane(source: WinutilTweak[], showPresets: boolean): HTMLElemen
 function updatesPane(): HTMLElement {
   const match = makeMatcher(sq('updates'));
   const cards = h('div', { class: 'cards' });
+  const u = state.update;
+  cards.appendChild(h('article', { class: 'card full update-status', role: 'status', 'aria-live': 'polite' },
+    h('div', { class: 'card-head' }, h('div', {},
+      h('p', { class: 'eyebrow' }, 'Application updates'),
+      h('h2', {}, u.state === 'ready' ? `Version ${u.updateVersion || 'new'} is ready` : `Current version ${u.currentVersion}`))),
+    h('p', {}, u.message),
+    h('div', { class: 'notice warn' }, icon('warning'), h('span', {}, 'Updates are transported over HTTPS and checked with Squirrel package hashes, but every installer is unsigned and may show an unknown-publisher warning.')),
+    h('div', { class: 'btnrow' },
+      h('button', { class: 'btn tonal', disabled: u.state === 'checking', onclick: () => { void bridge().checkForUpdates().then((status) => { state.update = status; render(); }); } }, u.state === 'checking' ? 'Checking…' : 'Check for updates'),
+      u.state === 'ready' ? h('button', { class: 'btn filled', onclick: () => bridge().restartToUpdate() }, 'Restart to install update') : null,
+      u.state === 'ready' ? h('button', { class: 'btn text', onclick: () => snack('The update remains ready. Restart when your work is saved.') }, 'Later') : null)));
   for (const p of UPDATE_PROFILES.filter((p) => match(`${p.title} ${p.subtitle} ${p.bullets.join(' ')}`))) {
     cards.appendChild(h('article', { class: 'card', style: 'min-height:340px' },
       h('div', { class: 'card-head' }, h('div', {},
@@ -2759,12 +2780,14 @@ async function boot(): Promise<void> {
     state.queue = { active: p.state !== 'done', index: p.index, total: p.total, current: p.detail || p.id, log: state.queue.log };
     render();
   });
+  bridge().onUpdateStatus((status) => { state.update = status; render(); });
   render();
   try {
     state.catalog = await bridge().loadCatalog();
   } catch {
     snack('Could not load the WinUtil configuration.');
   }
+  try { state.update = await bridge().updateStatus(); } catch { /* development/browser preview */ }
   render();
   void ensureDeps();
 }

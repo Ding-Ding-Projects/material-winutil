@@ -477,6 +477,12 @@ input[type="range"].gradient::-webkit-slider-thumb { -webkit-appearance: none; a
 .lock-row.focused { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
 .lock-input { height: 40px; width: 190px; border-radius: 10px; padding: 0 12px; font-size: 13px;
   background: var(--md-sys-color-surface-container-high); border: 1px solid var(--md-sys-color-outline-variant); outline: none; }
+.lock-disclosure { border-inline-start: 4px solid var(--md-sys-color-primary); font-weight: 650; }
+.lock-list, .lock-ticket-list { max-height: min(42vh, 420px); overflow: auto; }
+.lock-manager-row { grid-template-columns: 28px minmax(150px, .7fr) minmax(220px, 1.4fr) auto; }
+.lock-manager-row .row-actions { display: flex; align-items: center; gap: 8px; }
+.lock-folder-path { overflow: auto; overflow-wrap: anywhere; white-space: pre-wrap; }
+.feedback.error { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
 .menu button:hover { background: var(--md-state-hover); }
 .menu .mi { font-size: 18px; color: var(--md-sys-color-on-surface-variant); }
 .menu hr { border: 0; border-top: 1px solid var(--md-sys-color-outline-variant); margin: 6px 4px; }

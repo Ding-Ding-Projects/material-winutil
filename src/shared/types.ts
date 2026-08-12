@@ -5,6 +5,10 @@ import type { SchoolModeSnapshot, SchoolModeState } from './school-mode';
 import type { ArchiveCompressionLevel, SevenZipMethod } from './archive-export';
 import type { ExportFormat as StructuredExportFormat, ExportLineEnding, ExportManifest, ExportRecord } from './export-formats';
 import type { LocalHistoryAction, LocalHistoryEntry } from '../main/local-history';
+import type {
+  LockCreateRequest, LockRecoveryDescriptor, LockSearchRequest, LockSurfaceState,
+  LockUnlockResult, LockUpdateRequest, PreparedLockTotp,
+} from '../main/lock-service';
 
 /**
  * Shared contracts between the Electron main process, the preload bridge and the renderer.
@@ -324,6 +328,16 @@ export interface Bridge {
   authenticatorList(): Promise<AuthenticatorEntry[]>;
   authenticatorCodes(id: string): Promise<AuthenticatorCodes>;
   authenticatorRemove(id: string): Promise<boolean>;
+  lockState(surfaceId?: string): Promise<LockSurfaceState>;
+  lockPrepareTotp(label: string, account?: string): Promise<PreparedLockTotp>;
+  lockCreate(request: LockCreateRequest): Promise<LockSurfaceState>;
+  lockUpdate(lockId: string, request: LockUpdateRequest): Promise<LockSurfaceState>;
+  lockRemove(lockId: string): Promise<LockSurfaceState>;
+  lockSearch(request: LockSearchRequest): Promise<LockSurfaceState['locks']>;
+  lockUnlock(lockId: string, credential: string, surfaceId?: string): Promise<LockUnlockResult>;
+  lockRelock(lockId: string): Promise<LockSurfaceState>;
+  lockRecovery(): Promise<LockRecoveryDescriptor>;
+  lockOpenRecoveryFolder(): Promise<LockRecoveryDescriptor>;
   personalVocabularyLoad(): Promise<PersonalVocabularyState>;
   personalVocabularyUpload(payload: Uint8Array): Promise<PersonalVocabularyUploadResult>;
   personalVocabularyClear(): Promise<PersonalVocabularyState>;

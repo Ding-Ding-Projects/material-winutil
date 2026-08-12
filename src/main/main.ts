@@ -22,6 +22,7 @@ import { exportStructuredRecords } from '../shared/export-formats';
 import { buildSevenZipCommand, createArchiveListFile, createArchiveManifest } from '../shared/archive-export';
 import { detectExternalEditors, openExportInVSCode } from './external-editor';
 import { LocalHistory, LOCAL_HISTORY_ACTIONS, type JsonValue, type LocalHistoryAction } from './local-history';
+import { LockService, type LockCreateRequest, type LockSearchRequest, type LockUpdateRequest } from './lock-service';
 
 const ROOT = path.join(__dirname, '..', '..');
 const CONFIG_DIR = path.join(__dirname, '..', 'config');
@@ -39,6 +40,7 @@ let authenticatorService: AuthenticatorService | null = null;
 let personalVocabularyStore: PersonalVocabularyStore | null = null;
 let settingsSurfaceService: SettingsSurfaceService | null = null;
 let localHistoryService: LocalHistory | null = null;
+let lockService: LockService | null = null;
 let lastExportPath = '';
 let historyUnlockedUntil = 0;
 const HISTORY_CREDENTIAL_TARGET = 'history-manager-primary';
@@ -760,6 +762,57 @@ function authenticator(): AuthenticatorService {
   return authenticatorService;
 }
 
+function locks(): LockService {
+  if (!lockService) throw new Error('The lock service is unavailable.');
+  return lockService;
+}
+
+ipcMain.handle('locks:state', async (event, surfaceId?: string) => {
+  requireTrustedSender(event);
+  return locks().state(surfaceId);
+});
+ipcMain.handle('locks:prepare-totp', async (event, label: string, account?: string) => {
+  requireTrustedSender(event);
+  return locks().prepareTotp(label, account);
+});
+ipcMain.handle('locks:create', async (event, request: LockCreateRequest) => {
+  requireTrustedSender(event);
+  await locks().create(request);
+  return locks().state();
+});
+ipcMain.handle('locks:update', async (event, lockId: string, request: LockUpdateRequest) => {
+  requireTrustedSender(event);
+  await locks().update(lockId, request);
+  return locks().state();
+});
+ipcMain.handle('locks:remove', async (event, lockId: string) => {
+  requireTrustedSender(event);
+  await locks().remove(lockId);
+  return locks().state();
+});
+ipcMain.handle('locks:search', async (event, request: LockSearchRequest) => {
+  requireTrustedSender(event);
+  return locks().search(request);
+});
+ipcMain.handle('locks:unlock', async (event, lockId: string, credential: string, surfaceId?: string) => {
+  requireTrustedSender(event);
+  return locks().unlock(lockId, credential, surfaceId);
+});
+ipcMain.handle('locks:relock', async (event, lockId: string) => {
+  requireTrustedSender(event);
+  await locks().relock(lockId);
+  return locks().state();
+});
+ipcMain.handle('locks:recovery', (event) => {
+  requireTrustedSender(event);
+  return locks().recovery();
+});
+ipcMain.handle('locks:open-recovery-folder', async (event) => {
+  requireTrustedSender(event);
+  await locks().openRecoveryFolder();
+  return locks().recovery();
+});
+
 ipcMain.handle('authenticator:begin', async (event, request: AuthenticatorBeginRequest): Promise<AuthenticatorRegistration> => {
   requireTrustedSender(event);
   return authenticator().begin(request);
@@ -846,6 +899,8 @@ app.whenReady().then(async () => {
     userDataDirectory: USER_DIR(), sharedAppDataDirectory: sharedAppDataDirectory(),
     vault: { write: writeCredential, read: readCredential, delete: deleteCredential },
   });
+  lockService = new LockService({ appDataDirectory: USER_DIR() });
+  await lockService.initialize();
   const initialSettings = await settingsSurfaceService.initialize(defaultSchoolPreferences(persistedPreferences));
   createWindow();
   win?.setTitle(initialSettings.displayName.displayName);
@@ -856,6 +911,6 @@ app.on('accessibility-support-changed', (_event, enabled) => {
   if (currentNarratorPreferences) narratorRuntime.configure(effectiveNarratorPreferences(currentNarratorPreferences), enabled);
   win?.webContents.send('narration:state', narrationState());
 });
-app.on('before-quit', () => { settingsSurfaceService?.close(); narrationTransport.stop(); void narratorRuntime.stop(); });
+app.on('before-quit', () => { lockService?.closeApp(); settingsSurfaceService?.close(); narrationTransport.stop(); void narratorRuntime.stop(); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

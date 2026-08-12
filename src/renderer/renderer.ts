@@ -30,6 +30,15 @@ type TotpAlgorithm = 'SHA1' | 'SHA256' | 'SHA512';
 interface AuthenticatorEntry { id: string; label: string; account: string; issuer?: string; algorithm: TotpAlgorithm; digits: number; period: number; createdAt: string; }
 interface AuthenticatorRegistration { registrationId: string; entry: AuthenticatorEntry; manualSecret: string; uri: string; qrDataUrl: string; imported: boolean; expiresAt: string; }
 interface AuthenticatorCodes { id: string; current: string; next: string; secondsRemaining: number; period: number; digits: number; }
+type LockTargetKind = 'tab' | 'group' | 'appearance-property';
+type LockDuration = { kind: 'surface' | 'until-close'; minutes: null } | { kind: 'minutes'; minutes: number };
+interface LockPublicRecord { id: string; target: { kind: LockTargetKind; id: string }; label: string; credential: { method: 'password-hash' | 'totp'; revision: number }; unlockDuration: LockDuration; lockedOnLaunch: true; }
+interface LockSurfaceEntry { record: LockPublicRecord; locked: boolean; }
+interface LockSurfaceState { generation: number; appDataFolder: string; locks: readonly LockSurfaceEntry[]; }
+interface LockRecovery { appDataFolder: string; disclosure: string; resetInstruction: string; copyText: string; action: 'open-folder-only'; deletesData: false; }
+interface PreparedLockTotp { manualSecret: string; uri: string; qrDataUrl: string; }
+interface LockCreateRequest { target: { kind: LockTargetKind; id: string }; label: string; credential: { method: 'password'; credential: string; confirmationCode?: string } | { method: 'totp'; credential: string; confirmationCode?: string }; unlockDuration: LockDuration; }
+interface LockUnlockResult { ok: boolean; code: 'unlocked' | 'credential-rejected' | 'credential-unavailable' | 'rate-limited'; retryAtMs: number | null; }
 type DialogEmojiCategory = 'information' | 'success' | 'warning' | 'error' | 'destructive' | 'security';
 interface SettingsSurfaceState {
   displayName: { schemaVersion: 1; displayName: string };
@@ -93,6 +102,16 @@ interface Bridge {
   authenticatorList(): Promise<AuthenticatorEntry[]>;
   authenticatorCodes(id: string): Promise<AuthenticatorCodes>;
   authenticatorRemove(id: string): Promise<boolean>;
+  lockState(surfaceId?: string): Promise<LockSurfaceState>;
+  lockPrepareTotp(label: string, account?: string): Promise<PreparedLockTotp>;
+  lockCreate(request: LockCreateRequest): Promise<LockSurfaceState>;
+  lockUpdate(lockId: string, request: { label?: string; credential?: LockCreateRequest['credential']; unlockDuration?: LockDuration }): Promise<LockSurfaceState>;
+  lockRemove(lockId: string): Promise<LockSurfaceState>;
+  lockSearch(request: { query?: string; regex?: { source: string; flags: string }; surfaceId?: string }): Promise<readonly LockSurfaceEntry[]>;
+  lockUnlock(lockId: string, credential: string, surfaceId?: string): Promise<LockUnlockResult>;
+  lockRelock(lockId: string): Promise<LockSurfaceState>;
+  lockRecovery(): Promise<LockRecovery>;
+  lockOpenRecoveryFolder(): Promise<LockRecovery>;
   personalVocabularyLoad(): Promise<PersonalVocabularyState>;
   personalVocabularyUpload(payload: Uint8Array): Promise<PersonalVocabularyUploadResult>;
   personalVocabularyClear(): Promise<PersonalVocabularyState>;
@@ -554,6 +573,17 @@ const state = {
     fixtureMode: false,
     draft: { issuer: 'Material System Utility', account: '', label: '', algorithm: 'SHA1' as TotpAlgorithm, digits: 6, period: 30, uri: '', code: '' },
   },
+  locks: {
+    data: { generation: 0, appDataFolder: '', locks: [] } as LockSurfaceState,
+    loading: false, error: '', phase: 'list' as 'list' | 'set' | 'unlock' | 'recovery' | 'support',
+    target: { kind: 'appearance-property' as LockTargetKind, id: 'app-root', label: 'Application root' },
+    selectedId: '', credential: '', confirmCredential: '', totpCode: '', method: 'password' as 'password' | 'totp',
+    duration: 'surface' as 'surface' | 'minutes' | 'until-close', minutes: 15,
+    recovery: null as LockRecovery | null,
+    preparedTotp: null as PreparedLockTotp | null, revealTotpSecret: false,
+    tickets: [] as Array<{ id: string; category: string; description: string; status: string; createdAt: string }>,
+    ticketCategory: 'Forgotten lock credential', ticketDescription: '',
+  },
   vocabulary: {
     data: { state: 'empty', entryCount: 0, mappings: {} } as PersonalVocabularyState,
     status: 'empty' as 'empty' | 'loaded' | 'invalid', loading: false,
@@ -925,6 +955,24 @@ function bridge(): Bridge {
     authenticatorList: async () => [],
     authenticatorCodes: async () => { throw new Error('Authenticator codes are available only in the installed application.'); },
     authenticatorRemove: async () => false,
+    lockState: async () => state.locks.data,
+    lockPrepareTotp: async () => { throw new Error('Local TOTP preparation is available only in the installed application.'); },
+    lockCreate: async (request) => {
+      const id = `preview-${request.target.kind}-${request.target.id}`.replace(/[^A-Za-z0-9._:/-]/gu, '-');
+      const record: LockPublicRecord = { id, target: request.target, label: request.label, credential: { method: request.credential.method === 'password' ? 'password-hash' : 'totp', revision: 1 }, unlockDuration: request.unlockDuration, lockedOnLaunch: true };
+      state.locks.data = { ...state.locks.data, generation: state.locks.data.generation + 1, locks: [...state.locks.data.locks, { record, locked: true }] };
+      return state.locks.data;
+    },
+    lockUpdate: async () => state.locks.data,
+    lockRemove: async (lockId) => {
+      state.locks.data = { ...state.locks.data, generation: state.locks.data.generation + 1, locks: state.locks.data.locks.filter((entry) => entry.record.id !== lockId) };
+      return state.locks.data;
+    },
+    lockSearch: async () => state.locks.data.locks,
+    lockUnlock: async () => ({ ok: false, code: 'credential-unavailable', retryAtMs: null }),
+    lockRelock: async () => state.locks.data,
+    lockRecovery: async () => ({ appDataFolder: 'Application data is available only in the installed app.', disclosure: 'This is a user-experience lock, not a security boundary.', resetInstruction: 'Close the installed app and delete its application-data folder yourself to reset locks.', copyText: 'Preview mode does not open a folder.', action: 'open-folder-only', deletesData: false }),
+    lockOpenRecoveryFolder: async () => fake.lockRecovery(),
     personalVocabularyLoad: async () => ({ state: 'empty', entryCount: 0, mappings: {} }),
     personalVocabularyUpload: async () => ({ ok: false, code: 'invalid-schema', message: 'Personal vocabulary data is invalid.' }),
     personalVocabularyClear: async () => ({ state: 'empty', entryCount: 0, mappings: {} }),
@@ -1288,7 +1336,7 @@ function tabStrip(): HTMLElement {
       { icon: 'tab_group', label: 'Open the tab manager', act: () => openDialog('tabs') },
       { icon: 'filter_alt_off', label: 'Close tabs not containing text…', act: () => openDialog('tabs') },
       { icon: 'push_pin', label: 'Unpin every tab', act: () => state.tabs.forEach((tb) => { tb.pinned = false; }) },
-      { icon: 'lock', label: 'Locks are unavailable in this build', act: () => openDialog('lock') },
+      { icon: 'lock', label: 'Manage local locks…', act: () => { state.locks.phase = 'list'; openDialog('lock'); } },
       { icon: 'palette', label: 'Edit the tab strip appearance…', act: () => openAppearance('tabstrip', 'Tab strip') },
       { section: 'Docking' },
       ...(['left', 'right', 'top', 'bottom'] as TabDock[]).map((dock) => ({
@@ -2405,7 +2453,7 @@ function tabMenu(tab: WorkspaceTab, x: number, y: number): void {
   contextMenu(`tab-${tab.id}`, x, y, [
     { section: 'This tab' },
     { icon: tab.pinned ? 'keep_off' : 'push_pin', label: tab.pinned ? 'Unpin tab' : 'Pin tab', act: () => { tab.pinned = !tab.pinned; } },
-    { icon: 'lock', label: 'Locks are unavailable in this build', act: () => openDialog('lock') },
+    { icon: 'lock', label: tab.locked ? 'Unlock this tab…' : 'Lock this tab…', act: () => openLockWizard(`tab-${tab.id}`, `Tab · ${viewTitle(tab.view)}`, tab.locked ? 'unlock' : 'set') },
     { icon: 'content_copy', label: 'Duplicate tab', act: () => { state.tabs = [...state.tabs, { ...tab, id: `t-${Date.now()}`, pinned: false }]; } },
     { section: 'Groups' },
     { icon: 'drive_file_move', label: tab.group ? `Move out of ${tab.group}` : `Move into ${state.selectedGroup}`, act: () => moveTabToGroup(tab, tab.group ? null : state.selectedGroup) },
@@ -2431,7 +2479,7 @@ function previewTabClose(inverse: boolean): void {
     .filter((t) => (state.tabIncludePinned || !t.pinned) && !t.locked)
     .filter((t) => (inverse ? !validation.match(VIEW_META[t.view].title) : validation.match(VIEW_META[t.view].title)))
     .map((t) => t.id);
-  if (!state.tabClosePreview.length) snack('No closable tab matches this preview. Pinned and unavailable locked tabs stay excluded.');
+  if (!state.tabClosePreview.length) snack('No closable tab matches this preview. Pinned and locked tabs stay excluded.');
   render();
 }
 
@@ -2444,6 +2492,7 @@ function openDialog(id: DialogId, arg = ''): void {
   state.dialogSearch.text = '';
   render();
   if (id === 'auth') void loadAuthenticatorEntries();
+  if (id === 'lock') void refreshLocks();
   window.setTimeout(() => {
     const firstInput = $<HTMLInputElement>('.dialog input');
     const dialog = $<HTMLElement>('.dialog');
@@ -2899,7 +2948,7 @@ function tabsDialog(): HTMLElement {
           class: 'icon-btn', title: tab.group === state.selectedGroup ? 'Move out of the selected group' : 'Move into the selected group',
           onclick: () => moveTabToGroup(tab, tab.group === state.selectedGroup ? null : state.selectedGroup),
         }, icon('drive_file_move')),
-        h('button', { class: 'icon-btn', title: 'Locks are unavailable in this build', onclick: () => openDialog('lock') }, icon('lock')),
+        h('button', { class: 'icon-btn', title: tab.locked ? 'Unlock this tab' : 'Lock this tab', onclick: () => openLockWizard(`tab-${tab.id}`, `Tab · ${VIEW_META[tab.view].title}`, tab.locked ? 'unlock' : 'set') }, icon(tab.locked ? 'lock_open' : 'lock')),
         h('button', { class: 'icon-btn', title: 'Close tab', onclick: () => closeTab(tab.id) }, icon('close')))))
     : [emptyState('No workspace tab matches all active tab-manager filters.')]));
 
@@ -3012,15 +3061,262 @@ function appearanceDialog(): HTMLElement {
   ]);
 }
 
+function lockTarget(id: string, label: string): { kind: LockTargetKind; id: string; label: string } {
+  if (id.startsWith('tab-')) return { kind: 'tab', id: id.slice(4), label };
+  if (id.startsWith('group-')) return { kind: 'group', id: id.slice(6), label };
+  return { kind: 'appearance-property', id: id.replace(/[^A-Za-z0-9._:/-]/gu, '-').slice(0, 128), label };
+}
+
+function syncWorkspaceLockState(): void {
+  const lockedTabs = new Set(state.locks.data.locks
+    .filter((entry) => entry.locked && entry.record.target.kind === 'tab')
+    .map((entry) => entry.record.target.id));
+  let changed = false;
+  state.tabs.forEach((tab) => {
+    const next = lockedTabs.has(tab.id);
+    if (tab.locked !== next) { tab.locked = next; changed = true; }
+  });
+  if (changed) persistWorkspace();
+}
+
+async function refreshLocks(): Promise<void> {
+  state.locks.loading = true;
+  try {
+    state.locks.data = await bridge().lockState('main');
+    state.locks.error = '';
+    syncWorkspaceLockState();
+  } catch (error) {
+    state.locks.error = error instanceof Error ? error.message : 'Locks could not be loaded.';
+  } finally {
+    state.locks.loading = false;
+    render();
+  }
+}
+
+function resetLockDraft(): void {
+  state.locks.credential = '';
+  state.locks.confirmCredential = '';
+  state.locks.totpCode = '';
+  state.locks.preparedTotp = null;
+  state.locks.revealTotpSecret = false;
+  state.locks.error = '';
+}
+
+async function prepareCurrentLockTotp(): Promise<void> {
+  const lock = state.locks;
+  lock.loading = true; lock.error = ''; render();
+  try {
+    lock.preparedTotp = await bridge().lockPrepareTotp(lock.target.label, lock.target.id);
+    lock.credential = lock.preparedTotp.manualSecret;
+    lock.confirmCredential = lock.preparedTotp.manualSecret;
+    lock.revealTotpSecret = false;
+  } catch (error) { lock.error = error instanceof Error ? error.message : 'The local TOTP registration could not be prepared.'; }
+  finally { lock.loading = false; render(); }
+}
+
+async function createCurrentLock(): Promise<void> {
+  const draft = state.locks;
+  if (!draft.credential || draft.credential !== draft.confirmCredential) {
+    draft.error = draft.method === 'password' ? 'Enter the same password in both fields.' : 'Enter the same Base32 secret in both fields.';
+    render(); return;
+  }
+  if (draft.method === 'totp' && !/^\d{6,8}$/u.test(draft.totpCode)) {
+    draft.error = 'Confirm the TOTP pairing with the current 6–8 digit code.';
+    render(); return;
+  }
+  draft.loading = true; draft.error = ''; render();
+  try {
+    const unlockDuration: LockDuration = draft.duration === 'minutes'
+      ? { kind: 'minutes', minutes: draft.minutes }
+      : { kind: draft.duration, minutes: null };
+    state.locks.data = await bridge().lockCreate({
+      target: { kind: draft.target.kind, id: draft.target.id }, label: draft.target.label,
+      credential: { method: draft.method, credential: draft.credential, ...(draft.method === 'totp' ? { confirmationCode: draft.totpCode } : {}) },
+      unlockDuration,
+    });
+    syncWorkspaceLockState();
+    resetLockDraft();
+    draft.phase = 'list';
+    snack(`Locked ${draft.target.label}. This is a for-fun speed bump, not security.`);
+  } catch (error) { draft.error = error instanceof Error ? error.message : 'The lock was not created.'; }
+  finally { draft.loading = false; render(); }
+}
+
+async function unlockCurrentLock(): Promise<void> {
+  const draft = state.locks;
+  if (!draft.selectedId || !draft.credential) { draft.error = 'Enter this lock’s credential.'; render(); return; }
+  draft.loading = true; draft.error = ''; render();
+  try {
+    const result = await bridge().lockUnlock(draft.selectedId, draft.credential, 'main');
+    draft.credential = '';
+    if (!result.ok) {
+      draft.error = result.code === 'credential-rejected' ? 'The value did not match. Nothing was changed.'
+        : result.code === 'rate-limited' ? `Too many attempts. Try again after ${new Date(result.retryAtMs ?? Date.now()).toLocaleTimeString()}.`
+          : 'The operating-system credential vault is unavailable.';
+    } else {
+      state.locks.data = await bridge().lockState('main');
+      syncWorkspaceLockState();
+      draft.phase = 'list';
+      snack('Lock opened for the selected duration. Use Lock again to end it early.');
+    }
+  } catch (error) { draft.error = error instanceof Error ? error.message : 'The lock could not be opened.'; }
+  finally { draft.loading = false; render(); }
+}
+
+async function relock(lockId: string): Promise<void> {
+  state.locks.data = await bridge().lockRelock(lockId);
+  syncWorkspaceLockState();
+  render();
+  snack('Locked again.');
+}
+
+async function removeLock(lockId: string): Promise<void> {
+  try {
+    state.locks.data = await bridge().lockRemove(lockId);
+    syncWorkspaceLockState();
+    state.locks.phase = 'list';
+    render();
+    snack('The lock and its independent vault credential were removed.');
+  } catch (error) { state.locks.error = error instanceof Error ? error.message : 'The lock was not removed.'; render(); }
+}
+
+async function loadLockRecovery(phase: 'recovery' | 'support'): Promise<void> {
+  state.locks.phase = phase;
+  state.locks.error = '';
+  try { state.locks.recovery = await bridge().lockRecovery(); }
+  catch (error) { state.locks.error = error instanceof Error ? error.message : 'Recovery details are unavailable.'; }
+  render();
+}
+
+function supportTicketSurface(): HTMLElement[] {
+  const lock = state.locks;
+  const search = sq('lock-support-tickets');
+  const match = makeMatcher(search);
+  const tickets = lock.tickets.filter((ticket) => match(`${ticket.id} ${ticket.category} ${ticket.description} ${ticket.status}`));
+  const createTicket = (): void => {
+    const description = lock.ticketDescription.trim();
+    if (!description) { lock.error = 'Describe what happened before creating the local ticket.'; render(); return; }
+    const ticket = { id: `LOCAL-${String(Date.now()).slice(-8)}`, category: lock.ticketCategory, description: description.slice(0, 1000), status: 'Resolved: open the application-data folder and delete it yourself', createdAt: new Date().toISOString() };
+    lock.tickets = [ticket, ...lock.tickets];
+    lock.ticketDescription = '';
+    try { localStorage.setItem('material-system-utility.support-tickets.v1', JSON.stringify(lock.tickets)); } catch { /* retain live tickets */ }
+    snack(`Local ticket ${ticket.id} created. Nobody was paged; the filing cabinet remains dramatically local.`);
+    render();
+  };
+  return [
+    h('div', { class: 'notice lock-disclosure', role: 'note' }, 'Nothing is sent anywhere. No ticket exists outside this machine, no network request is made, no data is collected, and nobody is reading it.'),
+    searchLine('lock-support-tickets', 'Search local ticket number, category, description, or status'),
+    h('div', { class: 'grid2' },
+      selectField('Ticket category', ['Forgotten lock credential', 'Lost authenticator', 'Vault unavailable', 'Other local melodrama'], lock.ticketCategory, (value) => { lock.ticketCategory = value; }),
+      h('label', { class: 'field' }, 'DESCRIPTION', h('textarea', { maxlength: '1000', rows: '4', value: lock.ticketDescription, oninput: (event: Event) => { lock.ticketDescription = (event.target as HTMLTextAreaElement).value; } }))),
+    h('button', { class: 'btn filled', onclick: createTicket }, 'Create local ticket'),
+    h('div', { class: 'listbox lock-ticket-list', 'aria-label': 'Local support tickets' }, ...(tickets.length ? tickets.map((ticket) =>
+      h('div', { class: 'row' }, h('span', { class: 'lead' }, icon('fact_check')), h('span', { class: 'primary' }, ticket.id), h('span', { class: 'snippet' }, `${ticket.category} · ${ticket.status}`))) : [emptyState('No local ticket matches this search.')])),
+  ];
+}
+
 function lockDialog(): HTMLElement {
-  return dialogShell('Not installed in this build', 'Locks', [
-    emptyState('Element and tab locks are unavailable until credential-vault storage, standards-compliant TOTP, recovery, and accessibility verification are complete.'),
-  ], [h('button', { class: 'btn filled', onclick: closeDialog }, 'Close')]);
+  const lock = state.locks;
+  if (lock.phase === 'support') {
+    return dialogShell('Entirely local fictional support desk', 'Support Tickets', supportTicketSurface(), [
+      h('button', { class: 'btn text', onclick: () => { lock.phase = 'recovery'; render(); } }, 'Back'),
+      h('button', { class: 'btn tonal', onclick: async () => { try { await bridge().lockOpenRecoveryFolder(); snack('Opened the application-data folder. The app did not delete anything.'); } catch (error) { lock.error = error instanceof Error ? error.message : 'The folder could not be opened.'; render(); } } }, 'Open application-data folder'),
+      h('button', { class: 'btn filled', onclick: closeDialog }, 'Close'),
+    ], true);
+  }
+  if (lock.phase === 'recovery') {
+    const recovery = lock.recovery;
+    return dialogShell('Self-service recovery', 'Forgotten your credential?', [
+      h('div', { class: 'notice lock-disclosure', role: 'note' }, recovery?.disclosure ?? 'This is a user-experience lock, not a security boundary.'),
+      h('p', {}, recovery?.resetInstruction ?? 'Loading the exact application-data folder…'),
+      recovery ? h('pre', { class: 'block lock-folder-path' }, recovery.appDataFolder) : null,
+      h('p', {}, 'The app only opens this folder. It never deletes anything for you.'),
+      lock.error ? h('div', { class: 'feedback error' }, lock.error) : null,
+    ], [
+      h('button', { class: 'btn text', onclick: () => { lock.phase = 'list'; render(); } }, 'Back to locks'),
+      h('button', { class: 'btn outlined', onclick: () => { void navigator.clipboard?.writeText(recovery?.appDataFolder ?? ''); snack('Application-data folder path copied.'); } }, 'Copy path'),
+      h('button', { class: 'btn tonal', onclick: () => { void loadLockRecovery('support'); } }, 'Support Tickets'),
+      h('button', { class: 'btn filled', onclick: async () => { try { await bridge().lockOpenRecoveryFolder(); snack('Opened the application-data folder. The app did not delete anything.'); } catch (error) { lock.error = error instanceof Error ? error.message : 'The folder could not be opened.'; render(); } } }, 'Open folder'),
+    ], true);
+  }
+  if (lock.phase === 'set') {
+    const existing = lock.data.locks.find((entry) => entry.record.target.kind === lock.target.kind && entry.record.target.id === lock.target.id);
+    if (existing) { lock.selectedId = existing.record.id; lock.phase = existing.locked ? 'unlock' : 'list'; return lockDialog(); }
+    return dialogShell('Independent local credential', `Lock ${lock.target.label}`, [
+      h('div', { class: 'notice lock-disclosure', role: 'note' }, 'This is a user-experience lock, not a security boundary. Deleting the application-data folder resets it.'),
+      h('p', {}, `Target: ${lock.target.kind} · ${lock.target.id}. This credential belongs only to this target; there is no master unlock or inheritance.`),
+      h('div', { class: 'grid2' },
+        selectField('Lock method', ['Password', 'TOTP'], lock.method === 'password' ? 'Password' : 'TOTP', (value) => { lock.method = value === 'TOTP' ? 'totp' : 'password'; resetLockDraft(); render(); }),
+        selectField('Unlock duration', ['This surface', '15 minutes', 'Until app closes'], lock.duration === 'surface' ? 'This surface' : lock.duration === 'minutes' ? '15 minutes' : 'Until app closes', (value) => { lock.duration = value === 'This surface' ? 'surface' : value === '15 minutes' ? 'minutes' : 'until-close'; })),
+      lock.method === 'totp' && !lock.preparedTotp ? h('div', { class: 'notice' },
+        h('p', {}, 'Generate a fresh TOTP registration locally. The QR and one-time manual secret stay in this dialog and nothing is sent over the network.'),
+        h('button', { class: 'btn tonal', disabled: lock.loading, onclick: () => void prepareCurrentLockTotp() }, lock.loading ? 'Preparing…' : 'Generate local QR registration')) : null,
+      lock.method === 'totp' && lock.preparedTotp ? h('div', { class: 'auth-registration lock-totp-registration' },
+        h('img', { class: 'auth-qr', src: lock.preparedTotp.qrDataUrl, alt: `QR code for lock ${lock.target.label}, account ${lock.target.id}` }),
+        h('div', { class: 'auth-registration-details' },
+          h('h3', {}, lock.target.label),
+          h('p', {}, 'SHA1 · 6 digits · 30 seconds · local only'),
+          h('button', { class: 'btn outlined', 'aria-expanded': lock.revealTotpSecret ? 'true' : 'false', onclick: () => { lock.revealTotpSecret = !lock.revealTotpSecret; render(); } }, lock.revealTotpSecret ? 'Hide manual secret' : 'Reveal manual secret'),
+          lock.revealTotpSecret ? h('div', { class: 'auth-secret' }, h('code', {}, lock.preparedTotp.manualSecret.replace(/(.{4})/gu, '$1 ').trim()), h('button', { class: 'btn tonal', onclick: () => { void navigator.clipboard?.writeText(lock.preparedTotp?.manualSecret ?? ''); snack('One-time manual secret copied.'); } }, 'Copy manual secret')) : null)) : null,
+      lock.method === 'password' ? h('div', { class: 'grid2' },
+        h('label', { class: 'field' }, lock.method === 'password' ? 'PASSWORD' : 'BASE32 TOTP SECRET', h('input', { class: 'mono', type: 'password', maxlength: lock.method === 'password' ? '256' : '4096', value: lock.credential, autocomplete: 'new-password', oninput: (event: Event) => { lock.credential = (event.target as HTMLInputElement).value; } })),
+        h('label', { class: 'field' }, 'CONFIRM PASSWORD', h('input', { class: 'mono', type: 'password', maxlength: '256', value: lock.confirmCredential, autocomplete: 'new-password', oninput: (event: Event) => { lock.confirmCredential = (event.target as HTMLInputElement).value; } }))) : null,
+      lock.method === 'totp' ? h('label', { class: 'field' }, 'CURRENT TOTP CODE — PAIRING CONFIRMATION', h('input', { class: 'mono', inputmode: 'numeric', pattern: '[0-9]*', maxlength: '8', value: lock.totpCode, oninput: (event: Event) => { lock.totpCode = (event.target as HTMLInputElement).value.replace(/\D/gu, '').slice(0, 8); } })) : null,
+      lock.error ? h('div', { class: 'feedback error', role: 'alert' }, lock.error) : null,
+    ], [
+      h('button', { class: 'btn text', onclick: () => { resetLockDraft(); lock.phase = 'list'; render(); } }, 'Cancel'),
+      h('button', { class: 'btn tonal', onclick: () => { void loadLockRecovery('recovery'); } }, 'Forgotten your credential?'),
+      h('button', { class: 'btn filled', disabled: lock.loading, onclick: () => void createCurrentLock() }, lock.loading ? 'Creating…' : 'Create lock'),
+    ], true);
+  }
+  if (lock.phase === 'unlock') {
+    const entry = lock.data.locks.find((candidate) => candidate.record.id === lock.selectedId);
+    if (!entry) { lock.phase = 'list'; return lockDialog(); }
+    return dialogShell('Local verification', `Unlock ${entry.record.label}`, [
+      h('div', { class: 'notice lock-disclosure', role: 'note' }, 'This is a user-experience lock, not a security boundary.'),
+      h('p', {}, `${entry.record.credential.method === 'totp' ? 'Enter the current TOTP code.' : 'Enter this lock’s password.'} Wrong attempts are rate-limited and never delete content.`),
+      h('label', { class: 'field' }, entry.record.credential.method === 'totp' ? 'CURRENT CODE' : 'PASSWORD', h('input', { class: 'mono', type: 'password', maxlength: '256', value: lock.credential, autocomplete: 'current-password', oninput: (event: Event) => { lock.credential = (event.target as HTMLInputElement).value; } })),
+      lock.error ? h('div', { class: 'feedback error', role: 'alert' }, lock.error) : null,
+    ], [
+      h('button', { class: 'btn text', onclick: () => { resetLockDraft(); lock.phase = 'list'; render(); } }, 'Cancel'),
+      h('button', { class: 'btn tonal', onclick: () => { void loadLockRecovery('recovery'); } }, 'Forgotten your credential?'),
+      h('button', { class: 'btn filled', disabled: lock.loading, onclick: () => void unlockCurrentLock() }, lock.loading ? 'Checking…' : 'Unlock'),
+    ]);
+  }
+
+  const query = sq('locks');
+  const match = makeMatcher(query);
+  const entries = lock.data.locks.filter((entry) => match(`${entry.record.label} ${entry.record.target.kind} ${entry.record.target.id} ${entry.locked ? 'locked' : 'unlocked'}`));
+  return dialogShell('For-fun local speed bumps', 'Locks', [
+    h('div', { class: 'notice lock-disclosure', role: 'note' }, 'This is a user-experience lock, not a security boundary. Every lock has its own credential in the operating-system vault.'),
+    searchLine('locks', 'Search lock label, target, or state'),
+    lock.loading ? h('div', { class: 'auth-state', role: 'status' }, 'Loading locks…') : null,
+    lock.error ? h('div', { class: 'feedback error', role: 'alert' }, lock.error) : null,
+    h('div', { class: 'listbox lock-list', 'aria-label': 'Filtered local locks' }, ...(entries.length ? entries.map((entry) =>
+      h('div', { class: 'row lock-manager-row' },
+        h('span', { class: 'lead' }, icon(entry.locked ? 'lock' : 'lock_open')),
+        h('span', { class: 'primary' }, entry.record.label),
+        h('span', { class: 'snippet' }, `${entry.record.target.kind} · ${entry.record.target.id} · ${entry.record.credential.method === 'totp' ? 'TOTP' : 'Password'} · ${entry.locked ? 'Locked' : 'Unlocked'}`),
+        h('span', { class: 'row-actions' },
+          entry.locked ? h('button', { class: 'btn tonal', onclick: () => { lock.selectedId = entry.record.id; lock.phase = 'unlock'; resetLockDraft(); render(); } }, 'Unlock')
+            : h('button', { class: 'btn tonal', onclick: () => void relock(entry.record.id) }, 'Lock again'),
+          h('button', { class: 'icon-btn', title: `Remove ${entry.record.label}`, onclick: () => gate(`Remove lock “${entry.record.label}” and its independent vault credential`, undefined, undefined, () => { void removeLock(entry.record.id); }) }, icon('delete')))))
+      : [emptyState(query.text ? 'No lock matches this search.' : 'No locks yet. Open a tab or element menu and choose its Lock action.')])),
+  ], [
+    h('button', { class: 'btn text', onclick: closeDialog }, 'Close'),
+    h('button', { class: 'btn outlined', onclick: () => { void refreshLocks(); } }, 'Refresh'),
+    h('button', { class: 'btn tonal', onclick: () => { void loadLockRecovery('recovery'); } }, 'Recovery and Support Tickets'),
+  ], true);
 }
 
 function openLockWizard(id: string, label: string, mode: 'set' | 'unlock' = 'set'): void {
-  state.dialogArg = `${id}:${label}:${mode}`;
+  state.locks.target = lockTarget(id, label);
+  const existing = state.locks.data.locks.find((entry) => entry.record.target.kind === state.locks.target.kind && entry.record.target.id === state.locks.target.id);
+  state.locks.selectedId = existing?.record.id ?? '';
+  state.locks.phase = existing ? (existing.locked || mode === 'unlock' ? 'unlock' : 'list') : 'set';
+  resetLockDraft();
   openDialog('lock');
+  void refreshLocks();
 }
 
 const AUTH_COPY = {
@@ -3900,6 +4196,13 @@ async function boot(): Promise<void> {
   try { state.profiles = JSON.parse(localStorage.getItem('winutil.profiles') ?? '[]'); } catch { state.profiles = []; }
   loadWorkspace();
   workspaceReady = true;
+  try {
+    state.locks.tickets = JSON.parse(localStorage.getItem('material-system-utility.support-tickets.v1') ?? '[]') as typeof state.locks.tickets;
+  } catch { state.locks.tickets = []; }
+  try {
+    state.locks.data = await bridge().lockState('main');
+    syncWorkspaceLockState();
+  } catch (error) { state.locks.error = error instanceof Error ? error.message : 'Locks could not be loaded.'; }
   bindShortcuts();
   bridge().onProgress((p) => {
     state.queue = { active: p.state !== 'done', index: p.index, total: p.total, current: p.detail || p.id, log: state.queue.log };

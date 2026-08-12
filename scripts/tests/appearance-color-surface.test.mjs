@@ -26,6 +26,7 @@ test('colour picker uses every shared representation with bounded editable input
   assert.match(renderer, /runtime\.convertColor\(parsed, 'hsl'\)/u);
   assert.match(renderer, /navigator\.clipboard\?\.writeText\(value\)/u);
   assert.match(renderer, /Copied the \$\{p\.representation\.toUpperCase\(\)\} value/u);
+  assert.match(renderer, /const fallback = '#6750A4';[\s\S]*typeof state\.selectionColor === 'string'[\s\S]*convertColor\(\{ space: 'hex', value: current \}, 'hsl'\)/u);
   assert.doesNotMatch(renderer, /function rgbTo(?:Hsv|Xyz)|function xyzTo(?:Rgb|Lab)|function oklabToRgb/u);
 });
 

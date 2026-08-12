@@ -4445,9 +4445,12 @@ function parseColorRepresentation(space: AppearanceColorSpace, input: string): A
 
 /** target: 'selection' | 'row:<id>' | 'profile:<id>' */
 function openColorPicker(target: string, label: string): void {
-  const current = target.startsWith('row:')
-    ? state.rowColors[target.slice(4)] ?? state.selectionColor
-    : state.selectionColor;
+  const fallback = '#6750A4';
+  const selectionColor = typeof state.selectionColor === 'string' && /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/iu.test(state.selectionColor)
+    ? state.selectionColor
+    : fallback;
+  const candidate = target.startsWith('row:') ? state.rowColors[target.slice(4)] : selectionColor;
+  const current = typeof candidate === 'string' && /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/iu.test(candidate) ? candidate : selectionColor;
   const converted = appearanceColorRuntime().convertColor({ space: 'hex', value: current }, 'hsl');
   const hsl = converted.value as AppearanceColorValue;
   state.picker = {

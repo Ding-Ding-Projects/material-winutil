@@ -106,6 +106,13 @@ test('capture ids are selected across only the active mode manifests', () => {
   assert.throws(() => selectCaptureManifests([app, site], ['definitely-unknown']), /definitely-unknown/iu);
 });
 
+test('targeted capture refuses to overwrite existing evidence metadata', async () => {
+  const source = await readFile(join(repo, 'scripts', 'smoke', 'capture.mjs'), 'utf8');
+  assert.match(source, /assertMetadataWillNotLoseEvidence\(manifests\)/u);
+  assert.match(source, /targeted capture would overwrite/u);
+  assert.match(source, /Use a new --capture-root or recapture every existing state/u);
+});
+
 test('each capture state is isolated in a fresh hidden-desktop session', async () => {
   const source = await readFile(join(repo, 'scripts', 'smoke', 'capture.mjs'), 'utf8');
   assert.match(source, /for \(const capture of manifest\.captures\)[\s\S]*?\{ \.\.\.manifest, captures: \[capture\] \}[\s\S]*?captureSession/gu);

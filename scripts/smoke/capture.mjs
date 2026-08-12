@@ -253,6 +253,21 @@ async function verifyOnly(manifests, commit) {
   process.stdout.write(`verified ${results.length} non-uniform, uniquely hashed PNG capture(s)\n`);
 }
 
+async function assertMetadataWillNotLoseEvidence(manifests) {
+  const metadataPath = join(captureRoot, 'metadata.json');
+  try { await access(metadataPath); }
+  catch { return; }
+  const previous = JSON.parse(await readFile(metadataPath, 'utf8'));
+  if (previous.schemaVersion !== 1 || !Array.isArray(previous.captures)) {
+    throw new Error('existing capture metadata has an unsupported schema; use a new capture root rather than overwriting it');
+  }
+  const selected = new Set(manifests.flatMap(([, manifest]) => manifest.captures.map((capture) => capture.id)));
+  const missing = previous.captures.map((capture) => capture.id).filter((id) => !selected.has(id));
+  if (missing.length) {
+    throw new Error(`targeted capture would overwrite ${missing.length} existing evidence record(s): ${missing.join(', ')}. Use a new --capture-root or recapture every existing state.`);
+  }
+}
+
 async function main() {
   const commit = await gitCommit(repo);
   let manifests = [];
@@ -260,6 +275,8 @@ async function main() {
   if (options.mode === 'site' || options.mode === 'all') manifests.push(['site', await loadManifest('site')]);
   manifests = selectCaptureManifests(manifests, options.ids);
   if (options.verifyOnly) return verifyOnly(manifests, commit);
+
+  await assertMetadataWillNotLoseEvidence(manifests);
 
   const cleanTree = await assertGitClean(repo);
   const freshness = await assertBuiltArtifactFresh(repo);

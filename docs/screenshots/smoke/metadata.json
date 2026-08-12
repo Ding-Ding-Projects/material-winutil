@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-12T17:37:17.995Z",
-  "commit": "9131e57f86a8ec09d81bc6595021f0f807d66c19",
+  "generatedAt": "2026-08-12T17:45:38.154Z",
+  "commit": "beb3386de5b4ee42bd6c0feb75cf43aa390c9142",
   "captureRoot": "docs\\screenshots\\smoke",
   "cleanTree": {
     "clean": true,
-    "commit": "9131e57f86a8ec09d81bc6595021f0f807d66c19"
+    "commit": "beb3386de5b4ee42bd6c0feb75cf43aa390c9142"
   },
   "freshness": [
     {
@@ -45,24 +45,183 @@
   },
   "captures": [
     {
-      "id": "ollama-hardware-evidence",
-      "file": "docs/screenshots/smoke/app/app-ollama-hardware-evidence-dark-en-1440x940.png",
-      "relativeFile": "smoke/app/app-ollama-hardware-evidence-dark-en-1440x940.png",
+      "id": "converter-catalog-unavailable",
+      "file": "docs/screenshots/smoke/app/app-file-converter-catalog-unavailable-dark-en-1440x940.png",
+      "relativeFile": "smoke/app/app-file-converter-catalog-unavailable-dark-en-1440x940.png",
       "surface": "desktop application",
-      "commit": "9131e57f86a8ec09d81bc6595021f0f807d66c19",
+      "commit": "beb3386de5b4ee42bd6c0feb75cf43aa390c9142",
       "executable": "Material System Utility.exe",
-      "executableSha256": "cf5178fa8ac3af08cd68305555d7be608f639b1aef7ff22dabcd1b8aee2749e0",
+      "executableSha256": "8f860d0c904ba880a6dd6d99a71cf0d29ef48041af7958857287b95535fe3ddc",
       "artifact": {
         "kind": "validated-squirrel-full-package",
         "developmentFallback": false,
-        "sourceCommit": "9131e57f86a8ec09d81bc6595021f0f807d66c19",
-        "packagePath": "MaterialSystemUtility-0.1.10701-full.nupkg",
-        "packageSha256": "1f0d6d390b4357dea1fe9f9bf1e68542fa75a7e5cf51551c9c7e5ebafc2afc0a",
+        "sourceCommit": "beb3386de5b4ee42bd6c0feb75cf43aa390c9142",
+        "packagePath": "MaterialSystemUtility-0.1.10801-full.nupkg",
+        "packageSha256": "e38fcc01998ff3ad6e5feb970871b27b05996849057a89e653b8ec5baea32cb0",
         "provenancePath": "release\\release-provenance.json",
         "signatureStatus": "NotSigned",
         "setup": "MaterialSystemUtility-Setup.exe",
         "releases": "RELEASES",
-        "fullPackage": "MaterialSystemUtility-0.1.10701-full.nupkg",
+        "fullPackage": "MaterialSystemUtility-0.1.10801-full.nupkg",
+        "packageCount": 1
+      },
+      "captureMethod": "cheap Lowlevel MCP hidden desktop + isolated loopback CDP Page.captureScreenshot",
+      "state": {
+        "view": "converter",
+        "dialog": null,
+        "theme": "dark",
+        "language": "English",
+        "density": "comfortable",
+        "audit": {
+          "ready": "complete",
+          "heading": true,
+          "active": true,
+          "dialog": true,
+          "overflow": 0,
+          "clientWidth": 1440,
+          "expectedWidth": 1440,
+          "offenders": []
+        },
+        "viewport": {
+          "width": 1440,
+          "height": 940,
+          "scale": 1
+        }
+      },
+      "png": {
+        "width": 1440,
+        "height": 940,
+        "bytes": 99602,
+        "colorType": 2,
+        "sampledColors": 32,
+        "sha256": "92d595881343849e428648800369ddacc097f9e4ac88bff28095d9a372c7322a"
+      }
+    },
+    {
+      "id": "converter-queue-empty",
+      "file": "docs/screenshots/smoke/app/app-file-converter-queue-empty-bilingual-1440x940.png",
+      "relativeFile": "smoke/app/app-file-converter-queue-empty-bilingual-1440x940.png",
+      "surface": "desktop application",
+      "commit": "beb3386de5b4ee42bd6c0feb75cf43aa390c9142",
+      "executable": "Material System Utility.exe",
+      "executableSha256": "8f860d0c904ba880a6dd6d99a71cf0d29ef48041af7958857287b95535fe3ddc",
+      "artifact": {
+        "kind": "validated-squirrel-full-package",
+        "developmentFallback": false,
+        "sourceCommit": "beb3386de5b4ee42bd6c0feb75cf43aa390c9142",
+        "packagePath": "MaterialSystemUtility-0.1.10801-full.nupkg",
+        "packageSha256": "e38fcc01998ff3ad6e5feb970871b27b05996849057a89e653b8ec5baea32cb0",
+        "provenancePath": "release\\release-provenance.json",
+        "signatureStatus": "NotSigned",
+        "setup": "MaterialSystemUtility-Setup.exe",
+        "releases": "RELEASES",
+        "fullPackage": "MaterialSystemUtility-0.1.10801-full.nupkg",
+        "packageCount": 1
+      },
+      "captureMethod": "cheap Lowlevel MCP hidden desktop + isolated loopback CDP Page.captureScreenshot",
+      "state": {
+        "view": "converter",
+        "dialog": null,
+        "theme": "dark",
+        "language": "Bilingual",
+        "density": "comfortable",
+        "audit": {
+          "ready": "complete",
+          "heading": true,
+          "active": true,
+          "dialog": true,
+          "overflow": 0,
+          "clientWidth": 1440,
+          "expectedWidth": 1440,
+          "offenders": []
+        },
+        "viewport": {
+          "width": 1440,
+          "height": 940,
+          "scale": 1
+        }
+      },
+      "png": {
+        "width": 1440,
+        "height": 940,
+        "bytes": 128368,
+        "colorType": 2,
+        "sampledColors": 32,
+        "sha256": "07efd83dff9f2c0a94959b618cc38ffcb3da6eeb9a5f0c22a9d87f47319a97de"
+      }
+    },
+    {
+      "id": "ollama-status-missing",
+      "file": "docs/screenshots/smoke/app/app-ollama-status-missing-bilingual-1440x940.png",
+      "relativeFile": "smoke/app/app-ollama-status-missing-bilingual-1440x940.png",
+      "surface": "desktop application",
+      "commit": "beb3386de5b4ee42bd6c0feb75cf43aa390c9142",
+      "executable": "Material System Utility.exe",
+      "executableSha256": "8f860d0c904ba880a6dd6d99a71cf0d29ef48041af7958857287b95535fe3ddc",
+      "artifact": {
+        "kind": "validated-squirrel-full-package",
+        "developmentFallback": false,
+        "sourceCommit": "beb3386de5b4ee42bd6c0feb75cf43aa390c9142",
+        "packagePath": "MaterialSystemUtility-0.1.10801-full.nupkg",
+        "packageSha256": "e38fcc01998ff3ad6e5feb970871b27b05996849057a89e653b8ec5baea32cb0",
+        "provenancePath": "release\\release-provenance.json",
+        "signatureStatus": "NotSigned",
+        "setup": "MaterialSystemUtility-Setup.exe",
+        "releases": "RELEASES",
+        "fullPackage": "MaterialSystemUtility-0.1.10801-full.nupkg",
+        "packageCount": 1
+      },
+      "captureMethod": "cheap Lowlevel MCP hidden desktop + isolated loopback CDP Page.captureScreenshot",
+      "state": {
+        "view": "ollama",
+        "dialog": null,
+        "theme": "dark",
+        "language": "Bilingual",
+        "density": "comfortable",
+        "audit": {
+          "ready": "complete",
+          "heading": true,
+          "active": true,
+          "dialog": true,
+          "overflow": 0,
+          "clientWidth": 1440,
+          "expectedWidth": 1440,
+          "offenders": []
+        },
+        "viewport": {
+          "width": 1440,
+          "height": 940,
+          "scale": 1
+        }
+      },
+      "png": {
+        "width": 1440,
+        "height": 940,
+        "bytes": 151108,
+        "colorType": 2,
+        "sampledColors": 32,
+        "sha256": "fca775f075315eec75e8243aa2fb009ce476010387ea132a7c8a167947dcde16"
+      }
+    },
+    {
+      "id": "ollama-hardware-evidence",
+      "file": "docs/screenshots/smoke/app/app-ollama-hardware-evidence-dark-en-1440x940.png",
+      "relativeFile": "smoke/app/app-ollama-hardware-evidence-dark-en-1440x940.png",
+      "surface": "desktop application",
+      "commit": "beb3386de5b4ee42bd6c0feb75cf43aa390c9142",
+      "executable": "Material System Utility.exe",
+      "executableSha256": "8f860d0c904ba880a6dd6d99a71cf0d29ef48041af7958857287b95535fe3ddc",
+      "artifact": {
+        "kind": "validated-squirrel-full-package",
+        "developmentFallback": false,
+        "sourceCommit": "beb3386de5b4ee42bd6c0feb75cf43aa390c9142",
+        "packagePath": "MaterialSystemUtility-0.1.10801-full.nupkg",
+        "packageSha256": "e38fcc01998ff3ad6e5feb970871b27b05996849057a89e653b8ec5baea32cb0",
+        "provenancePath": "release\\release-provenance.json",
+        "signatureStatus": "NotSigned",
+        "setup": "MaterialSystemUtility-Setup.exe",
+        "releases": "RELEASES",
+        "fullPackage": "MaterialSystemUtility-0.1.10801-full.nupkg",
         "packageCount": 1
       },
       "captureMethod": "cheap Lowlevel MCP hidden desktop + isolated loopback CDP Page.captureScreenshot",
@@ -91,10 +250,275 @@
       "png": {
         "width": 1440,
         "height": 940,
-        "bytes": 103173,
+        "bytes": 103288,
         "colorType": 2,
         "sampledColors": 32,
-        "sha256": "718a4aabbfac6607c9fb789d475ff0bef157a4731dc0e614da98da51767a88a8"
+        "sha256": "fb06297a839087a1133e7893731fad2ada35fabb462641dd2779ea4645d06ee5"
+      }
+    },
+    {
+      "id": "ollama-store-unavailable",
+      "file": "docs/screenshots/smoke/app/app-ollama-model-store-unavailable-dark-en-1440x940.png",
+      "relativeFile": "smoke/app/app-ollama-model-store-unavailable-dark-en-1440x940.png",
+      "surface": "desktop application",
+      "commit": "beb3386de5b4ee42bd6c0feb75cf43aa390c9142",
+      "executable": "Material System Utility.exe",
+      "executableSha256": "8f860d0c904ba880a6dd6d99a71cf0d29ef48041af7958857287b95535fe3ddc",
+      "artifact": {
+        "kind": "validated-squirrel-full-package",
+        "developmentFallback": false,
+        "sourceCommit": "beb3386de5b4ee42bd6c0feb75cf43aa390c9142",
+        "packagePath": "MaterialSystemUtility-0.1.10801-full.nupkg",
+        "packageSha256": "e38fcc01998ff3ad6e5feb970871b27b05996849057a89e653b8ec5baea32cb0",
+        "provenancePath": "release\\release-provenance.json",
+        "signatureStatus": "NotSigned",
+        "setup": "MaterialSystemUtility-Setup.exe",
+        "releases": "RELEASES",
+        "fullPackage": "MaterialSystemUtility-0.1.10801-full.nupkg",
+        "packageCount": 1
+      },
+      "captureMethod": "cheap Lowlevel MCP hidden desktop + isolated loopback CDP Page.captureScreenshot",
+      "state": {
+        "view": "ollama",
+        "dialog": null,
+        "theme": "dark",
+        "language": "English",
+        "density": "comfortable",
+        "audit": {
+          "ready": "complete",
+          "heading": true,
+          "active": true,
+          "dialog": true,
+          "overflow": 0,
+          "clientWidth": 1440,
+          "expectedWidth": 1440,
+          "offenders": []
+        },
+        "viewport": {
+          "width": 1440,
+          "height": 940,
+          "scale": 1
+        }
+      },
+      "png": {
+        "width": 1440,
+        "height": 940,
+        "bytes": 86245,
+        "colorType": 2,
+        "sampledColors": 32,
+        "sha256": "1dea32ca6485c44f7f65cedaeda550581b71aa54eae6e41ed8b9fdf251f3da90"
+      }
+    },
+    {
+      "id": "ollama-cart-empty",
+      "file": "docs/screenshots/smoke/app/app-ollama-pull-cart-empty-dark-en-1440x940.png",
+      "relativeFile": "smoke/app/app-ollama-pull-cart-empty-dark-en-1440x940.png",
+      "surface": "desktop application",
+      "commit": "beb3386de5b4ee42bd6c0feb75cf43aa390c9142",
+      "executable": "Material System Utility.exe",
+      "executableSha256": "8f860d0c904ba880a6dd6d99a71cf0d29ef48041af7958857287b95535fe3ddc",
+      "artifact": {
+        "kind": "validated-squirrel-full-package",
+        "developmentFallback": false,
+        "sourceCommit": "beb3386de5b4ee42bd6c0feb75cf43aa390c9142",
+        "packagePath": "MaterialSystemUtility-0.1.10801-full.nupkg",
+        "packageSha256": "e38fcc01998ff3ad6e5feb970871b27b05996849057a89e653b8ec5baea32cb0",
+        "provenancePath": "release\\release-provenance.json",
+        "signatureStatus": "NotSigned",
+        "setup": "MaterialSystemUtility-Setup.exe",
+        "releases": "RELEASES",
+        "fullPackage": "MaterialSystemUtility-0.1.10801-full.nupkg",
+        "packageCount": 1
+      },
+      "captureMethod": "cheap Lowlevel MCP hidden desktop + isolated loopback CDP Page.captureScreenshot",
+      "state": {
+        "view": "ollama",
+        "dialog": null,
+        "theme": "dark",
+        "language": "English",
+        "density": "comfortable",
+        "audit": {
+          "ready": "complete",
+          "heading": true,
+          "active": true,
+          "dialog": true,
+          "overflow": 0,
+          "clientWidth": 1440,
+          "expectedWidth": 1440,
+          "offenders": []
+        },
+        "viewport": {
+          "width": 1440,
+          "height": 940,
+          "scale": 1
+        }
+      },
+      "png": {
+        "width": 1440,
+        "height": 940,
+        "bytes": 83305,
+        "colorType": 2,
+        "sampledColors": 32,
+        "sha256": "825c47c594f0f8b97ca08c11cb6aad711b746d112317fa67af40d95fb6352edc"
+      }
+    },
+    {
+      "id": "ollama-chat-unavailable",
+      "file": "docs/screenshots/smoke/app/app-ollama-chat-unavailable-dark-en-1440x940.png",
+      "relativeFile": "smoke/app/app-ollama-chat-unavailable-dark-en-1440x940.png",
+      "surface": "desktop application",
+      "commit": "beb3386de5b4ee42bd6c0feb75cf43aa390c9142",
+      "executable": "Material System Utility.exe",
+      "executableSha256": "8f860d0c904ba880a6dd6d99a71cf0d29ef48041af7958857287b95535fe3ddc",
+      "artifact": {
+        "kind": "validated-squirrel-full-package",
+        "developmentFallback": false,
+        "sourceCommit": "beb3386de5b4ee42bd6c0feb75cf43aa390c9142",
+        "packagePath": "MaterialSystemUtility-0.1.10801-full.nupkg",
+        "packageSha256": "e38fcc01998ff3ad6e5feb970871b27b05996849057a89e653b8ec5baea32cb0",
+        "provenancePath": "release\\release-provenance.json",
+        "signatureStatus": "NotSigned",
+        "setup": "MaterialSystemUtility-Setup.exe",
+        "releases": "RELEASES",
+        "fullPackage": "MaterialSystemUtility-0.1.10801-full.nupkg",
+        "packageCount": 1
+      },
+      "captureMethod": "cheap Lowlevel MCP hidden desktop + isolated loopback CDP Page.captureScreenshot",
+      "state": {
+        "view": "ollama",
+        "dialog": null,
+        "theme": "dark",
+        "language": "English",
+        "density": "comfortable",
+        "audit": {
+          "ready": "complete",
+          "heading": true,
+          "active": true,
+          "dialog": true,
+          "overflow": 0,
+          "clientWidth": 1440,
+          "expectedWidth": 1440,
+          "offenders": []
+        },
+        "viewport": {
+          "width": 1440,
+          "height": 940,
+          "scale": 1
+        }
+      },
+      "png": {
+        "width": 1440,
+        "height": 940,
+        "bytes": 89370,
+        "colorType": 2,
+        "sampledColors": 32,
+        "sha256": "6f27d6561660bfb2fa0d4f3fa83600baa7f286bba22f76d015c193d332fe9c56"
+      }
+    },
+    {
+      "id": "ollama-harness-preflight",
+      "file": "docs/screenshots/smoke/app/app-ollama-harness-preflight-bilingual-1440x940.png",
+      "relativeFile": "smoke/app/app-ollama-harness-preflight-bilingual-1440x940.png",
+      "surface": "desktop application",
+      "commit": "beb3386de5b4ee42bd6c0feb75cf43aa390c9142",
+      "executable": "Material System Utility.exe",
+      "executableSha256": "8f860d0c904ba880a6dd6d99a71cf0d29ef48041af7958857287b95535fe3ddc",
+      "artifact": {
+        "kind": "validated-squirrel-full-package",
+        "developmentFallback": false,
+        "sourceCommit": "beb3386de5b4ee42bd6c0feb75cf43aa390c9142",
+        "packagePath": "MaterialSystemUtility-0.1.10801-full.nupkg",
+        "packageSha256": "e38fcc01998ff3ad6e5feb970871b27b05996849057a89e653b8ec5baea32cb0",
+        "provenancePath": "release\\release-provenance.json",
+        "signatureStatus": "NotSigned",
+        "setup": "MaterialSystemUtility-Setup.exe",
+        "releases": "RELEASES",
+        "fullPackage": "MaterialSystemUtility-0.1.10801-full.nupkg",
+        "packageCount": 1
+      },
+      "captureMethod": "cheap Lowlevel MCP hidden desktop + isolated loopback CDP Page.captureScreenshot",
+      "state": {
+        "view": "ollama",
+        "dialog": null,
+        "theme": "dark",
+        "language": "Bilingual",
+        "density": "comfortable",
+        "audit": {
+          "ready": "complete",
+          "heading": true,
+          "active": true,
+          "dialog": true,
+          "overflow": 0,
+          "clientWidth": 1440,
+          "expectedWidth": 1440,
+          "offenders": []
+        },
+        "viewport": {
+          "width": 1440,
+          "height": 940,
+          "scale": 1
+        }
+      },
+      "png": {
+        "width": 1440,
+        "height": 940,
+        "bytes": 150283,
+        "colorType": 2,
+        "sampledColors": 32,
+        "sha256": "abb07e7b6982e18c36c44812473f1e17ce07006edaaf3521065af00b1c6d0d28"
+      }
+    },
+    {
+      "id": "settings-app-logo",
+      "file": "docs/screenshots/smoke/app/app-settings-logo-presets-preview-dark-en.png",
+      "relativeFile": "smoke/app/app-settings-logo-presets-preview-dark-en.png",
+      "surface": "desktop application",
+      "commit": "beb3386de5b4ee42bd6c0feb75cf43aa390c9142",
+      "executable": "Material System Utility.exe",
+      "executableSha256": "8f860d0c904ba880a6dd6d99a71cf0d29ef48041af7958857287b95535fe3ddc",
+      "artifact": {
+        "kind": "validated-squirrel-full-package",
+        "developmentFallback": false,
+        "sourceCommit": "beb3386de5b4ee42bd6c0feb75cf43aa390c9142",
+        "packagePath": "MaterialSystemUtility-0.1.10801-full.nupkg",
+        "packageSha256": "e38fcc01998ff3ad6e5feb970871b27b05996849057a89e653b8ec5baea32cb0",
+        "provenancePath": "release\\release-provenance.json",
+        "signatureStatus": "NotSigned",
+        "setup": "MaterialSystemUtility-Setup.exe",
+        "releases": "RELEASES",
+        "fullPackage": "MaterialSystemUtility-0.1.10801-full.nupkg",
+        "packageCount": 1
+      },
+      "captureMethod": "cheap Lowlevel MCP hidden desktop + isolated loopback CDP Page.captureScreenshot",
+      "state": {
+        "view": "settings",
+        "dialog": null,
+        "theme": "dark",
+        "language": "English",
+        "density": "comfortable",
+        "audit": {
+          "ready": "complete",
+          "heading": true,
+          "active": true,
+          "dialog": true,
+          "overflow": 0,
+          "clientWidth": 1440,
+          "expectedWidth": 1440,
+          "offenders": []
+        },
+        "viewport": {
+          "width": 1440,
+          "height": 940,
+          "scale": 1
+        }
+      },
+      "png": {
+        "width": 1440,
+        "height": 940,
+        "bytes": 92399,
+        "colorType": 2,
+        "sampledColors": 32,
+        "sha256": "30b24dd8599a487289e87ef3a690e2a8bd8da32ee48044781ad6be322d0e1a6b"
       }
     }
   ]

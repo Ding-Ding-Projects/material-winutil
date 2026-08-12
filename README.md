@@ -10,18 +10,17 @@ open-source WinUtil catalogue in a frameless Material Design 3 interface.
 
 ## Build
 
-```powershell
-npm install
-npm run check
-npm start
-```
+Double-click `build.bat` on a fresh Windows installation. It installs Node.js LTS
+when missing, installs the exact locked dependencies, verifies the Electron binary,
+builds the app, then asks whether to run it. Automation uses `build.bat /s` and never
+opens a window or waits for input.
 
 The Windows installer is unsigned by permanent project policy and may trigger
 an unknown-publisher or SmartScreen warning:
 
-```powershell
-npm run dist
-```
+Double-click `build-installer.bat`, or run `build-installer.bat /s` without prompts.
+It uses the same locked build, verifies `Setup.exe`, `RELEASES`, and the full `.nupkg`,
+refuses a signed executable, and prints the setup path and SHA-256.
 
 ## Provenance
 

@@ -12,6 +12,7 @@
     "build:assets": "node scripts/copy-assets.mjs",
     "build": "npm run clean && npm run build:ts && npm run build:assets",
     "check": "npm run build && node scripts/verify-baseline.mjs",
+    "prestart": "node scripts/ensure-electron-binary.mjs",
     "start": "npm run build && electron .",
     "dist": "npm run check && electron-builder --win squirrel --publish never"
   },
@@ -47,5 +48,9 @@
       "provider": "generic",
       "url": "https://github.com/Ding-Ding-Projects/material-winutil/releases/latest/download/"
     }
+  },
+  "allowScripts": {
+    "electron@37.0.0": true,
+    "electron-winstaller@5.4.0": true
   }
 }

@@ -109,6 +109,16 @@ async function waitForApp(client) {
   throw new Error('desktop application did not reach the catalogue-ready state');
 }
 
+async function waitForSite(client) {
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
+    const ready = await client.evaluate("document.readyState==='complete' && ['language','theme','density','dock','documentation-tab-list'].every((id)=>Boolean(document.getElementById(id)))");
+    if (ready) return;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 150));
+  }
+  throw new Error('documentation site did not reach the preference-ready state');
+}
+
 async function prepareApp(client, capture, defaults) {
   const viewport = capture.viewport ?? defaults;
   await client.setViewport(viewport.width, viewport.height, viewport.scale ?? 1);
@@ -176,6 +186,7 @@ async function captureSession(kind, manifest, executable, argsForLaunch, expecte
     await client.call('Page.enable');
     await client.call('Runtime.enable');
     if (kind === 'app') await waitForApp(client);
+    else await waitForSite(client);
     for (const capture of manifest.captures) {
       const state = await prepare(client, capture, manifest.defaultViewport);
       const output = join(captureRoot, kind, capture.file);

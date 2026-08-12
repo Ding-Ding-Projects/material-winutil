@@ -10,12 +10,12 @@ This index documents the current Material System Utility baseline. A feature is 
 - [Release boundary](release-boundary.md) — the authoritative split between available, catalogue-only, in-development, and unavailable behavior.
 - [Command palette](command-palette.md) — the available fixed command list, local search, shortcut, and current completeness boundary.
 - [Locks and authenticator boundary](locks-and-authenticator.md) — a working local RFC 6238 authenticator; password and OTP locks and support-ticket recovery remain unavailable.
+- [Offline documentation browser](offline-documentation.md) — every feature article bundled at build time, verified by manifest and SHA-256, safely rendered from an AST, internally linked, and independently searchable by title and body.
 
 ## Available with bounded limitations
 
 - [Application updates](application-updates.md) — installed Squirrel event wiring and visible controls; the complete installed replacement and rollback cycle is not yet proven.
 - [Local history](local-history.md) — bounded JSON Lines event history with search and filters, not Git-backed snapshots, diffs, or restore.
-- [Offline documentation browser](offline-documentation.md) — six bundled plain-text articles, not complete Markdown or on-disk article parity.
 - [Settings, localization, and narration](settings-localization-and-narration.md) — persisted display-name and dialog-emoji settings, shared School mode, partial localization, and a production local platform-speech narrator.
 - [Notifications](notifications.md) — session-local snackbars and a notification centre without durable history or complete export.
 - [Exports and selection profiles](exports-and-selection-profiles.md) — row-identifier exports and local selection profiles, not complete round-trip or archive export.

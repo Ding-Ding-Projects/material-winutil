@@ -9,7 +9,7 @@
   "scripts": {
     "clean": "node scripts/clean.mjs",
     "build:ts": "tsc -p tsconfig.json",
-    "build:assets": "node scripts/copy-assets.mjs",
+    "build:assets": "node scripts/copy-assets.mjs && node scripts/build-offline-docs-bundle.mjs",
     "build": "npm run clean && npm run build:ts && npm run build:assets",
     "test:contracts": "npm run build && node --test scripts/tests/*.test.mjs",
     "test:smoke-contracts": "node --test scripts/smoke/contracts.test.mjs",

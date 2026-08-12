@@ -67,6 +67,24 @@ interface Prefs {
   tabDock: TabDock;
 }
 interface SearchState { text: string; regex: boolean; flags: string; }
+type OfflineDocInlineNode =
+  | { type: 'text'; value: string }
+  | { type: 'code'; value: string }
+  | { type: 'emphasis'; children: readonly OfflineDocInlineNode[] }
+  | { type: 'strong'; children: readonly OfflineDocInlineNode[] }
+  | { type: 'link'; link: number; children: readonly OfflineDocInlineNode[] };
+type OfflineDocBlockNode =
+  | { type: 'heading'; level: number; children: readonly OfflineDocInlineNode[] }
+  | { type: 'paragraph'; children: readonly OfflineDocInlineNode[] }
+  | { type: 'list'; ordered: boolean; start: number | null; items: readonly (readonly OfflineDocInlineNode[])[] }
+  | { type: 'code'; language: string | null; value: string };
+type OfflineDocLink =
+  | { kind: 'internal'; href: string; articlePath: string; fragment: string | null; autoOpen: false }
+  | { kind: 'external'; href: string; protocol: 'https:' | 'http:' | 'mailto:'; autoOpen: false }
+  | { kind: 'local-resource'; href: string; resourcePath: string; fragment: string | null; autoOpen: false }
+  | { kind: 'unsafe'; href: string; reason: string; autoOpen: false };
+interface OfflineDocArticle { schemaVersion: 1; path: string; title: string; category: string; hash: string; bodyText: string; ast: readonly OfflineDocBlockNode[]; links: readonly OfflineDocLink[]; suggestedArticles: ReadonlyArray<{ articlePath: string; title: string }>; }
+interface OfflineDocsBundle { schemaVersion: 1; articles: readonly OfflineDocArticle[]; manifest: ReadonlyArray<{ path: string; title: string; category: string; hash: string }>; }
 interface Bridge {
   platform: string;
   loadCatalog(): Promise<Catalog>;
@@ -75,7 +93,8 @@ interface Bridge {
   installed(): Promise<string[]>;
   ensureDeps(): Promise<Array<{ name: string; present: boolean; installed: boolean; detail: string }>>;
   onProgress(cb: (p: { id: string; index: number; total: number; state: string; detail: string }) => void): void;
-  openExternal(url: string): void;
+  loadOfflineDocs(): Promise<OfflineDocsBundle>;
+  openExternal(url: string): Promise<{ ok: boolean; status: 'opened' | 'rejected' | 'failed'; error?: string }>;
   exportView(p: { view: string; format: string; records: Array<Record<string, unknown>>; scope: { kind: 'all' | 'filtered-view' | 'selection'; detail: string; sourceCount: number; exportedCount: number }; lineEnding: 'lf' | 'crlf'; archive?: Record<string, unknown> }): Promise<ExportSaveResult>;
   openExportInVSCode(filePath: string): Promise<{ ok: boolean; status: string; error?: string; vscodeDownloadUrl?: string }>;
   readPrefs(): Promise<Partial<Prefs>>;
@@ -523,7 +542,9 @@ const state = {
   dimSumSeen: 0,
   picker: { target: '', label: '', h: 258, s: 32, l: 48, recents: [] as string[] },
   collapsedGroups: new Set<string>(),
-  reading: null as null | { title: string; path: string; body: string },
+  reading: null as null | { title: string; path: string; body: string; article?: OfflineDocArticle },
+  offlineDocs: null as OfflineDocsBundle | null,
+  offlineDocsError: '',
   installedIds: new Set<string>(),
   tabs: [
     { id: 't1', view: 'install', pinned: true, group: 'System', locked: false },
@@ -928,7 +949,11 @@ function bridge(): Bridge {
       { name: 'Chocolatey', present: true, installed: false, detail: 'choco already on PATH' },
     ],
     onProgress: () => undefined,
-    openExternal: () => snack('This app never opens a browser. Everything is documented in Docs.'),
+    loadOfflineDocs: () => fetch('../offline-docs/bundle.json').then((response) => {
+      if (!response.ok) throw new Error('The offline documentation bundle is unavailable.');
+      return response.json() as Promise<OfflineDocsBundle>;
+    }),
+    openExternal: async () => ({ ok: false, status: 'rejected', error: 'External links are available only in the installed application.' }),
     exportView: async () => ({ status: 'cancelled', warnings: [] }),
     openExportInVSCode: async () => ({ ok: false, status: 'not-installed', error: 'Visual Studio Code handoff is available only in the installed application.' }),
     readPrefs: async () => { try { return JSON.parse(localStorage.getItem('winutil.prefs') ?? '{}') as Partial<Prefs>; } catch { return {}; } },
@@ -1527,26 +1552,55 @@ function pane(): HTMLElement {
 }
 
 function docsPane(): HTMLElement {
-  const match = makeMatcher(sq('docs'));
-  const found = SHIPPED_DOC_PAGES.filter((p) => match(`${p.title} ${p.section} ${p.body}`));
-  const sections = [...new Set(found.map((p) => p.section))];
+  const titleSearch = docsSearchMatcher(sq('docs-title'));
+  const bodySearch = docsSearchMatcher(sq('docs-body'));
+  const articles = state.offlineDocs?.articles ?? [];
+  const found = titleSearch.valid && bodySearch.valid
+    ? articles.filter((article) => titleSearch.match(article.title) && bodySearch.match(article.bodyText)) : [];
+  const sections = [...new Set(found.map((article) => article.category))];
   const pane = h('div', { class: 'pane' },
-    h('div', { class: 'pane-head' }, searchLine('docs', 'Search the built-in documentation')));
-  if (!found.length) { pane.appendChild(emptyState('No documentation page matches this search.')); return pane; }
+    h('div', { class: 'pane-head docs-searches' },
+      h('div', { class: 'docs-bundle-status', role: 'status' }, state.offlineDocs
+        ? `${articles.length} bundled articles · manifest and SHA-256 hashes verified before display`
+        : state.offlineDocsError || 'Loading the verified offline documentation bundle…'),
+      searchLine('docs-title', 'Search documentation titles'),
+      titleSearch.error ? h('div', { class: 'feedback error', role: 'alert' }, `Title search: ${titleSearch.error}`) : null,
+      searchLine('docs-body', 'Search documentation article bodies'),
+      bodySearch.error ? h('div', { class: 'feedback error', role: 'alert' }, `Body search: ${bodySearch.error}`) : null));
+  if (!state.offlineDocs) { pane.appendChild(emptyState(state.offlineDocsError || 'Loading offline documentation…')); return pane; }
+  if (!found.length) { pane.appendChild(emptyState('No bundled article matches both title and body searches.')); return pane; }
   for (const section of sections) {
     pane.appendChild(h('div', { class: 'group-head' },
       h('div', { class: 'group-toggle' }, icon('bookmark'), h('b', {}, section))));
     const list = h('div', { class: 'rowlist' });
-    for (const page of found.filter((p) => p.section === section)) {
+    for (const article of found.filter((item) => item.category === section)) {
       list.appendChild(rowNode({
-        id: page.id, primary: page.title, snippet: page.body.split('\n')[0], meta: page.section,
+        id: article.path, primary: article.title, snippet: article.bodyText.split('\n').find((line) => line.trim() && line.trim() !== article.title) ?? 'Bundled article', meta: article.category,
         lead: 'article', selectable: false,
-        onOpen: () => openDetail(page.title, `docs/${page.id}`, page.body),
+        onOpen: () => openOfflineArticle(article.path),
       }));
     }
     pane.appendChild(list);
   }
   return pane;
+}
+
+function docsSearchMatcher(search: SearchState): { valid: boolean; error: string; match: (value: string) => boolean } {
+  const query = search.text.trim();
+  if (!query) return { valid: true, error: '', match: () => true };
+  if (query.length > 512) return { valid: false, error: 'Search text exceeds the 512-character limit.', match: () => false };
+  if (!search.regex) {
+    const needle = query.toLocaleLowerCase('en-US');
+    return { valid: true, error: '', match: (value) => value.toLocaleLowerCase('en-US').includes(needle) };
+  }
+  if (!/^(?!.*(.).*\1)[imsu]*$/u.test(search.flags)) return { valid: false, error: 'Regex flags must be unique and limited to i, m, s, and u.', match: () => false };
+  if (/\\[1-9]|\\k<|\([^)]*[+*][^)]*\)[+*{]/u.test(query)) return { valid: false, error: 'Potentially unsafe backreferences or nested repeated quantifiers are not supported.', match: () => false };
+  try {
+    const expression = new RegExp(query, search.flags);
+    return { valid: true, error: '', match: (value) => { expression.lastIndex = 0; return expression.test(value); } };
+  } catch (error) {
+    return { valid: false, error: error instanceof Error ? error.message : 'The regular expression is invalid.', match: () => false };
+  }
 }
 
 function rowNode(opts: {
@@ -2071,8 +2125,63 @@ function settingsPane(): HTMLElement {
 
 function readingPane(): HTMLElement {
   const r = state.reading!;
+  if (r.article) return offlineArticlePane(r.article);
   return h('div', { class: 'pane' }, h('article', { class: 'reader' },
     h('h1', {}, r.title), h('div', { class: 'path' }, r.path), h('div', { class: 'body' }, r.body)));
+}
+
+function offlineHeadingId(nodes: readonly OfflineDocInlineNode[]): string {
+  const text = nodes.map((node) => node.type === 'text' || node.type === 'code' ? node.value : offlineHeadingId(node.children)).join('');
+  return text.toLocaleLowerCase('en-US').normalize('NFKD').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/gu, '').slice(0, 96);
+}
+
+function normalizeOfflineFragment(fragment: string): string {
+  return fragment.toLocaleLowerCase('en-US').normalize('NFKD').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/gu, '').slice(0, 96);
+}
+
+function offlineInlineNodes(article: OfflineDocArticle, nodes: readonly OfflineDocInlineNode[]): Node[] {
+  return nodes.map((node): Node => {
+    if (node.type === 'text') return document.createTextNode(node.value);
+    if (node.type === 'code') return h('code', {}, node.value);
+    if (node.type === 'emphasis') return h('em', {}, ...offlineInlineNodes(article, node.children));
+    if (node.type === 'strong') return h('strong', {}, ...offlineInlineNodes(article, node.children));
+    const link = article.links[node.link];
+    const children = offlineInlineNodes(article, node.children);
+    if (!link) return h('span', { class: 'doc-link unsafe', title: 'Link metadata is missing.' }, ...children);
+    if (link.kind === 'internal') return h('button', {
+      class: 'doc-link internal', title: `Open bundled article ${link.articlePath}`,
+      onclick: () => openOfflineArticle(link.articlePath, link.fragment),
+    }, ...children);
+    if (link.kind === 'external') return h('button', {
+      class: 'doc-link external', title: `Open external ${link.protocol} link: ${link.href}`,
+      onclick: async () => {
+        const result = await bridge().openExternal(link.href);
+        snack(result.ok ? 'External link opened in the default application.' : result.error ?? 'The external link was not opened.');
+      },
+    }, ...children, icon('open_in_new'));
+    const detail = link.kind === 'unsafe' ? `Blocked unsafe link: ${link.reason}` : `Bundled local resource: ${link.resourcePath}`;
+    return h('span', { class: `doc-link ${link.kind}`, title: detail, 'aria-label': detail }, ...children);
+  });
+}
+
+function offlineArticlePane(article: OfflineDocArticle): HTMLElement {
+  const blocks = article.ast.map((block): Node => {
+    if (block.type === 'heading') {
+      const level = Math.min(6, Math.max(1, block.level));
+      return h(`h${level}`, { id: offlineHeadingId(block.children) }, ...offlineInlineNodes(article, block.children));
+    }
+    if (block.type === 'paragraph') return h('p', {}, ...offlineInlineNodes(article, block.children));
+    if (block.type === 'code') return h('pre', { class: 'doc-code', 'data-language': block.language ?? 'text' }, h('code', {}, block.value));
+    const list = h(block.ordered ? 'ol' : 'ul', block.ordered && block.start !== null ? { start: String(block.start) } : {});
+    block.items.forEach((item) => list.appendChild(h('li', {}, ...offlineInlineNodes(article, item))));
+    return list;
+  });
+  return h('div', { class: 'pane' }, h('article', { class: 'reader offline-doc-reader' },
+    h('div', { class: 'path' }, `${article.path} · SHA-256 ${article.hash}`),
+    ...blocks,
+    article.suggestedArticles.length ? h('nav', { class: 'doc-suggestions', 'aria-label': 'Suggested bundled articles' },
+      h('h2', {}, 'Suggested bundled articles'),
+      ...article.suggestedArticles.map((suggestion) => h('button', { class: 'btn tonal', onclick: () => openOfflineArticle(suggestion.articlePath) }, suggestion.title))) : null));
 }
 
 /* --------------------------------------------------------- small pieces -- */
@@ -2343,6 +2452,14 @@ async function refresh(): Promise<void> {
 function openDetail(title: string, path: string, body: string): void {
   state.reading = { title, path, body };
   render();
+}
+
+function openOfflineArticle(articlePath: string, fragment?: string | null): void {
+  const article = state.offlineDocs?.articles.find((candidate) => candidate.path === articlePath);
+  if (!article) { snack(`Bundled article is unavailable: ${articlePath}`); return; }
+  state.reading = { title: article.title, path: article.path, body: article.bodyText, article };
+  render();
+  if (fragment) window.setTimeout(() => document.getElementById(normalizeOfflineFragment(fragment))?.scrollIntoView({ block: 'start' }), 0);
 }
 
 /* ------------------------------------------------------------------ tabs -- */
@@ -2903,7 +3020,7 @@ function searchableRows(): Array<[string, string]> {
     case 'tweaks': return tweakGroups(state.catalog.tweaks).flatMap((g) => g.items.map((i) => [i.id, `${i.name} ${i.desc} ${i.cat} ${i.id}`] as [string, string]));
     case 'config': return tweakGroups(state.catalog.features).flatMap((g) => g.items.map((i) => [i.id, `${i.name} ${i.desc} ${i.cat} ${i.id}`] as [string, string]));
     case 'history': return filteredHistory().map((e) => [e.commit, `${e.action} ${e.label ?? ''} ${e.revisionId}`]);
-    case 'docs': return SHIPPED_DOC_PAGES.map((p) => [p.id, `${p.title} ${p.section} ${p.body}`]);
+    case 'docs': return (state.offlineDocs?.articles ?? []).map((article) => [article.path, `${article.title} ${article.category} ${article.bodyText}`]);
     default: return [];
   }
 }
@@ -4219,6 +4336,8 @@ async function boot(): Promise<void> {
   } catch {
     snack('Could not load the WinUtil configuration.');
   }
+  try { state.offlineDocs = await bridge().loadOfflineDocs(); }
+  catch (error) { state.offlineDocsError = error instanceof Error ? error.message : 'The offline documentation bundle could not be verified.'; }
   try { state.update = await bridge().updateStatus(); } catch { /* development/browser preview */ }
   try { state.history = (await bridge().history()).reverse(); } catch { state.history = []; }
   await refreshHistoryAccess();

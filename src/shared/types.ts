@@ -9,6 +9,7 @@ import type {
   LockCreateRequest, LockRecoveryDescriptor, LockSearchRequest, LockSurfaceState,
   LockUnlockResult, LockUpdateRequest, PreparedLockTotp,
 } from '../main/lock-service';
+import type { OfflineDocsBundle } from './offline-docs';
 
 /**
  * Shared contracts between the Electron main process, the preload bridge and the renderer.
@@ -300,8 +301,8 @@ export interface Bridge {
   installed(): Promise<string[]>;
   ensureDeps(): Promise<Array<{ name: string; present: boolean; installed: boolean; detail: string }>>;
   onProgress(cb: (p: { id: string; index: number; total: number; state: string; detail: string }) => void): void;
-  /** Retained for typing only — the app never opens a browser. */
-  openExternal(url: string): void;
+  loadOfflineDocs(): Promise<OfflineDocsBundle>;
+  openExternal(url: string): Promise<{ ok: boolean; status: 'opened' | 'rejected' | 'failed'; error?: string }>;
   exportView(payload: StructuredExportRequest): Promise<StructuredExportSaveResult>;
   openExportInVSCode(filePath: string): Promise<{ ok: boolean; status: string; error?: string; vscodeDownloadUrl?: string }>;
   readPrefs(): Promise<Partial<Preferences>>;

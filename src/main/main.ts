@@ -1,4 +1,4 @@
-import { app, autoUpdater, BrowserWindow, ipcMain, dialog, nativeTheme, session } from 'electron';
+import { app, autoUpdater, BrowserWindow, ipcMain, dialog, nativeTheme, session, shell } from 'electron';
 import { execFile, spawn } from 'node:child_process';
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { promises as fs } from 'node:fs';
@@ -23,6 +23,7 @@ import { buildSevenZipCommand, createArchiveListFile, createArchiveManifest } fr
 import { detectExternalEditors, openExportInVSCode } from './external-editor';
 import { LocalHistory, LOCAL_HISTORY_ACTIONS, type JsonValue, type LocalHistoryAction } from './local-history';
 import { LockService, type LockCreateRequest, type LockSearchRequest, type LockUpdateRequest } from './lock-service';
+import { verifyOfflineDocsBundle, type OfflineDocsBundle } from '../shared/offline-docs';
 
 const ROOT = path.join(__dirname, '..', '..');
 const CONFIG_DIR = path.join(__dirname, '..', 'config');
@@ -31,6 +32,7 @@ const PREFS_FILE = () => path.join(USER_DIR(), 'preferences.json');
 const HISTORY_FILE = () => path.join(USER_DIR(), 'history.jsonl');
 const RENDERER_FILE = path.join(__dirname, '..', 'renderer', 'index.html');
 const RENDERER_URL = pathToFileURL(RENDERER_FILE).href;
+const OFFLINE_DOCS_BUNDLE_FILE = path.join(__dirname, '..', 'offline-docs', 'bundle.json');
 
 let win: BrowserWindow | null = null;
 let catalogCache: WinutilCatalog | null = null;
@@ -41,6 +43,7 @@ let personalVocabularyStore: PersonalVocabularyStore | null = null;
 let settingsSurfaceService: SettingsSurfaceService | null = null;
 let localHistoryService: LocalHistory | null = null;
 let lockService: LockService | null = null;
+let offlineDocsCache: OfflineDocsBundle | null = null;
 let lastExportPath = '';
 let historyUnlockedUntil = 0;
 const HISTORY_CREDENTIAL_TARGET = 'history-manager-primary';
@@ -86,6 +89,16 @@ async function loadCatalog(): Promise<WinutilCatalog> {
   const raw = await fs.readFile(path.join(CONFIG_DIR, 'winutil.json'), 'utf8');
   catalogCache = validateCatalog(JSON.parse(raw) as unknown);
   return catalogCache;
+}
+
+async function loadOfflineDocs(): Promise<OfflineDocsBundle> {
+  if (offlineDocsCache) return offlineDocsCache;
+  const raw = await fs.readFile(OFFLINE_DOCS_BUNDLE_FILE, 'utf8');
+  if (Buffer.byteLength(raw, 'utf8') > 4 * 1024 * 1024) throw new RangeError('The offline documentation bundle exceeds its 4 MiB runtime boundary.');
+  const bundle = JSON.parse(raw) as OfflineDocsBundle;
+  verifyOfflineDocsBundle(bundle);
+  offlineDocsCache = bundle;
+  return bundle;
 }
 
 function trustedSender(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): boolean {
@@ -477,6 +490,29 @@ async function saveStructuredExport(payload: StructuredExportRequest): Promise<S
 ipcMain.handle('catalog:load', async (event): Promise<WinutilCatalog> => {
   requireTrustedSender(event);
   return loadCatalog();
+});
+
+ipcMain.handle('docs:bundle', async (event): Promise<OfflineDocsBundle> => {
+  requireTrustedSender(event);
+  return loadOfflineDocs();
+});
+
+ipcMain.handle('docs:open-external', async (event, candidate: unknown) => {
+  requireTrustedSender(event);
+  if (typeof candidate !== 'string' || candidate.length === 0 || candidate.length > 2048) {
+    return { ok: false, status: 'rejected' as const };
+  }
+  try {
+    const parsed = new URL(candidate);
+    if (!['https:', 'http:', 'mailto:'].includes(parsed.protocol)) return { ok: false, status: 'rejected' as const };
+    if (parsed.username || parsed.password || /[\u0000-\u001f\u007f]/u.test(candidate) || /%(?:0a|0d)/iu.test(candidate)) {
+      return { ok: false, status: 'rejected' as const };
+    }
+    await shell.openExternal(parsed.href, { activate: true });
+    return { ok: true, status: 'opened' as const };
+  } catch {
+    return { ok: false, status: 'failed' as const, error: 'The external link could not be opened.' };
+  }
 });
 
 ipcMain.handle('system:elevated', async (event): Promise<boolean> => {

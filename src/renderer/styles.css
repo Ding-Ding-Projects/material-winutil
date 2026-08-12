@@ -560,6 +560,18 @@ input[type="range"].gradient::-webkit-slider-thumb { -webkit-appearance: none; a
 .reader h1 { font-size: 22px; font-weight: 400; margin: 0 0 4px; }
 .reader .path { font-family: "Roboto Mono", monospace; font-size: 11.5px; color: var(--md-sys-color-on-surface-variant); }
 .reader .body { display: block; margin-top: 20px; font-size: 14px; line-height: 1.7; white-space: pre-wrap; }
+.docs-searches { max-width: 760px; }
+.docs-bundle-status { color: var(--md-sys-color-on-surface-variant); font-size: 12px; line-height: 1.45; }
+.offline-doc-reader { line-height: 1.7; overflow-wrap: anywhere; }
+.offline-doc-reader h1, .offline-doc-reader h2, .offline-doc-reader h3,
+.offline-doc-reader h4, .offline-doc-reader h5, .offline-doc-reader h6 { scroll-margin-top: 24px; }
+.offline-doc-reader p, .offline-doc-reader ul, .offline-doc-reader ol { font-size: 14px; }
+.offline-doc-reader .doc-code { overflow: auto; max-width: 100%; padding: 14px; border-radius: 14px; background: var(--md-sys-color-surface-container-high); }
+.doc-link { display: inline; min-height: 44px; padding: 7px 4px; border: 0; background: transparent; color: var(--md-sys-color-primary); font: inherit; text-decoration: underline; cursor: pointer; }
+.doc-link.external .mi { margin-inline-start: 3px; font-size: 16px; vertical-align: text-bottom; }
+.doc-link.local-resource, .doc-link.unsafe { color: var(--md-sys-color-on-surface-variant); cursor: help; text-decoration-style: dotted; }
+.doc-suggestions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--md-sys-color-outline-variant); }
+.doc-suggestions h2 { flex-basis: 100%; }
 
 .empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 80px 20px;
   color: var(--md-sys-color-on-surface-variant); }

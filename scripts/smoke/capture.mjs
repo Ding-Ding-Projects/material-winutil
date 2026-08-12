@@ -143,7 +143,7 @@ async function prepareSite(client, capture, defaults) {
   const viewport = capture.viewport ?? defaults;
   await client.setViewport(viewport.width, viewport.height, viewport.scale ?? 1);
   const expression = `(()=>{
-    localStorage.setItem('material-winutil-site-v1',JSON.stringify({page:${literal(capture.page ?? 'home')},language:${literal(capture.language ?? 'en')},englishLevel:3,cantoneseLevel:4,theme:${literal(capture.theme ?? 'dark')},density:'comfortable',dock:${literal(capture.dock ?? 'left')}}));
+    localStorage.setItem('material-system-utility-docs-v1',JSON.stringify({page:${literal(capture.page ?? 'home')},language:${literal(capture.language ?? 'en')},englishLevel:3,cantoneseLevel:4,theme:${literal(capture.theme ?? 'dark')},density:'comfortable',dock:${literal(capture.dock ?? 'left')}}));
     location.reload(); return true;
   })()`;
   try { await client.evaluate(expression); }

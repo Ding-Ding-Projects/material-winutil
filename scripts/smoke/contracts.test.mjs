@@ -126,6 +126,10 @@ test('capture verifier requires unsigned exact-set Squirrel provenance', async (
 
 test('site reload preparation waits for a new document instead of trusting the destroyed context', async () => {
   const source = await readFile(join(repo, 'scripts', 'smoke', 'capture.mjs'), 'utf8');
+  const siteSource = await readFile(join(repo, 'docs', 'site', 'app.js'), 'utf8');
+  const storageKey = /const STORAGE_KEY = '([^']+)'/u.exec(siteSource)?.[1];
+  assert.ok(storageKey, 'site source must declare its preference storage key');
+  assert.match(source, new RegExp(`localStorage\\.setItem\\('${storageKey}'`, 'u'), 'capture must seed the exact site preference key');
   assert.match(source, /Runtime\\\.evaluate failed: \(\?:Uncaught\|Execution context\)/u);
   assert.match(source, /if \(!ready\) throw new Error\(`\$\{capture\.id\} did not finish navigation/u);
   assert.match(source, /document\.querySelector\('\[data-panel=\$\{literal\(capture\.page \?\? 'home'\)\}\]'\)!==null/u);

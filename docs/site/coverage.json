@@ -10,7 +10,7 @@
     { "id": "capability-search", "label": "Capability search with adjacent regex builder", "evidence": "capability-filter and capability-regex controls" },
     { "id": "command-palette", "label": "Ctrl+Shift+F command palette", "evidence": "command-palette and keyboard listener" },
     { "id": "appearance-subset", "label": "Local theme, density, and tab-dock preferences", "evidence": "settings controls and localStorage" },
-    { "id": "real-capture", "label": "Real built application capture", "evidence": "../screenshots/safe-package-catalogue-dark.png" },
+    { "id": "real-capture", "label": "Real built application capture", "evidence": "screenshots/safe-package-catalogue-dark.png" },
     { "id": "offline-assets", "label": "No CDN, remote fonts, analytics, or runtime asset fetch", "evidence": "local HTML, CSS, JavaScript, and screenshot only" }
   ],
   "explicitlyUnavailable": [

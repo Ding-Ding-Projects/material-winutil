@@ -79,8 +79,8 @@
             <span class="chip">Dark theme · 1440 × 940</span>
           </div>
           <figure class="capture-card">
-            <a href="../screenshots/safe-package-catalogue-dark.png" target="_blank" rel="noopener">
-              <img src="../screenshots/safe-package-catalogue-dark.png" alt="Material System Utility showing the dark-theme package catalogue with search, categories, tabs, package rows, and exact package action controls.">
+            <a href="screenshots/safe-package-catalogue-dark.png" target="_blank" rel="noopener">
+              <img src="screenshots/safe-package-catalogue-dark.png" alt="Material System Utility showing the dark-theme package catalogue with search, categories, tabs, package rows, and exact package action controls.">
             </a>
             <figcaption data-copy="captureCaption">Captured from the real built desktop application. Select the image to inspect it at full size.</figcaption>
           </figure>
@@ -109,11 +109,11 @@
           <p id="regex-feedback" role="status">Plain-text filtering is active.</p>
         </section>
         <div class="inventory" id="capability-list">
-          <article data-search="available exact winget install uninstall package msstore"><span class="state available">✓ Available</span><h2>Exact install and uninstall</h2><p>Only bounded catalogue identifiers reach the main process. Store entries use an explicit <code>msstore:&lt;StoreId&gt;</code> form and are separated into a validated source and identifier.</p><a href="../features/package-operations.md">Read the package operations guide</a></article>
+          <article data-search="available exact winget install uninstall package msstore"><span class="state available">✓ Available</span><h2>Exact install and uninstall</h2><p>Only bounded catalogue identifiers reach the main process. Store entries use an explicit <code>msstore:&lt;StoreId&gt;</code> form and are separated into a validated source and identifier.</p><a href="features/package-operations.md">Read the package operations guide</a></article>
           <article data-search="available winget upgrade all"><span class="state available">✓ Available</span><h2>Upgrade all</h2><p>Requests <code>winget upgrade --all</code> with silent, non-interactive flags and package/source agreement flags.</p></article>
-          <article data-search="available catalogue search regex tabs groups appearance settings"><span class="state available">✓ Available</span><h2>Catalogue and workspace</h2><p>Local application catalogue, installed-package detection, search, regex mode, category filters, tabs, pinning, groups, and a persisted theme, density, accent, font, scale, and weight subset.</p><a href="../features/workspace-and-search.md">Read the workspace guide</a></article>
-          <article data-search="available build installer squirrel unsigned"><span class="state available">✓ Available</span><h2>One-click build paths</h2><p><code>build.bat</code> builds the runnable application. <code>build-installer.bat</code> produces and verifies unsigned Squirrel.Windows setup and update artifacts.</p><a href="../features/build-and-installer.md">Read the build guide</a></article>
-          <article data-search="catalogued unavailable tweaks features update profile image creator win11"><span class="state unavailable">— Unavailable</span><h2>Higher-risk system adapters</h2><p>The catalogue contains tweak and optional-feature records, but execution is deliberately refused with exit code 78 until bounded, reviewed adapters exist.</p><a href="../features/release-boundary.md">Read the release boundary</a></article>
+          <article data-search="available catalogue search regex tabs groups appearance settings"><span class="state available">✓ Available</span><h2>Catalogue and workspace</h2><p>Local application catalogue, installed-package detection, search, regex mode, category filters, tabs, pinning, groups, and a persisted theme, density, accent, font, scale, and weight subset.</p><a href="features/workspace-and-search.md">Read the workspace guide</a></article>
+          <article data-search="available build installer squirrel unsigned"><span class="state available">✓ Available</span><h2>One-click build paths</h2><p><code>build.bat</code> builds the runnable application. <code>build-installer.bat</code> produces and verifies unsigned Squirrel.Windows setup and update artifacts.</p><a href="features/build-and-installer.md">Read the build guide</a></article>
+          <article data-search="catalogued unavailable tweaks features update profile image creator win11"><span class="state unavailable">— Unavailable</span><h2>Higher-risk system adapters</h2><p>The catalogue contains tweak and optional-feature records, but execution is deliberately refused with exit code 78 until bounded, reviewed adapters exist.</p><a href="features/release-boundary.md">Read the release boundary</a></article>
           <article data-search="partial application updater unavailable lock authenticator totp scheduled school narration personal vocabulary exports"><span class="state partial">◐ Partial</span><h2>Application updater and additional contracts</h2><p>Installed builds have visible Squirrel update states, a bounded background schedule, an unsigned-installer warning, and explicit restart control. Release-backed download and restart proof still needs the first immutable release. Locks, TOTP, scheduled settings, shared modes, narration, personal-vocabulary loading, and complete export coverage remain unavailable.</p></article>
         </div>
         <p class="empty-state" id="capability-empty" hidden>No capabilities match this filter.</p>
@@ -138,7 +138,7 @@
           <article><span aria-hidden="true">03</span><div><h2>No silent third-party bootstrap</h2><p>The application uses the operating system’s supported WinGet client. It does not download or execute an arbitrary package-manager bootstrap script.</p></div></article>
           <article><span aria-hidden="true">04</span><div><h2>Unsupported work fails closed</h2><p>Tweaks, optional-feature changes, update profiles, and other unsupported adapters return a clear unavailable result instead of simulating completion.</p></div></article>
         </div>
-        <aside class="callout"><strong>Security reports</strong><p>Do not include credentials, private data, or exploit details in a public issue. Follow the private reporting route in <a href="../../SECURITY.md">SECURITY.md</a>.</p></aside>
+        <aside class="callout"><strong>Security reports</strong><p>Do not include credentials, private data, or exploit details in a public issue. Follow the private reporting route in <a href="SECURITY.md">SECURITY.md</a>.</p></aside>
       </section>
 
       <section class="page-panel" id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" data-panel="settings" hidden>

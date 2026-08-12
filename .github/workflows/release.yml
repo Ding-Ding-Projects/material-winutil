@@ -1,0 +1,238 @@
+name: Build and publish Windows release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build unsigned Squirrel.Windows release
+    runs-on: windows-2025
+    timeout-minutes: 90
+    environment:
+      name: github-pages
+      url: ${{ steps.pages.outputs.page_url }}
+    env:
+      GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.ORG_TOKEN || secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: v0.1.0-build.${{ github.run_number }}.${{ github.run_attempt }}
+    steps:
+      - name: Record workflow start
+        id: timing_start
+        shell: pwsh
+        run: |
+          $started = (Get-Date).ToUniversalTime().ToString('o')
+          "started_at=$started" >> $env:GITHUB_OUTPUT
+          New-Item -ItemType Directory -Force -Path workflow-evidence | Out-Null
+          "Workflow started: $started" | Set-Content -Encoding utf8 workflow-evidence/timing.txt
+
+      - name: Check out exact source revision
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bootstrap Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.15.0
+          architecture: x64
+
+      - name: Record runner and toolchain context
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          @(
+            "Commit: $env:GITHUB_SHA"
+            "Runner name: $env:RUNNER_NAME"
+            "Runner OS: $env:RUNNER_OS"
+            "Runner architecture: $env:RUNNER_ARCH"
+            "Runner image: $env:ImageOS"
+            "Node: $(node --version)"
+            "npm: $(npm --version)"
+            "Git: $(git --version)"
+            "GitHub CLI: $(gh --version | Select-Object -First 1)"
+          ) | Set-Content -Encoding utf8 workflow-evidence/runner-context.txt
+
+      - name: Build the runnable application through the one-click path
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          & .\build.bat /s 2>&1 | Tee-Object -FilePath workflow-evidence/build.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { throw "build.bat /s failed with exit code $code." }
+
+      - name: Build the unsigned installer through the one-click path
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          & .\build-installer.bat /s 2>&1 | Tee-Object -FilePath workflow-evidence/build-installer.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { throw "build-installer.bat /s failed with exit code $code." }
+
+      - name: Validate and stage Squirrel.Windows assets
+        id: assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseRoot = Join-Path $env:GITHUB_WORKSPACE 'release'
+          $stage = Join-Path $env:GITHUB_WORKSPACE 'release-staging'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+          $setup = Get-ChildItem -LiteralPath $releaseRoot -Recurse -File -Filter '*Setup.exe'
+          $indexes = Get-ChildItem -LiteralPath $releaseRoot -Recurse -File -Filter 'RELEASES'
+          $packages = Get-ChildItem -LiteralPath $releaseRoot -Recurse -File -Filter '*.nupkg'
+          $fullPackages = @($packages | Where-Object Name -Like '*-full.nupkg')
+          if ($setup.Count -ne 1) { throw "Expected exactly one Setup.exe; found $($setup.Count)." }
+          if ($indexes.Count -ne 1) { throw "Expected exactly one RELEASES; found $($indexes.Count)." }
+          if ($fullPackages.Count -lt 1) { throw 'No full Squirrel.Windows .nupkg was generated.' }
+
+          $signature = Get-AuthenticodeSignature -LiteralPath $setup[0].FullName
+          if ($signature.Status -ne 'NotSigned') { throw "Signing is prohibited, but Setup.exe reported $($signature.Status)." }
+          "signature_status=$($signature.Status)" >> $env:GITHUB_OUTPUT
+
+          $files = @($setup[0], $indexes[0]) + @($packages)
+          $manifest = foreach ($file in $files) {
+            Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $stage $file.Name) -Force
+            $hash = Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256
+            [ordered]@{ name = $file.Name; size = $file.Length; sha256 = $hash.Hash }
+          }
+          $manifest | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 workflow-evidence/release-assets.json
+          "Release assets staged: $($files.Count)" | Add-Content -Encoding utf8 workflow-evidence/runner-context.txt
+
+      - name: Resolve an unused published dim-sum code name
+        id: dim_sum
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node scripts/select-dim-sum.mjs workflow-evidence/dim-sum.json
+          $dish = Get-Content -Raw workflow-evidence/dim-sum.json | ConvertFrom-Json
+          if ($null -eq $dish) {
+            Write-Warning 'No unused published dim-sum catalog asset was available. Release publication will continue without a code name.'
+            exit 0
+          }
+          "dish_id=$($dish.id)" >> $env:GITHUB_OUTPUT
+          "dish_code_name=$($dish.codeName)" >> $env:GITHUB_OUTPUT
+          "dish_image_url=$($dish.imageUrl)" >> $env:GITHUB_OUTPUT
+          "dish_image_alt_en=$($dish.imageAltEn)" >> $env:GITHUB_OUTPUT
+          "dish_catalog_tag=$($dish.catalogTag)" >> $env:GITHUB_OUTPUT
+
+      - name: Stage the documentation site
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path pages-site | Out-Null
+          Copy-Item -LiteralPath docs/site/* -Destination pages-site -Recurse -Force
+          New-Item -ItemType Directory -Force -Path pages-site/screenshots | Out-Null
+          Copy-Item -LiteralPath docs/screenshots/* -Destination pages-site/screenshots -Recurse -Force
+          New-Item -ItemType Directory -Force -Path pages-site/features | Out-Null
+          Copy-Item -LiteralPath docs/features/* -Destination pages-site/features -Recurse -Force
+          Copy-Item -LiteralPath SECURITY.md -Destination pages-site/SECURITY.md -Force
+
+      - name: Upload the documentation site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages-site
+
+      - name: Publish GitHub Pages
+        id: pages
+        uses: actions/deploy-pages@v4
+
+      - name: Generate preliminary factual release notes
+        shell: pwsh
+        env:
+          WORKFLOW_STARTED_AT: ${{ steps.timing_start.outputs.started_at }}
+          WORKFLOW_COMPLETED_AT: ${{ steps.timing_start.outputs.started_at }}
+          RELEASE_COMMIT: ${{ github.sha }}
+          WORKFLOW_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUNNER_IMAGE: ${{ env.ImageOS || 'windows-2025' }}
+          INSTALLER_SIGNATURE_STATUS: ${{ steps.assets.outputs.signature_status }}
+          RELEASE_ASSET_MANIFEST: workflow-evidence/release-assets.json
+          DIM_SUM_ID: ${{ steps.dim_sum.outputs.dish_id }}
+          DIM_SUM_CODE_NAME: ${{ steps.dim_sum.outputs.dish_code_name }}
+          DIM_SUM_IMAGE_URL: ${{ steps.dim_sum.outputs.dish_image_url }}
+          DIM_SUM_ALT_EN: ${{ steps.dim_sum.outputs.dish_image_alt_en }}
+          DIM_SUM_CATALOG_TAG: ${{ steps.dim_sum.outputs.dish_catalog_tag }}
+        run: node scripts/release-notes.mjs workflow-evidence/release-notes.md
+
+      - name: Publish one non-draft GitHub release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $assets = Get-ChildItem -LiteralPath release-staging -File | ForEach-Object FullName
+          if ($assets.Count -lt 3) { throw 'Fewer than three Squirrel.Windows release assets were staged.' }
+          gh release create $env:RELEASE_TAG @assets --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "Material System Utility $env:RELEASE_TAG" --notes-file workflow-evidence/release-notes.md --latest
+
+      - name: Record publication completion and finalize release notes
+        id: timing_complete
+        shell: pwsh
+        env:
+          WORKFLOW_STARTED_AT: ${{ steps.timing_start.outputs.started_at }}
+          RELEASE_COMMIT: ${{ github.sha }}
+          WORKFLOW_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUNNER_IMAGE: ${{ env.ImageOS || 'windows-2025' }}
+          INSTALLER_SIGNATURE_STATUS: ${{ steps.assets.outputs.signature_status }}
+          RELEASE_ASSET_MANIFEST: workflow-evidence/release-assets.json
+          DIM_SUM_ID: ${{ steps.dim_sum.outputs.dish_id }}
+          DIM_SUM_CODE_NAME: ${{ steps.dim_sum.outputs.dish_code_name }}
+          DIM_SUM_IMAGE_URL: ${{ steps.dim_sum.outputs.dish_image_url }}
+          DIM_SUM_ALT_EN: ${{ steps.dim_sum.outputs.dish_image_alt_en }}
+          DIM_SUM_CATALOG_TAG: ${{ steps.dim_sum.outputs.dish_catalog_tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $completed = (Get-Date).ToUniversalTime().ToString('o')
+          "completed_at=$completed" >> $env:GITHUB_OUTPUT
+          $env:WORKFLOW_COMPLETED_AT = $completed
+          node scripts/release-notes.mjs workflow-evidence/release-notes.md
+          gh release edit $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --notes-file workflow-evidence/release-notes.md
+          "Workflow completed: $completed" | Add-Content -Encoding utf8 workflow-evidence/timing.txt
+
+      - name: Verify the published release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName,targetCommitish,isDraft,isPrerelease,url,assets,body | ConvertFrom-Json
+          if ($release.isDraft -or $release.isPrerelease) { throw 'The release is not a final public release.' }
+          if ($release.targetCommitish -ne $env:GITHUB_SHA) { throw "Release target $($release.targetCommitish) does not equal $env:GITHUB_SHA." }
+          $expected = Get-Content -Raw workflow-evidence/release-assets.json | ConvertFrom-Json
+          foreach ($asset in $expected) {
+            $published = @($release.assets | Where-Object name -EQ $asset.name)
+            if ($published.Count -ne 1 -or $published[0].size -ne $asset.size) { throw "Published asset verification failed for $($asset.name)." }
+          }
+          foreach ($needle in @('Workflow started', 'Workflow completed', 'Workflow duration', 'Surviving-line attribution', 'NotSigned')) {
+            if (-not $release.body.Contains($needle)) { throw "Release notes are missing required evidence: $needle" }
+          }
+          $release | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 workflow-evidence/published-release.json
+
+      - name: Collect safe workflow outputs
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path safe-workflow-output | Out-Null
+          if (Test-Path workflow-evidence) { Copy-Item -LiteralPath workflow-evidence -Destination safe-workflow-output -Recurse -Force }
+          if (Test-Path release-staging) { Copy-Item -LiteralPath release-staging -Destination safe-workflow-output -Recurse -Force }
+          @(
+            "Run ID: $env:GITHUB_RUN_ID"
+            "Commit: $env:GITHUB_SHA"
+            "Job status: ${{ job.status }}"
+            "Runner: $env:RUNNER_NAME / $env:RUNNER_OS / $env:RUNNER_ARCH / $env:ImageOS"
+          ) | Set-Content -Encoding utf8 safe-workflow-output/run-summary.txt
+
+      - name: Upload safe workflow outputs
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: safe-workflow-output/
+          if-no-files-found: warn
+          retention-days: 14

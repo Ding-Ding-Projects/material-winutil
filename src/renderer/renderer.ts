@@ -242,6 +242,38 @@ Nothing in the app is fetched from the network at runtime except the packages yo
   },
 ];
 
+/** Only verified behavior is exposed through the in-app documentation. */
+const SHIPPED_DOC_PAGES: Array<{ id: string; title: string; section: string; body: string }> = [
+  {
+    id: 'release-boundary', title: 'What this build can do', section: 'Getting started',
+    body: `This safe baseline can browse and search the reviewed WinUtil catalogue, detect installed WinGet packages, install or uninstall exact catalogue package identifiers, and request a WinGet upgrade-all operation.
+
+Tweaks, optional features, update profiles, AppX removal, ISO servicing, locks, the authenticator, automatic updates, and other higher-risk adapters are not installed. If one of those actions is reached, the app reports that it is unavailable instead of running a guessed command.`,
+  },
+  {
+    id: 'package-operations', title: 'Package operations', section: 'Install',
+    body: `The renderer uses a named, context-isolated bridge. The main process accepts only bounded WinGet identifiers or the explicit msstore:<StoreId> catalogue form. Microsoft Store entries are separated into --source msstore and a validated Store ID before execution.
+
+Commands use argument arrays, --exact, --silent, --disable-interactivity, and agreement flags. Every real exit code and output is returned to the app.`,
+  },
+  {
+    id: 'search', title: 'Search and regex', section: 'Workspace',
+    body: `Plain-text search is the default. Each search field keeps its own query, regex mode, and flags. The adjacent .* control opens the local regex builder for that field, including flags, sample text, matches, captures, replacement preview, explanation, and a pattern library.`,
+  },
+  {
+    id: 'tabs', title: 'Tabs and groups', section: 'Workspace',
+    body: `The current shell provides browser-style tabs, pinning, named groups, group search, current-strip search, master tab search, and within-group search. Bulk close actions preview matching tabs and exclude pinned tabs unless explicitly included.`,
+  },
+  {
+    id: 'appearance', title: 'Appearance controls', section: 'Workspace',
+    body: `Theme, density, accent, font family, font scale, weight, corner radius, and reduced motion are local preferences. Per-element editors expose the currently implemented accent, font, radius, scale, and weight controls. Unsupported word-processor-depth properties are not claimed by this build.`,
+  },
+  {
+    id: 'provenance', title: 'Catalogue provenance', section: 'Data',
+    body: `The bundled catalogue is derived from WinUtil commit aee3e7a1f4a3249ff2f95e75b5bd3768626a21b6 and contains 227 applications, 67 tweaks, and 33 features. The upstream MIT notice is bundled in THIRD_PARTY_NOTICES.md. Material System Utility uses independent branding and assets.`,
+  },
+];
+
 const SELECTION_COLORS: Array<[string, string]> = [
   ['violet', '#6750A4'], ['teal', '#00696E'], ['amber', '#7A5900'], ['rose', '#8E4957'],
   ['indigo', '#3F5F90'], ['moss', '#3F6B3F'], ['clay', '#8C4A28'], ['slate', '#4A5560'],
@@ -330,7 +362,7 @@ const state = {
     { id: 't1', view: 'install', pinned: true, group: 'System', locked: false },
     { id: 't2', view: 'tweaks', pinned: false, group: 'System', locked: false },
     { id: 't3', view: 'config', pinned: false, group: 'System', locked: false },
-    { id: 't4', view: 'updates', pinned: false, group: 'Maintenance', locked: true },
+    { id: 't4', view: 'updates', pinned: false, group: 'Maintenance', locked: false },
   ] as WorkspaceTab[],
   activeTab: 't1',
   tabQueries: { current: '', groupNames: '', master: '', inGroup: '', closeContaining: '', closeNot: '' },
@@ -390,10 +422,25 @@ function h(tag: string, attrs: Record<string, unknown> = {}, ...kids: Array<Node
 }
 
 const ICONS: Record<string, string> = {
-  search: '⌕', close: '×', menu: '☰', download: '↓', download_done: '✓', upgrade: '↑',
-  delete: '⌫', error: '!', warning: '⚠', play_arrow: '▶', undo: '↶', settings: '⚙',
-  settings_backup_restore: '↺', folder_open: '▣', save: '▤', restart_alt: '↻', tune: '≡',
-  description: '▧', translate: '文', pin: '●', notifications: '◉', more_vert: '⋮',
+  add: '+', album: '◉', arrow_back: '←', arrow_drop_down: '⌄', backspace: '⌫', bookmark: '◆',
+  bookmark_add: '◇+', bookmarks: '◆', bolt: 'ϟ', build: '⚒', check: '✓', check_box: '☑',
+  check_box_outline_blank: '☐', check_circle: '✓', checklist: '☷', chevron_right: '›',
+  clear_all: '≡×', close: '×', close_fullscreen: '↙', colorize: '◒', content_copy: '▣',
+  contrast: '◐', crop_square: '□', data_object: '.*', delete: '⌫', delete_sweep: '⌫',
+  density_medium: '≡', deselect: '☐', done_all: '✓✓', download: '↓', download_done: '✓',
+  drive_file_move: '↪', edit: '✎', error: '!', extension: '✚', fact_check: '☑',
+  filter_alt: '▽', filter_alt_off: '▽×', flip_to_front: '⇄', folder_open: '▣',
+  healing: '✚', history: '↺', history_toggle_off: '◷', inbox: '▤', indeterminate_check_box: '⊟',
+  info: 'i', label: '◇', light_mode: '☀', dark_mode: '☾', lock: '▣', lock_open: '□',
+  mark_email_read: '✓', mark_email_unread: '•', menu: '☰', menu_book: '▤', menu_open: '☷',
+  more_vert: '⋮', notifications: '◉', open_in_full: '↗', open_in_new: '↗', palette: '◒',
+  password: '•••', pin: '◎', play_arrow: '▶', push_pin: '⌖', recommend: '★', refresh: '↻',
+  remove: '−', restart_alt: '↻', restaurant: '♨', restore: '↺', save: '▤', search: '⌕',
+  search_off: '⌕×', select_all: '☑', settings: '⚙', settings_backup_restore: '↺',
+  system_update_alt: '⇩', tab: '▰', tab_group: '▤', terminal: '>_', translate: '文',
+  tune: '≡', undo: '↶', upgrade: '↑', verified: '✓', warning: '⚠', description: '▧',
+  cast_connected: '▣', expand_less: '⌃', expand_more: '⌄', folder: '▤', inventory_2: '▣',
+  keep_off: '⌖×', play_circle: '▷', article: '▧',
 };
 const icon = (name: string, cls = ''): HTMLElement => h('span', {
   class: `mi ${cls}`.trim(), 'aria-hidden': 'true', title: '',
@@ -409,7 +456,7 @@ function sq(key: string): SearchState {
 function searchLine(key: string, placeholder: string, variant: 'field' | 'bar' = 'field'): HTMLElement {
   const s = sq(key);
   const input = h('input', {
-    value: s.text, placeholder, spellcheck: 'false',
+    value: s.text, placeholder, 'aria-label': placeholder, spellcheck: 'false',
     oninput: (e: Event) => {
       s.text = (e.target as HTMLInputElement).value;
       render();
@@ -502,7 +549,7 @@ function applyPrefs(): void {
   r.style.setProperty('--md-sys-color-primary', p.theme === 'dark' ? lighten(p.accent) : p.accent);
   r.style.setProperty('--shape-l', `${p.radius}px`);
   r.style.setProperty('font-size', `${Math.round(14 * p.scale)}px`);
-  document.body.style.fontFamily = `${p.font}, Roboto, "Segoe UI", system-ui, sans-serif`;
+  document.body.style.fontFamily = `${p.font}, "Segoe UI", system-ui, sans-serif`;
   document.body.style.fontWeight = String(p.weight);
   void bridge().writePrefs(p);
   try { localStorage.setItem('winutil.profiles', JSON.stringify(state.profiles)); } catch { /* profiles stay in memory */ }
@@ -554,7 +601,6 @@ function render(): void {
   root.replaceChildren(appBar(), h('div', { class: `body${state.drawerCollapsed ? ' drawer-collapsed' : ''}` }, drawer(), content(), sideRail()));
   if (state.dialog) root.appendChild(dialogLayer());
   if (state.snack) root.appendChild(h('div', { class: 'snack' }, icon('check_circle'), h('span', {}, state.snack)));
-  if (state.dialog === 'lockwizard' && state.wizard.method === 'otp') window.requestAnimationFrame(drawQr);
 }
 
 function appBar(): HTMLElement {
@@ -579,7 +625,8 @@ function appBar(): HTMLElement {
 
 function searchField(): HTMLElement {
   const input = h('input', {
-    value: state.search.text, placeholder: VIEW_META[state.view].search, spellcheck: 'false',
+    value: state.search.text, placeholder: VIEW_META[state.view].search,
+    'aria-label': VIEW_META[state.view].search, spellcheck: 'false',
     oninput: (e: Event) => { state.search.text = (e.target as HTMLInputElement).value; renderKeepFocus(); },
   });
   return h('div', { class: 'searchbar' },
@@ -602,7 +649,10 @@ function drawer(): HTMLElement {
   const s = sq('nav');
   const match = makeMatcher(s);
   const nodes: HTMLElement[] = [
-    h('button', { class: 'fab-extended', onclick: () => primaryAction() },
+    h('button', {
+      class: 'fab-extended', onclick: () => primaryAction(), disabled: state.view !== 'install',
+      title: state.view === 'install' ? 'Install the selected packages' : 'Unavailable until the reviewed system adapter is installed',
+    },
       icon('play_arrow'), h('span', {}, t('run'))),
     searchLine('nav', 'Search destinations'),
   ];
@@ -633,13 +683,19 @@ function content(): HTMLElement {
 }
 
 function tabStrip(): HTMLElement {
-  const strip = h('div', { class: 'tabstrip' });
+  const strip = h('div', { class: 'tabstrip', role: 'tablist', 'aria-label': 'Open workspace tabs', 'aria-orientation': 'horizontal' });
   for (const tab of state.tabs) {
     const meta = VIEW_META[tab.view];
     const navItem = NAV.find((n) => 'id' in n && n.id === tab.view) as { icon: string } | undefined;
     strip.appendChild(h('div', {
       class: `wtab${state.activeTab === tab.id ? ' active' : ''}`, title: meta.title,
+      role: 'tab', tabindex: state.activeTab === tab.id ? '0' : '-1',
+      'aria-selected': state.activeTab === tab.id ? 'true' : 'false',
+      'aria-label': `${meta.title}${tab.pinned ? ', pinned' : ''}`,
       onclick: () => { state.activeTab = tab.id; go(tab.view); },
+      onkeydown: (e: KeyboardEvent) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); state.activeTab = tab.id; go(tab.view); }
+      },
       oncontextmenu: (e: MouseEvent) => { e.preventDefault(); tabMenu(tab, e.clientX, e.clientY); },
     },
       icon(navItem?.icon ?? 'tab'),
@@ -705,7 +761,10 @@ function actionToolbar(): HTMLElement {
   const inline = actions.slice(0, 3);
   const overflow = actions.slice(3);
   for (const b of inline) {
-    left.appendChild(h('button', { class: `btn ${b.variant}`, onclick: b.act }, b.icon ? icon(b.icon) : null, h('span', {}, b.label)));
+    left.appendChild(h('button', {
+      class: `btn ${b.variant}`, onclick: b.act, disabled: b.disabled ?? false,
+      title: b.title ?? '', 'aria-disabled': b.disabled ? 'true' : 'false',
+    }, b.icon ? icon(b.icon) : null, h('span', {}, b.label)));
   }
   if (overflow.length) {
     left.appendChild(h('button', {
@@ -713,7 +772,11 @@ function actionToolbar(): HTMLElement {
       onclick: (e: MouseEvent) => {
         const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
         contextMenu('toolbar-overflow', r.left, r.bottom + 4,
-          overflow.map((b) => ({ icon: b.icon ?? 'chevron_right', label: b.label, act: b.act })), 'More actions');
+          overflow.map((b) => ({
+            icon: b.icon ?? 'chevron_right',
+            label: b.disabled ? `${b.label} — unavailable in this build` : b.label,
+            act: b.disabled ? () => snack(b.title ?? 'Unavailable in this build.') : b.act,
+          })), 'More actions');
       },
     }, icon('more_vert')));
   }
@@ -746,23 +809,23 @@ function actionToolbar(): HTMLElement {
   return bar;
 }
 
-function toolbarActions(): Array<{ label: string; variant: string; icon?: string; act: () => void }> {
+function toolbarActions(): Array<{ label: string; variant: string; icon?: string; act: () => void; disabled?: boolean; title?: string }> {
   switch (state.view) {
     case 'install': return [
-      { label: 'Install selected', variant: 'filled', icon: 'download', act: () => gate(`Install ${state.selected.size} package(s)`, 'install') },
+      { label: 'Install selected', variant: 'filled', icon: 'download', act: () => { const ids = selectedPackageIds(); if (!ids.length) snack('Nothing is selected.'); else gate(`Install ${ids.length} package(s)`, 'install', ids); } },
       { label: 'Upgrade all', variant: 'tonal', icon: 'upgrade', act: () => gate('Upgrade every installed package', 'upgrade') },
-      { label: 'Uninstall selected', variant: 'outlined', icon: 'delete', act: () => gate(`Uninstall ${state.selected.size} package(s)`, 'uninstall') },
+      { label: 'Uninstall selected', variant: 'outlined', icon: 'delete', act: () => { const ids = selectedPackageIds(); if (!ids.length) snack('Nothing is selected.'); else gate(`Uninstall ${ids.length} package(s)`, 'uninstall', ids); } },
       { label: t('installed'), variant: 'text', act: () => void loadInstalled() },
     ];
     case 'tweaks': return [
-      { label: 'Run tweaks', variant: 'filled', icon: 'play_arrow', act: () => gate(`Run ${state.selected.size} selected tweak(s)`, 'tweak') },
-      { label: 'Undo selected', variant: 'outlined', icon: 'undo', act: () => gate(`Undo ${state.selected.size} selected tweak(s)`, 'undo') },
+      { label: 'Run tweaks', variant: 'filled', icon: 'play_arrow', disabled: true, title: 'Unavailable until the reviewed tweak adapter is installed', act: () => undefined },
+      { label: 'Undo selected', variant: 'outlined', icon: 'undo', disabled: true, title: 'Unavailable until the reviewed tweak adapter is installed', act: () => undefined },
       { label: t('clear'), variant: 'text', icon: 'deselect', act: () => { state.selected.clear(); state.rowColors = {}; render(); } },
       { label: t('installed'), variant: 'text', icon: 'fact_check', act: () => void loadInstalled() },
     ];
     case 'config': return [
-      { label: 'Apply selected', variant: 'filled', icon: 'play_arrow', act: () => gate(`Apply ${state.selected.size} selected feature(s) and fix(es)`, 'feature') },
-      { label: 'Undo selected', variant: 'outlined', icon: 'undo', act: () => gate(`Undo ${state.selected.size} selected feature(s)`, 'undo') },
+      { label: 'Apply selected', variant: 'filled', icon: 'play_arrow', disabled: true, title: 'Unavailable until the reviewed feature adapter is installed', act: () => undefined },
+      { label: 'Undo selected', variant: 'outlined', icon: 'undo', disabled: true, title: 'Unavailable until the reviewed feature adapter is installed', act: () => undefined },
       { label: t('clear'), variant: 'text', icon: 'deselect', act: () => { state.selected.clear(); state.rowColors = {}; render(); } },
       { label: 'Select every category', variant: 'text', icon: 'select_all', act: () => { allIdsInView().forEach((id) => { state.selected.add(id); state.rowColors[id] = state.selectionColor; }); maybeDimSum(); render(); } },
     ];
@@ -841,7 +904,7 @@ function pane(): HTMLElement {
 
 function docsPane(): HTMLElement {
   const match = makeMatcher(sq('docs'));
-  const found = DOC_PAGES.filter((p) => match(`${p.title} ${p.section} ${p.body}`));
+  const found = SHIPPED_DOC_PAGES.filter((p) => match(`${p.title} ${p.section} ${p.body}`));
   const sections = [...new Set(found.map((p) => p.section))];
   const pane = h('div', { class: 'pane' },
     h('div', { class: 'pane-head' }, searchLine('docs', 'Search the built-in documentation')));
@@ -871,7 +934,12 @@ function rowNode(opts: {
   const row = h('div', {
     class: `row${on ? ' selected' : ''}`,
     style: tint ? `--tint:${tint}` : '',
+    role: 'group', tabindex: '0', 'aria-label': `${opts.primary}. ${opts.snippet}`,
     onclick: () => { opts.onOpen ? opts.onOpen() : toggleSelect(opts.id); },
+    onkeydown: (e: KeyboardEvent) => {
+      if (e.key === 'Enter') { e.preventDefault(); opts.onOpen ? opts.onOpen() : toggleSelect(opts.id); }
+      if (e.key === ' ' && opts.selectable !== false) { e.preventDefault(); toggleSelect(opts.id); }
+    },
     oncontextmenu: ctx(`row-${opts.id}`, () => [
       { section: 'This row' },
       { icon: on ? 'check_box_outline_blank' : 'check_box', label: on ? 'Deselect this row' : 'Select this row', act: () => toggleSelect(opts.id) },
@@ -887,7 +955,12 @@ function rowNode(opts: {
   });
   if (opts.selectable !== false) {
     row.appendChild(h('span', {
-      class: 'cb', onclick: (e: MouseEvent) => { e.stopPropagation(); toggleSelect(opts.id); },
+      class: 'cb', role: 'checkbox', tabindex: '0', 'aria-label': `Select ${opts.primary}`,
+      'aria-checked': on ? 'true' : 'false',
+      onclick: (e: MouseEvent) => { e.stopPropagation(); toggleSelect(opts.id); },
+      onkeydown: (e: KeyboardEvent) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); toggleSelect(opts.id); }
+      },
     }, on ? icon('check') : null));
   }
   if (opts.lead) row.appendChild(h('span', { class: 'lead' }, icon(opts.lead)));
@@ -937,7 +1010,7 @@ function installPane(): HTMLElement {
             { icon: 'filter_alt', label: `Filter to ${c} only`, act: () => toggleChip(c, false) },
             { icon: 'add', label: `Add ${c} to the current filter`, act: () => toggleChip(c, true) },
             { icon: 'select_all', label: `Select every app in ${c}`, act: () => { state.catalog.apps.filter((a) => c === 'All' || a.cat === c).forEach((a) => state.selected.add(a.id)); } },
-            { icon: 'download', label: `Install every selected app in ${c}`, act: () => gate(`Install the selected ${c} apps`, 'install') },
+            { icon: 'download', label: `Install every selected app in ${c}`, act: () => { const ids = selectedPackageIds(); if (!ids.length) snack('Nothing is selected.'); else gate(`Install the selected ${c} apps`, 'install', ids); } },
             'divider',
             { icon: 'palette', label: 'Edit this chip’s appearance…', act: () => openAppearance(`chip-${c}`, `Chip · ${c}`) },
             { icon: 'lock', label: `Lock the ${c} filter…`, act: () => openLockWizard(`chip-${c}`, `Filter chip · ${c}`) },
@@ -962,7 +1035,7 @@ function checklistPane(source: WinutilTweak[], showPresets: boolean): HTMLElemen
           { icon: 'add', label: `Add ${name} to the current selection`, act: () => { (state.catalog.presets[name] ?? []).forEach((id) => { state.selected.add(id); state.rowColors[id] = state.selectionColor; }); maybeDimSum(); } },
           { icon: 'remove', label: `Subtract ${name} from the selection`, act: () => (state.catalog.presets[name] ?? []).forEach((id) => { state.selected.delete(id); delete state.rowColors[id]; }) },
           'divider',
-          { icon: 'play_arrow', label: `Run ${name} now…`, act: () => { applyPreset(name); gate(`Run the ${name} preset`, 'tweak', state.catalog.presets[name] ?? []); } },
+          { icon: 'warning', label: `Run ${name} — unavailable in this build`, act: () => snack('The reviewed tweak adapter is not installed in this build.') },
           { icon: 'bookmark_add', label: 'Save as a selection profile…', act: () => { applyPreset(name); openDialog('saveselection'); } },
           { icon: 'lock', label: `Lock the ${name} preset…`, act: () => openLockWizard(`preset-${name}`, `Preset · ${name}`) },
           { icon: 'palette', label: 'Edit this button’s appearance…', act: () => openAppearance(`preset-${name}`, `Preset · ${name}`) },
@@ -971,7 +1044,7 @@ function checklistPane(source: WinutilTweak[], showPresets: boolean): HTMLElemen
         h('span', { class: 'chip-inline' }, String(size))));
     }
     presetRow.appendChild(h('button', {
-      class: 'btn outlined', onclick: () => gate('Remove the default AppX packages', 'uninstall'),
+      class: 'btn outlined', disabled: true, title: 'Unavailable until the reviewed AppX adapter is installed',
     }, icon('delete_sweep'), h('span', {}, 'AppX Removal')));
     pane.appendChild(h('div', { class: 'preset-bar' },
       h('div', { class: 'preset-label' }, icon('recommend'), h('b', {}, 'Recommended selections')),
@@ -993,8 +1066,7 @@ function checklistPane(source: WinutilTweak[], showPresets: boolean): HTMLElemen
         { icon: collapsed ? 'expand_more' : 'expand_less', label: collapsed ? 'Expand this category' : 'Collapse this category', act: () => { collapsed ? state.collapsedGroups.delete(group.name) : state.collapsedGroups.add(group.name); } },
         { icon: 'done_all', label: `Select all ${items.length} rows here`, act: () => items.forEach((i) => state.selected.add(i.id)) },
         { icon: 'deselect', label: 'Deselect the rows here', act: () => items.forEach((i) => state.selected.delete(i.id)) },
-        { icon: 'play_arrow', label: 'Run every selected row here', act: () => gate(`Run the selected ${group.name} rows`, showPresets ? 'tweak' : 'feature') },
-        { icon: 'undo', label: 'Undo every selected row here', act: () => gate(`Undo the selected ${group.name} rows`, 'undo') },
+        { icon: 'warning', label: 'Run selected rows — unavailable in this build', act: () => snack('The reviewed system adapter is not installed in this build.') },
         'divider',
         { icon: 'palette', label: 'Edit this header’s appearance…', act: () => openAppearance(`group-${group.name}`, group.name) },
         { icon: 'lock', label: 'Lock this category…', act: () => openLockWizard(`group-${group.name}`, `Category · ${group.name.replace(/^z__/, '')}`) },
@@ -1024,9 +1096,7 @@ function checklistPane(source: WinutilTweak[], showPresets: boolean): HTMLElemen
         lead: item.type === 'Button' ? 'play_circle' : undefined,
         chip: item.type === 'Button' ? 'ACTION' : undefined,
         actions: [
-          ['play_arrow', 'Run only this row', () => gate(`Run ${item.name}`, showPresets ? 'tweak' : 'feature', [item.id])],
-          ['undo', 'Undo only this row', () => gate(`Undo ${item.name}`, 'undo', [item.id])],
-          ['menu_book', 'Open the built-in reference', () => { go('docs'); openDetail(item.name, `docs/${item.id}`, `${item.desc}\n\nId        ${item.id}\nCategory  ${item.cat}\nType      ${item.type ?? 'Checkbox'}\n\nThis row is applied by the WinUtil PowerShell entry point. Its original values are recorded so Undo can restore them.`); }],
+          ['menu_book', 'Open the built-in reference', () => { go('docs'); openDetail(item.name, `docs/${item.id}`, `${item.desc}\n\nId        ${item.id}\nCategory  ${item.cat}\nType      ${item.type ?? 'Checkbox'}\n\nThis catalogue row is read-only in the current build because its reviewed system adapter is not installed.`); }],
         ],
       }));
     }
@@ -1050,10 +1120,15 @@ function updatesPane(): HTMLElement {
           icon('chevron_right', ''), h('span', {}, b)))),
       h('p', { style: 'font-style:italic;font-size:11.5px' }, p.note),
       h('div', { style: 'flex:1' }),
-      h('button', { class: `btn ${p.variant}`, style: 'height:44px;justify-content:center', onclick: () => gate(p.button, 'update-profile') }, p.button)));
+      h('button', {
+        class: `btn ${p.variant}`, style: 'height:44px;justify-content:center', disabled: true,
+        title: 'Unavailable until the reviewed Windows Update adapter is installed',
+        'aria-describedby': `update-profile-note-${p.key}`,
+      }, p.button),
+      h('p', { id: `update-profile-note-${p.key}`, class: 'unavailable-note' }, 'Unavailable in this build: the reviewed Windows Update adapter is not installed.')));
   }
   cards.appendChild(h('div', { class: 'card full', style: 'text-align:center' },
-    h('p', {}, 'Changes apply system-wide. Restart Windows after switching profiles. Use Restore Defaults to undo WinUtil update policies.')));
+    h('p', {}, 'These profiles are documented previews. This build does not apply Windows Update policies.')));
   return h('div', { class: 'pane padded' },
     h('div', { style: 'margin-bottom:16px;max-width:520px' }, searchLine('updates', 'Search update profiles and their effects')),
     cards);
@@ -1150,7 +1225,7 @@ function settingsPane(): HTMLElement {
     selectField('Theme', ['dark', 'light'], p.theme, (v) => { p.theme = v as ThemeMode; render(); }),
     selectField('Density', ['comfortable', 'compact'], p.density, (v) => { p.density = v as Density; render(); }),
     colorField('Accent color', p.accent, (v) => { p.accent = v; render(); }),
-    selectField('Font family', ['Roboto', 'Segoe UI', 'Arial', 'Consolas', 'Georgia'], p.font, (v) => { p.font = v; render(); }),
+    selectField('Font family', ['Segoe UI Variable', 'Segoe UI', 'Arial', 'Consolas', 'Georgia'], p.font, (v) => { p.font = v; render(); }),
     rangeField('Font scale', 0.9, 1.25, 0.05, p.scale, (v) => { p.scale = v; applyPrefs(); }),
     rangeField('Font weight', 300, 700, 100, p.weight, (v) => { p.weight = v; applyPrefs(); }),
     rangeField('Corner radius', 8, 28, 1, p.radius, (v) => { p.radius = v; applyPrefs(); }),
@@ -1249,7 +1324,7 @@ function openMenu(x: number, y: number, key: string, options: string[], pick: (v
     })());
   };
   const input = h('input', {
-    placeholder: 'Filter this menu', value: s.text, spellcheck: 'false',
+    placeholder: 'Filter this menu', 'aria-label': 'Filter this dropdown menu', value: s.text, spellcheck: 'false',
     oninput: (e: Event) => { s.text = (e.target as HTMLInputElement).value; paint(); },
     onclick: (e: MouseEvent) => e.stopPropagation(),
   });
@@ -1353,26 +1428,33 @@ function applyPreset(name: string): void {
 
 function primaryAction(): void {
   if (!state.selected.size) { snack('Nothing is selected.'); return; }
-  const kind: RunKind = state.view === 'config' ? 'feature' : state.view === 'tweaks' ? 'tweak' : 'install';
-  gate(`Run ${state.selected.size} selected item(s)`, kind);
+  if (state.view !== 'install') { snack('This operation is unavailable until its reviewed system adapter is installed.'); return; }
+  const ids = selectedPackageIds();
+  gate(`Install ${ids.length} selected package(s)`, 'install', ids);
 }
 
 async function runNow(kind: RunKind, ids: string[]): Promise<void> {
-  if (!ids.length) { snack('Nothing is selected.'); return; }
+  if (kind !== 'upgrade' && !ids.length) { snack('Nothing is selected.'); return; }
   await ensureDeps();
-  state.queue = { active: true, index: 0, total: ids.length, current: ids[0], log: [] };
+  const total = kind === 'upgrade' ? 1 : ids.length;
+  state.queue = { active: true, index: 0, total, current: ids[0] ?? 'all installed packages', log: [] };
   render();
   const res = await bridge().run(kind, ids);
   state.queue.active = false;
-  state.runOutput = `$ winutil ${kind} ×${ids.length}\n${res.stdout}${res.stderr ? `\n${res.stderr}` : ''}\nexit ${res.code}`;
-  record(kind, `${kind} completed for ${ids.length} item(s), exit ${res.code}`);
+  state.runOutput = `$ winutil ${kind} ×${total}\n${res.stdout}${res.stderr ? `\n${res.stderr}` : ''}\nexit ${res.code}`;
+  record(kind, `${kind} completed for ${total} item(s), exit ${res.code}`);
   state.notifications = [{
     id: `n-${Date.now()}`, icon: res.ok ? 'download_done' : 'error',
     title: res.ok ? `${kind} finished` : `${kind} failed (exit ${res.code})`,
-    detail: `${ids.length} item(s) processed automatically · no prompts`, read: false,
+    detail: `${total} item(s) processed automatically · no prompts`, read: false,
   }, ...state.notifications];
   render();
-  snack(res.ok ? `${kind}: ${ids.length} item(s) completed automatically.` : `${kind} failed with exit ${res.code}. See the output.`);
+  snack(res.ok ? `${kind}: ${total} item(s) completed automatically.` : `${kind} failed with exit ${res.code}. See the output.`);
+}
+
+function selectedPackageIds(): string[] {
+  const selected = state.selected;
+  return state.catalog.apps.filter((app) => selected.has(app.id)).map((app) => app.winget);
 }
 
 /** Prerequisites install themselves; the user is never sent to a browser. */
@@ -1478,7 +1560,7 @@ function contextMenu(key: string, x: number, y: number, items: MenuItem[], title
     list.replaceChildren(...(shown ? out : [h('div', { class: 'menu-empty' }, 'Nothing in this menu matches the filter.')]));
   };
   const input = h('input', {
-    placeholder: 'Filter this menu', value: s.text, spellcheck: 'false',
+    placeholder: 'Filter this menu', 'aria-label': `Filter ${title || 'context menu'}`, value: s.text, spellcheck: 'false',
     oninput: (e: Event) => { s.text = (e.target as HTMLInputElement).value; paint(); },
     onclick: (e: MouseEvent) => e.stopPropagation(),
   });
@@ -1579,7 +1661,7 @@ function dialogLayer(): HTMLElement {
       case 'tabs': return tabsDialog();
       case 'appearance': return appearanceDialog();
       case 'lock': return lockDialog();
-      case 'lockwizard': return lockWizardDialog();
+      case 'lockwizard': return lockDialog();
       case 'auth': return authDialog();
       case 'notifications': return notificationsDialog();
       case 'export': return exportDialog();
@@ -1608,7 +1690,7 @@ function dialogSearchLine(placeholder: string, onInput?: () => void): HTMLElemen
   return h('div', { class: 'searchbar', style: 'max-width:none;margin-bottom:14px' },
     icon('search', ''),
     h('input', {
-      value: state.dialogSearch.text, placeholder,
+      value: state.dialogSearch.text, placeholder, 'aria-label': placeholder,
       oninput: (e: Event) => { state.dialogSearch.text = (e.target as HTMLInputElement).value; onInput ? onInput() : render(); const i = $<HTMLInputElement>('.dialog input'); i?.focus(); i?.setSelectionRange(i.value.length, i.value.length); },
     }),
     h('button', {
@@ -1904,7 +1986,7 @@ function searchableRows(): Array<[string, string]> {
     case 'tweaks': return tweakGroups(state.catalog.tweaks).flatMap((g) => g.items.map((i) => [i.id, `${i.name} ${i.desc} ${i.cat} ${i.id}`] as [string, string]));
     case 'config': return tweakGroups(state.catalog.features).flatMap((g) => g.items.map((i) => [i.id, `${i.name} ${i.desc} ${i.cat} ${i.id}`] as [string, string]));
     case 'history': return filteredHistory().map((e) => [e.id, `${e.action} ${e.detail}`]);
-    case 'docs': return DOC_PAGES.map((p) => [p.id, `${p.title} ${p.section} ${p.body}`]);
+    case 'docs': return SHIPPED_DOC_PAGES.map((p) => [p.id, `${p.title} ${p.section} ${p.body}`]);
     default: return [];
   }
 }
@@ -1973,7 +2055,7 @@ function appearanceDialog(): HTMLElement {
       `Target: ${target.label} · id ${target.id}. Shift+right-click any tab or group header reaches this editor directly.`),
     h('div', { class: 'grid2' },
       colorField('Accent color', o.accent, (v) => { o.accent = v; }),
-      selectField('Font family', ['Roboto', 'Segoe UI', 'Arial', 'Consolas', 'Georgia'], o.font, (v) => { o.font = v; }),
+      selectField('Font family', ['Segoe UI Variable', 'Segoe UI', 'Arial', 'Consolas', 'Georgia'], o.font, (v) => { o.font = v; }),
       rangeField('Corner radius', 8, 32, 1, o.radius, (v) => { o.radius = v; }),
       rangeField('Font scale', 0.9, 1.3, 0.05, o.scale, (v) => { o.scale = v; }),
       rangeField('Font weight', 300, 700, 100, o.weight, (v) => { o.weight = v; })),
@@ -1989,6 +2071,10 @@ function appearanceDialog(): HTMLElement {
 }
 
 function lockDialog(): HTMLElement {
+  return dialogShell('Not installed in this build', 'Locks', [
+    emptyState('Element and tab locks are unavailable until credential-vault storage, standards-compliant TOTP, recovery, and accessibility verification are complete.'),
+  ], [h('button', { class: 'btn filled', onclick: closeDialog }, 'Close')]);
+
   const lockables: Array<[string, string]> = [
     ...state.tabs.map((tb) => [`tab-${tb.id}`, `Tab · ${VIEW_META[tb.view].title}`] as [string, string]),
     ...[...new Set(state.tabs.map((tb) => tb.group).filter(Boolean))].map((g) => [`group-${g}`, `Tab group · ${g}`] as [string, string]),
@@ -2050,11 +2136,8 @@ function lockDialog(): HTMLElement {
 }
 
 function openLockWizard(id: string, label: string, mode: 'set' | 'unlock' = 'set'): void {
-  state.wizard = {
-    id, label, mode, step: 0, method: 'password', pw1: '', pw2: '', code: '', attempt: '',
-    secret: `S${Math.random().toString(32).slice(2, 12).toUpperCase()}`,
-  };
-  openDialog('lockwizard');
+  state.dialogArg = `${id}:${label}:${mode}`;
+  openDialog('lock');
 }
 
 /** One wizard per element. It never touches, reads or reuses any other element's

@@ -8,6 +8,19 @@ open-source WinUtil catalogue in a frameless Material Design 3 interface.
 > Tweaks, optional features, update profiles, AppX removal, ISO servicing, and
 > other higher-risk operations fail closed until their reviewed adapters ship.
 
+![The real built Material System Utility package catalogue in dark mode, captured on an isolated Windows desktop](docs/screenshots/safe-package-catalogue-dark.png)
+
+<details>
+<summary>What this capture proves</summary>
+
+This image was captured from the locally built application after the icon,
+keyboard-focus, search-label, unsupported-action, and package-ID boundary repairs.
+It shows the 227-entry catalogue, distinct toolbar and row affordances, exact package
+identifiers, a frameless title bar, and the application running without touching the
+operator's visible desktop.
+
+</details>
+
 ## Build
 
 Double-click `build.bat` on a fresh Windows installation. It installs Node.js LTS
@@ -36,6 +49,6 @@ uses distinct branding and does not reuse upstream logos or screenshots.
 - System operations without a reviewed adapter return an explicit unsupported result.
 - The app bundles no remote fonts, analytics, credentials, sample history, or sample secrets.
 
-Long-form feature documentation, one-click fresh-machine scripts, release automation,
+Long-form feature documentation, release automation,
 the landing page, real captures, and the remaining reviewed system adapters are part of
 the active release-grade implementation and are not claimed complete by this baseline.

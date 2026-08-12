@@ -20,4 +20,15 @@ assert.match(main, /'--source', item\.source/);
 
 const html = await readFile(new URL('../src/renderer/index.html', import.meta.url), 'utf8');
 assert.doesNotMatch(html, /fonts\.googleapis|fonts\.gstatic|https?:\/\//);
+
+const renderer = await readFile(new URL('../src/renderer/renderer.ts', import.meta.url), 'utf8');
+const styles = await readFile(new URL('../src/renderer/styles.css', import.meta.url), 'utf8');
+assert.match(renderer, /function selectedPackageIds\(\): string\[\]/);
+assert.match(renderer, /\.map\(\(app\) => app\.winget\)/);
+assert.doesNotMatch(renderer, /locked: true/);
+assert.doesNotMatch(renderer, /requestAnimationFrame\(drawQr\)/);
+assert.match(renderer, /case 'lockwizard': return lockDialog\(\);/);
+assert.match(renderer, /role: 'tab'/);
+assert.match(renderer, /role: 'checkbox'/);
+assert.match(styles, /\[tabindex\]:focus-visible/);
 console.log('PASS: safe catalogue baseline verified');

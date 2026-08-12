@@ -1,3 +1,5 @@
+import type { PersonalVocabularyErrorCode } from './personal-vocabulary';
+
 /**
  * Shared contracts between the Electron main process, the preload bridge and the renderer.
  * No runtime code lives here so it can be imported from either side.
@@ -182,6 +184,15 @@ export interface AuthenticatorCodes {
   digits: number;
 }
 
+export type PersonalVocabularyState =
+  | { state: 'empty'; entryCount: 0; mappings: Record<string, never> }
+  | { state: 'invalid'; entryCount: 0; mappings: Record<string, never> }
+  | { state: 'loaded'; entryCount: number; mappings: Readonly<Record<string, string>> };
+
+export type PersonalVocabularyUploadResult =
+  | { ok: true; vocabulary: PersonalVocabularyState }
+  | { ok: false; code: PersonalVocabularyErrorCode; message: 'Personal vocabulary data is invalid.' };
+
 export type RunKind = 'install' | 'upgrade' | 'uninstall' | 'tweak' | 'undo' | 'feature' | 'update-profile';
 
 /** The surface exposed on `window.winutil` by the preload bridge. */
@@ -211,6 +222,9 @@ export interface Bridge {
   authenticatorList(): Promise<AuthenticatorEntry[]>;
   authenticatorCodes(id: string): Promise<AuthenticatorCodes>;
   authenticatorRemove(id: string): Promise<boolean>;
+  personalVocabularyLoad(): Promise<PersonalVocabularyState>;
+  personalVocabularyUpload(payload: Uint8Array): Promise<PersonalVocabularyUploadResult>;
+  personalVocabularyClear(): Promise<PersonalVocabularyState>;
 }
 
 declare global {

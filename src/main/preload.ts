@@ -30,6 +30,9 @@ const bridge: Bridge = {
   authenticatorList: () => ipcRenderer.invoke('authenticator:list'),
   authenticatorCodes: (id) => ipcRenderer.invoke('authenticator:codes', id),
   authenticatorRemove: (id) => ipcRenderer.invoke('authenticator:remove', id),
+  personalVocabularyLoad: () => ipcRenderer.invoke('personal-vocabulary:load'),
+  personalVocabularyUpload: (payload) => ipcRenderer.invoke('personal-vocabulary:upload', payload),
+  personalVocabularyClear: () => ipcRenderer.invoke('personal-vocabulary:clear'),
 };
 
 contextBridge.exposeInMainWorld('winutil', bridge);

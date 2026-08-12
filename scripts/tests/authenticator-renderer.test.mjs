@@ -37,8 +37,18 @@ test('entry search owns an adjacent full regex builder and dialog semantics are 
   assert.match(renderer, /role: 'dialog', tabindex: '-1', 'aria-modal': 'true', 'aria-labelledby': titleId/u);
   assert.match(renderer, /\(firstInput \?\? dialog\)\?\.focus\(\)/u);
   assert.match(renderer, /'aria-haspopup': 'listbox', 'aria-expanded': 'false'/u);
+  assert.match(renderer, /role: 'listbox'/u);
+  assert.match(renderer, /role: 'option', 'aria-selected'/u);
+  assert.match(renderer, /event\.key === 'Escape'.*event\.stopPropagation\(\).*close\(\)/su);
+  assert.match(renderer, /\['ArrowDown', 'ArrowUp', 'Home', 'End'\]/u);
   assert.match(renderer, /e\.key !== 'Tab'/u);
   assert.match(renderer, /dialogReturnFocus\?\.focus\(\)/u);
+});
+
+test('authenticator QR, removal, and unmapped errors retain localized factual detail', () => {
+  assert.match(renderer, /alt: `\$\{authText\('qrAlt'\)\}/u);
+  assert.match(renderer, /gate\(`\$\{authText\('removeAction'\)\}/u);
+  assert.match(renderer, /return `\$\{authText\('operationFailed'\)\}: \$\{detail\}`/u);
 });
 
 test('authenticator controls meet the 44px target and narrow dialogs reflow', () => {

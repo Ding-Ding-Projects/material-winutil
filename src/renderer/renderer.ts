@@ -27,6 +27,17 @@ type TotpAlgorithm = 'SHA1' | 'SHA256' | 'SHA512';
 interface AuthenticatorEntry { id: string; label: string; account: string; issuer?: string; algorithm: TotpAlgorithm; digits: number; period: number; createdAt: string; }
 interface AuthenticatorRegistration { registrationId: string; entry: AuthenticatorEntry; manualSecret: string; uri: string; qrDataUrl: string; imported: boolean; expiresAt: string; }
 interface AuthenticatorCodes { id: string; current: string; next: string; secondsRemaining: number; period: number; digits: number; }
+type PersonalVocabularyState =
+  | { state: 'empty'; entryCount: 0; mappings: Record<string, never> }
+  | { state: 'invalid'; entryCount: 0; mappings: Record<string, never> }
+  | { state: 'loaded'; entryCount: number; mappings: Readonly<Record<string, string>> };
+type PersonalVocabularyErrorCode =
+  | 'payload-too-large' | 'invalid-encoding' | 'invalid-json' | 'depth-limit' | 'duplicate-key'
+  | 'unsafe-key' | 'invalid-schema' | 'too-many-entries' | 'invalid-key' | 'invalid-value';
+type PersonalVocabularyUploadResult =
+  | { ok: true; vocabulary: PersonalVocabularyState }
+  | { ok: false; code: PersonalVocabularyErrorCode; message: 'Personal vocabulary data is invalid.' };
+const MAX_PERSONAL_VOCABULARY_BYTES = 64 * 1024;
 interface Prefs {
   theme: ThemeMode; density: Density; language: LanguageMode;
   narrator: 'English' | 'Yue' | 'Both'; narratorEnabled: boolean;
@@ -58,6 +69,9 @@ interface Bridge {
   authenticatorList(): Promise<AuthenticatorEntry[]>;
   authenticatorCodes(id: string): Promise<AuthenticatorCodes>;
   authenticatorRemove(id: string): Promise<boolean>;
+  personalVocabularyLoad(): Promise<PersonalVocabularyState>;
+  personalVocabularyUpload(payload: Uint8Array): Promise<PersonalVocabularyUploadResult>;
+  personalVocabularyClear(): Promise<PersonalVocabularyState>;
 }
 
 /* ------------------------------------------------------------- constants -- */
@@ -493,6 +507,10 @@ const state = {
     fixtureMode: false,
     draft: { issuer: 'Material System Utility', account: '', label: '', algorithm: 'SHA1' as TotpAlgorithm, digits: 6, period: 30, uri: '', code: '' },
   },
+  vocabulary: {
+    data: { state: 'empty', entryCount: 0, mappings: {} } as PersonalVocabularyState,
+    status: 'empty' as 'empty' | 'loaded' | 'invalid', loading: false,
+  },
   snack: '',
   isoLog: '[00:00:00] Waiting for an ISO. Select an official Microsoft image to begin.',
 };
@@ -604,19 +622,118 @@ const $ = <T extends HTMLElement = HTMLElement>(sel: string): T | null => docume
 
 function h(tag: string, attrs: Record<string, unknown> = {}, ...kids: Array<Node | string | null | false>): HTMLElement {
   const node = document.createElement(tag);
+  const personalizable = attrs['data-personalizable'] === 'true';
   for (const [k, v] of Object.entries(attrs)) {
     if (v === null || v === undefined || v === false) continue;
     if (k === 'class') node.className = String(v);
     else if (k === 'html') node.innerHTML = String(v);
     else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2).toLowerCase(), v as EventListener);
     else if (k === 'style' && typeof v === 'string') node.setAttribute('style', v);
+    else if (['title', 'placeholder', 'aria-label', 'aria-description', 'alt'].includes(k)) node.setAttribute(k, personalizable ? personalText(String(v)) : String(v));
     else node.setAttribute(k, String(v));
   }
   for (const kid of kids) {
     if (kid === null || kid === undefined || kid === false) continue;
-    node.appendChild(typeof kid === 'string' ? document.createTextNode(kid) : kid);
+    node.appendChild(typeof kid === 'string' ? document.createTextNode(personalizable ? personalText(kid) : kid) : kid);
   }
   return node;
+}
+
+/** Personal vocabulary applies only at the private renderer text boundary.
+ * Technical spans, commands, URLs, identifiers, paths, and form values keep
+ * their exact source text. The main process has already validated mappings. */
+function personalText(input: string): string {
+  if (state.vocabulary.data.state !== 'loaded' || !input) return input;
+  const mappings = state.vocabulary.data.mappings;
+  const keys = Object.keys(mappings).sort((left, right) => right.length - left.length || (left < right ? -1 : left > right ? 1 : 0));
+  let output = ''; let offset = 0;
+  while (offset < input.length) {
+    const key = keys.find((candidate) => input.startsWith(candidate, offset));
+    if (!key) { output += input[offset]; offset += 1; continue; }
+    output += mappings[key]; offset += key.length;
+  }
+  return output;
+}
+
+type VocabularyCopyKey = 'title' | 'description' | 'choose' | 'replace' | 'clear' | 'empty' | 'loaded' | 'invalid' | 'privacy' | 'loading';
+const VOCABULARY_COPY: Record<LanguageMode, Record<VocabularyCopyKey, string>> = {
+  English: {
+    title: 'Personal vocabulary', description: 'Choose a local version 1 JSON file to replace app-owned display text.',
+    choose: 'Choose local JSON', replace: 'Replace local JSON', clear: 'Clear and reset', empty: 'No file loaded. Shipped wording is active.',
+    loaded: 'Local vocabulary loaded: {count} replacement(s).', invalid: 'That JSON is invalid. The previous valid vocabulary, if any, remains active.',
+    privacy: 'Processed only on this device. File contents, source path, and metadata are omitted from exports, history, logs, and telemetry.',
+    loading: 'Validating the local file…',
+  },
+  Yue: {
+    title: '個人詞彙', description: '揀一個本機第 1 版 JSON 檔，替換應用程式自己顯示嘅文字。',
+    choose: '揀本機 JSON', replace: '更換本機 JSON', clear: '清除並重設', empty: '未載入檔案，依家用緊原裝文字。',
+    loaded: '本機詞彙已載入：{count} 個替換。', invalid: '呢個 JSON 無效；如果之前有有效詞彙，會繼續照用，唔會半途換字。',
+    privacy: '只喺呢部裝置處理。檔案內容、來源路徑同中繼資料唔會寫入匯出、歷史、日誌或遙測。',
+    loading: '正在驗證本機檔案…',
+  },
+  Bilingual: {} as Record<VocabularyCopyKey, string>,
+};
+
+function vocabularyCopy(key: VocabularyCopyKey, count = 0): string {
+  const interpolate = (value: string): string => personalText(value).replace('{count}', String(count));
+  if (state.prefs.language === 'Bilingual') {
+    return `${interpolate(VOCABULARY_COPY.English[key])} · ${interpolate(VOCABULARY_COPY.Yue[key])}`;
+  }
+  return interpolate(VOCABULARY_COPY[state.prefs.language][key]);
+}
+
+async function loadPersonalVocabulary(): Promise<void> {
+  try {
+    state.vocabulary.data = await bridge().personalVocabularyLoad();
+    state.vocabulary.status = state.vocabulary.data.state;
+  } catch {
+    state.vocabulary.data = { state: 'invalid', entryCount: 0, mappings: {} };
+    state.vocabulary.status = 'invalid';
+  }
+}
+
+async function uploadPersonalVocabulary(file: File): Promise<void> {
+  if (state.vocabulary.loading) return;
+  state.vocabulary.loading = true;
+  render();
+  let payload: Uint8Array | null = null;
+  try {
+    if (file.size > MAX_PERSONAL_VOCABULARY_BYTES) throw new Error('payload-too-large');
+    payload = new Uint8Array(await file.arrayBuffer());
+    const result = await bridge().personalVocabularyUpload(payload);
+    if (!result.ok) {
+      state.vocabulary.status = 'invalid';
+      snack(vocabularyCopy('invalid'));
+      return;
+    }
+    state.vocabulary.data = result.vocabulary;
+    state.vocabulary.status = 'loaded';
+    snack(vocabularyCopy('loaded', result.vocabulary.entryCount));
+  } catch {
+    state.vocabulary.status = 'invalid';
+    snack(vocabularyCopy('invalid'));
+  } finally {
+    payload?.fill(0);
+    state.vocabulary.loading = false;
+    render();
+  }
+}
+
+async function clearPersonalVocabulary(): Promise<void> {
+  if (state.vocabulary.loading) return;
+  state.vocabulary.loading = true;
+  render();
+  try {
+    state.vocabulary.data = await bridge().personalVocabularyClear();
+    state.vocabulary.status = 'empty';
+    snack(vocabularyCopy('empty'));
+  } catch {
+    state.vocabulary.status = 'invalid';
+    snack(vocabularyCopy('invalid'));
+  } finally {
+    state.vocabulary.loading = false;
+    render();
+  }
 }
 
 const ICONS: Record<string, string> = {
@@ -747,6 +864,9 @@ function bridge(): Bridge {
     authenticatorList: async () => [],
     authenticatorCodes: async () => { throw new Error('Authenticator codes are available only in the installed application.'); },
     authenticatorRemove: async () => false,
+    personalVocabularyLoad: async () => ({ state: 'empty', entryCount: 0, mappings: {} }),
+    personalVocabularyUpload: async () => ({ ok: false, code: 'invalid-schema', message: 'Personal vocabulary data is invalid.' }),
+    personalVocabularyClear: async () => ({ state: 'empty', entryCount: 0, mappings: {} }),
   };
   w.winutil = fake;
   return fake;
@@ -781,15 +901,16 @@ function t(key: CopyKey, values: Record<string, string | number> = {}): string {
   const yue = COPY_YUE[key];
   const source = state.prefs.language === 'English' ? english
     : state.prefs.language === 'Yue' ? yue : `${english} · ${yue}`;
-  return source.replace(/\{(\w+)\}/g, (_, name: string) => String(values[name] ?? `{${name}}`));
+  return personalText(source).replace(/\{(\w+)\}/g, (_, name: string) => String(values[name] ?? `{${name}}`));
 }
 
 function viewTitle(view: ViewId): string { return t(VIEW_COPY[view].title); }
 function viewSearch(view: ViewId): string { return t(VIEW_COPY[view].search); }
 function categoryLabel(category: string): string {
   const yue = CATEGORY_YUE[category];
-  if (!yue || state.prefs.language === 'English') return category;
-  return state.prefs.language === 'Yue' ? yue : `${category} · ${yue}`;
+  const source = !yue || state.prefs.language === 'English' ? category
+    : state.prefs.language === 'Yue' ? yue : `${category} · ${yue}`;
+  return personalText(source);
 }
 
 /* ------------------------------------------------------------ derivation -- */
@@ -846,7 +967,7 @@ function appBar(): HTMLElement {
       'aria-controls': 'primary-navigation', 'aria-expanded': state.drawerCollapsed ? 'true' : 'false',
       onclick: () => { state.drawerCollapsed = !state.drawerCollapsed; render(); },
     }, icon('menu')),
-    h('div', { class: 'brand' },
+    h('div', { class: 'brand', 'data-personalizable': 'true' },
       h('div', { class: 'brand-mark' }, 'W'),
       h('div', { class: 'brand-name' }, 'Material System Utility')),
     searchField(),
@@ -1511,6 +1632,43 @@ function settingsPane(): HTMLElement {
     switchField('Optional narrator, off by default', p.narratorEnabled, () => { p.narratorEnabled = !p.narratorEnabled; render(); }));
   if (show('Language and voice')) cards.appendChild(card('Language and voice', '', [lang], 'wide'));
 
+  const vocabulary = state.vocabulary;
+  const vocabularyStatus = vocabulary.loading ? vocabularyCopy('loading')
+    : vocabulary.status === 'invalid' ? vocabularyCopy('invalid')
+      : vocabulary.data.state === 'loaded' ? vocabularyCopy('loaded', vocabulary.data.entryCount) : vocabularyCopy('empty');
+  if (show(`Personal vocabulary ${vocabularyStatus} local JSON replace clear reset privacy`)) {
+    const vocabularyStatusId = 'personal-vocabulary-status';
+    const upload = h('input', {
+      type: 'file', accept: 'application/json,.json', 'data-vocabulary-upload': 'true',
+      'aria-label': vocabulary.data.state === 'loaded' ? vocabularyCopy('replace') : vocabularyCopy('choose'),
+      'aria-describedby': vocabularyStatusId,
+      disabled: vocabulary.loading,
+      onchange: (event: Event) => {
+        const input = event.target as HTMLInputElement;
+        const file = input.files?.item(0);
+        input.value = '';
+        if (file) void uploadPersonalVocabulary(file);
+      },
+    });
+    cards.appendChild(card(vocabularyCopy('title'), '', [
+      h('p', {}, vocabularyCopy('description')),
+      h('div', {
+        id: vocabularyStatusId,
+        class: `feedback${vocabulary.status === 'invalid' ? ' bad' : ''}`,
+        role: vocabulary.status === 'invalid' ? 'alert' : 'status', 'aria-live': 'polite',
+      }, vocabularyStatus),
+      h('p', { class: 'vocabulary-privacy' }, vocabularyCopy('privacy')),
+      h('div', { class: 'vocabulary-controls' },
+        h('label', { class: 'field vocabulary-picker' },
+          (vocabulary.data.state === 'loaded' ? vocabularyCopy('replace') : vocabularyCopy('choose')).toUpperCase(), upload),
+        h('button', {
+          class: 'btn outlined', disabled: vocabulary.loading || vocabulary.data.state === 'empty',
+          title: vocabulary.data.state === 'empty' ? vocabularyCopy('empty') : vocabularyCopy('clear'),
+          onclick: () => void clearPersonalVocabulary(),
+        }, vocabularyCopy('clear'))),
+    ], 'wide'));
+  }
+
   const appearance = h('div', { class: 'grid2' },
     selectField('Theme', ['dark', 'light'], p.theme, (v) => { p.theme = v as ThemeMode; render(); }),
     selectField('Density', ['comfortable', 'compact'], p.density, (v) => { p.density = v as Density; render(); }),
@@ -1585,12 +1743,15 @@ const emptyState = (msg: string): HTMLElement => h('div', { class: 'empty' }, ic
 function selectField(label: string, options: string[], value: string, onChange: (v: string) => void): HTMLElement {
   const key = `select:${label}`;
   const button = h('button', {
-      class: 'select-button', 'aria-label': `${label}: ${value}`, 'aria-haspopup': 'listbox', 'aria-expanded': 'false',
+      class: 'select-button', 'data-select-key': key, 'aria-label': `${label}: ${value}`, 'aria-haspopup': 'listbox', 'aria-expanded': 'false',
       onclick: (e: MouseEvent) => {
         e.stopPropagation();
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
         button.setAttribute('aria-expanded', 'true');
-        openMenu(rect.left, rect.bottom + 4, key, options, (v) => { onChange(v); }, Math.max(rect.width, 240), value, () => button.setAttribute('aria-expanded', 'false'));
+        openMenu(rect.left, rect.bottom + 4, key, options, (v) => { onChange(v); }, Math.max(rect.width, 240), value, () => {
+          button.setAttribute('aria-expanded', 'false');
+          window.setTimeout(() => [...document.querySelectorAll<HTMLButtonElement>('[data-select-key]')].find((candidate) => candidate.dataset.selectKey === key)?.focus(), 0);
+        });
       },
     }, h('span', {}, value), icon('arrow_drop_down'));
   return h('div', { class: 'field' }, label.toUpperCase(), button);
@@ -1599,7 +1760,20 @@ function selectField(label: string, options: string[], value: string, onChange: 
 function openMenu(x: number, y: number, key: string, options: string[], pick: (v: string) => void, width = 260, selected = '', onClose?: () => void): void {
   document.querySelector('.menu')?.remove();
   const s = sq(key);
-  const menu = h('div', { class: 'menu', style: `left:${Math.min(x, window.innerWidth - width - 12)}px;top:${Math.min(y, window.innerHeight - 320)}px;min-width:${width}px` });
+  const menu = h('div', {
+    class: 'menu', style: `left:${Math.min(x, window.innerWidth - width - 12)}px;top:${Math.min(y, window.innerHeight - 320)}px;min-width:${width}px`,
+    onkeydown: (event: KeyboardEvent) => {
+      const buttons = [...menu.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); return; }
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || !buttons.length) return;
+      event.preventDefault(); event.stopPropagation();
+      const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+        : event.key === 'ArrowDown' ? (current + 1 + buttons.length) % buttons.length
+          : (current - 1 + buttons.length) % buttons.length;
+      buttons[next].focus();
+    },
+  });
   const close = (): void => { menu.remove(); document.removeEventListener('click', close); onClose?.(); };
   const paint = (): void => {
     const match = makeMatcher(s);
@@ -1609,7 +1783,7 @@ function openMenu(x: number, y: number, key: string, options: string[], pick: (v
       const found = options.filter(match);
       if (!found.length) return [h('div', { class: 'menu-empty' }, 'Nothing matches this filter.')];
       return found.map((o) => h('button', {
-        class: o === selected ? 'menu-selected' : '',
+        class: o === selected ? 'menu-selected' : '', role: 'option', 'aria-selected': o === selected ? 'true' : 'false', tabindex: '-1',
         onclick: () => { pick(o); close(); render(); },
       }, icon('check', o === selected ? '' : 'hidden'), h('span', {}, o)));
     })());
@@ -1625,7 +1799,7 @@ function openMenu(x: number, y: number, key: string, options: string[], pick: (v
       class: `regex-btn${s.regex ? ' on' : ''}`, title: 'Regex builder for this menu',
       onclick: () => { state.regexDraft.target = key; close(); openDialog('regex'); },
     }, '.*')));
-  menu.appendChild(h('div', { class: 'menu-list' }));
+  menu.appendChild(h('div', { class: 'menu-list', role: 'listbox', 'aria-label': key.replace(/^select:/, '') }));
   document.body.appendChild(menu);
   paint();
   input.focus();
@@ -2033,6 +2207,10 @@ function paletteDialog(): HTMLElement {
     { label: 'Open the tab manager', sub: 'Groups, pins and safe closing', icon: 'tab_group', act: () => openDialog('tabs') },
     { label: 'Edit appearance of the app root', sub: 'Per-element appearance', icon: 'palette', act: () => openAppearance('app-root', 'Application root') },
     { label: 'Open the authenticator', sub: 'Vault-backed local RFC 6238 codes', icon: 'pin', act: () => openDialog('auth') },
+    { label: 'Manage personal vocabulary', sub: 'Local JSON upload, replace, status, and clear controls', icon: 'translate', act: () => {
+      closeDialog(); go('settings'); state.searches.settings = { text: 'Personal vocabulary', regex: false, flags: 'iu' };
+      render(); window.setTimeout(() => document.querySelector<HTMLInputElement>('[data-vocabulary-upload="true"]')?.focus(), 0);
+    } },
     { label: 'Export this view', sub: '17 formats', icon: 'download', act: () => openDialog('export') },
     { label: 'Mark already-installed packages', sub: 'Queries winget', icon: 'fact_check', act: () => { closeDialog(); void loadInstalled(); } },
     { label: 'Apply the Standard tweak preset', sub: 'Balanced defaults for most users', icon: 'verified', act: () => { closeDialog(); go('tweaks'); applyPreset('Standard'); } },
@@ -2500,6 +2678,7 @@ const AUTH_COPY = {
     copiedManual: 'Manual secret copied for this one-time registration.', copiedCurrent: 'Current code copied.', copiedNext: 'Next code copied.', clipboardRefused: 'Clipboard access was refused.',
     paired: 'is paired. The one-time secret is no longer displayed.', removed: 'Removed', removeFailed: 'The authenticator entry was not removed.', operationFailed: 'Authenticator operation failed',
     invalidMatch: 'The confirmation code did not match.', waitRetry: 'Wait briefly before trying another confirmation code.', tooManyAttempts: 'Too many confirmation attempts; start registration again.', vaultUnavailable: 'The operating-system credential vault is unavailable.',
+    qrAlt: 'QR code for', qrAccount: 'account', removeAction: 'Remove authenticator entry',
   },
   Yue: {
     eyebrow: '本機 RFC 6238 驗證碼', title: '驗證器', search: '搜尋發行者、帳戶或者標籤',
@@ -2523,6 +2702,7 @@ const AUTH_COPY = {
     copiedManual: '今次配對用嘅手動密鑰已複製。', copiedCurrent: '目前驗證碼已複製。', copiedNext: '下一個驗證碼已複製。', clipboardRefused: '剪貼簿存取被拒絕。',
     paired: '已配對；一次性密鑰唔會再顯示。', removed: '已移除', removeFailed: '驗證器項目未能移除。', operationFailed: '驗證器操作失敗',
     invalidMatch: '確認驗證碼唔吻合。', waitRetry: '請等一陣先再試另一個確認驗證碼。', tooManyAttempts: '確認次數太多；請重新開始配對。', vaultUnavailable: '作業系統認證資料庫暫時不可用。',
+    qrAlt: '配對 QR：', qrAccount: '帳戶', removeAction: '移除驗證器項目',
   },
 } as const;
 
@@ -2539,7 +2719,7 @@ function authErrorText(error: unknown): string {
   if (/too many confirmation/i.test(detail)) return authText('tooManyAttempts');
   if (/credential.*unavailable|credential vault/i.test(detail)) return authText('vaultUnavailable');
   if (/expired|not found/i.test(detail)) return authText('expired');
-  return state.prefs.language === 'English' ? `${authText('operationFailed')}: ${detail}` : authText('operationFailed');
+  return `${authText('operationFailed')}: ${detail}`;
 }
 
 function stopAuthenticatorRefresh(): void {
@@ -2715,7 +2895,7 @@ function copyAuthenticatorValue(value: string, message: string): void {
 }
 
 function removeAuthenticatorEntry(entry: AuthenticatorEntry): void {
-  gate(`Remove authenticator entry “${entry.label}”`, undefined, undefined, () => {
+  gate(`${authText('removeAction')} “${entry.label}”`, undefined, undefined, () => {
     void (async () => {
       try {
         const removed = await bridge().authenticatorRemove(entry.id);
@@ -2755,7 +2935,7 @@ function authDialog(): HTMLElement {
     return dialogShell(authText('eyebrow'), authText('registration'), [
       h('p', { class: 'auth-hint' }, authText('pairHint')),
       h('div', { class: 'auth-registration' },
-        h('img', { class: 'auth-qr', src: registration.qrDataUrl, alt: `QR code for ${registration.entry.label}, account ${registration.entry.account}` }),
+        h('img', { class: 'auth-qr', src: registration.qrDataUrl, alt: `${authText('qrAlt')} ${registration.entry.label}, ${authText('qrAccount')} ${registration.entry.account}` }),
         h('div', { class: 'auth-registration-details' },
           h('h3', {}, registration.entry.label),
           h('p', {}, `${registration.entry.issuer || authText('noIssuer')} · ${registration.entry.account}`),
@@ -2872,7 +3052,7 @@ function buildExport(format: string): string {
   const rows = allIdsInView();
   const view = state.view;
   const header = `WinUtil · ${VIEW_META[view].title} · ${rows.length} row(s) · exported ${new Date().toISOString()}`;
-  const note = 'Authenticator secrets and lock credentials are deliberately omitted from this export.';
+  const note = 'Authenticator secrets, lock credentials, and personal-vocabulary data and file metadata are deliberately omitted from this export.';
   switch (format) {
     case 'json': return JSON.stringify({ view, exportedAt: new Date().toISOString(), note, rows }, null, 2);
     case 'jsonl': return rows.map((r) => JSON.stringify({ view, id: r })).join('\n');
@@ -3248,6 +3428,7 @@ function bindShortcuts(): void {
 async function boot(): Promise<void> {
   const saved = await bridge().readPrefs();
   state.prefs = { ...DEFAULT_PREFS, ...saved };
+  await loadPersonalVocabulary();
   try { state.profiles = JSON.parse(localStorage.getItem('winutil.profiles') ?? '[]'); } catch { state.profiles = []; }
   loadWorkspace();
   workspaceReady = true;

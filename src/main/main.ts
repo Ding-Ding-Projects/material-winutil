@@ -7,10 +7,13 @@ import { pathToFileURL } from 'node:url';
 import squirrelStartup from 'electron-squirrel-startup';
 import type {
   AuthenticatorBeginRequest, AuthenticatorCodes, AuthenticatorEntry, AuthenticatorRegistration,
-  CommandResult, ExportFormat, HistoryEntry, Preferences, RunKind, UpdateStatus, WinutilCatalog,
+  CommandResult, ExportFormat, HistoryEntry, PersonalVocabularyState, PersonalVocabularyUploadResult,
+  Preferences, RunKind, UpdateStatus, WinutilCatalog,
 } from '../shared/types';
 import { resolvePackageRequest, validateCatalog, wingetArgs } from './package-policy';
 import { AuthenticatorService } from './authenticator-service';
+import { PersonalVocabularyStore } from './personal-vocabulary-store';
+import { PERSONAL_VOCABULARY_LIMITS } from '../shared/personal-vocabulary';
 
 const ROOT = path.join(__dirname, '..', '..');
 const CONFIG_DIR = path.join(__dirname, '..', 'config');
@@ -25,6 +28,7 @@ let catalogCache: WinutilCatalog | null = null;
 let packageMutationActive = false;
 let historyWriteQueue: Promise<void> = Promise.resolve();
 let authenticatorService: AuthenticatorService | null = null;
+let personalVocabularyStore: PersonalVocabularyStore | null = null;
 const UPDATE_FEED = 'https://github.com/Ding-Ding-Projects/material-winutil/releases/latest/download/';
 const COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_TEXT_PAYLOAD = 2 * 1024 * 1024;
@@ -456,6 +460,31 @@ ipcMain.handle('authenticator:codes', async (event, id: string): Promise<Authent
 ipcMain.handle('authenticator:remove', async (event, id: string): Promise<boolean> => {
   requireTrustedSender(event);
   return authenticator().remove(id);
+});
+
+function personalVocabulary(): PersonalVocabularyStore {
+  if (!personalVocabularyStore) personalVocabularyStore = new PersonalVocabularyStore(USER_DIR());
+  return personalVocabularyStore;
+}
+
+ipcMain.handle('personal-vocabulary:load', async (event): Promise<PersonalVocabularyState> => {
+  requireTrustedSender(event);
+  return personalVocabulary().load();
+});
+ipcMain.handle('personal-vocabulary:upload', async (event, payload: unknown): Promise<PersonalVocabularyUploadResult> => {
+  requireTrustedSender(event);
+  if (!(payload instanceof Uint8Array)) {
+    return { ok: false, code: 'invalid-encoding', message: 'Personal vocabulary data is invalid.' };
+  }
+  const view = payload;
+  if (view.byteLength > PERSONAL_VOCABULARY_LIMITS.maxPayloadBytes) {
+    return { ok: false, code: 'payload-too-large', message: 'Personal vocabulary data is invalid.' };
+  }
+  return personalVocabulary().upload(Uint8Array.from(view));
+});
+ipcMain.handle('personal-vocabulary:clear', async (event): Promise<PersonalVocabularyState> => {
+  requireTrustedSender(event);
+  return personalVocabulary().clear();
 });
 
 app.whenReady().then(() => {

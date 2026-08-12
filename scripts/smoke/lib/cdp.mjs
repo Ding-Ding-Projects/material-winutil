@@ -87,7 +87,10 @@ export class CdpClient {
       awaitPromise: false,
       userGesture: false,
     });
-    if (result.exceptionDetails) throw new Error(`Runtime.evaluate failed: ${result.exceptionDetails.text}`);
+    if (result.exceptionDetails) {
+      const detail = result.exceptionDetails.exception?.description ?? result.exceptionDetails.text;
+      throw new Error(`Runtime.evaluate failed: ${detail}`);
+    }
     return result.result?.value;
   }
 

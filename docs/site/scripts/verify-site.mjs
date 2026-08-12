@@ -23,7 +23,7 @@ assert.match(html, /aria-orientation="vertical"/);
 assert.match(html, /id="settings-search"/);
 assert.match(html, /id="settings-regex-button"/);
 assert.match(html, /id="command-palette"/);
-assert.match(html, /releases\/download\/v0\.1\.0-build\.4\.1\/MaterialSystemUtility-Setup\.exe/);
+assert.match(html, /releases\/download\/v0\.1\.0-build\.6\.1\/MaterialSystemUtility-Setup\.exe/);
 assert.match(html, /href="screenshots\/safe-package-catalogue-dark\.png"/);
 assert.match(html, /src="screenshots\/safe-package-catalogue-dark\.png"/);
 assert.doesNotMatch(html, /(?:href|src)="\.\.\//);

@@ -3,7 +3,7 @@
 Material System Utility is a Windows desktop application that presents the
 open-source WinUtil catalogue in a frameless Material Design 3 interface.
 
-[Download the Windows x64 installer](https://github.com/Ding-Ding-Projects/material-winutil/releases/download/v0.1.0-build.4.1/MaterialSystemUtility-Setup.exe) · [Documentation site](https://ding-ding-projects.github.io/material-winutil/) · [Release notes](https://github.com/Ding-Ding-Projects/material-winutil/releases/tag/v0.1.0-build.4.1)
+[Download the Windows x64 installer](https://github.com/Ding-Ding-Projects/material-winutil/releases/download/v0.1.0-build.6.1/MaterialSystemUtility-Setup.exe) · [Documentation site](https://ding-ding-projects.github.io/material-winutil/) · [Release notes](https://github.com/Ding-Ding-Projects/material-winutil/releases/tag/v0.1.0-build.6.1)
 
 The installer is an unsigned Squirrel.Windows executable and may trigger an
 unknown-publisher or SmartScreen warning.

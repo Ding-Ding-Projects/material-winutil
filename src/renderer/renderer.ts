@@ -90,15 +90,11 @@ const CAT_ICONS: Record<string, string> = {
 const DOC_PAGES: Array<{ id: string; title: string; section: string; body: string }> = [
   {
     id: 'quick-start', title: 'Quick start', section: 'Getting started',
-    body: `WinUtil must be run as Administrator because it performs system-wide changes.
+    body: `Material System Utility launches normally without requiring administrator rights.
 
-The app checks its own prerequisites on first launch and installs whatever is missing without asking:
+Package operations use Windows Package Manager (winget) with exact catalogue identifiers. Windows may request elevation for an individual package when that package requires it; browsing, search, documentation, and settings remain unelevated.
 
-  · Windows Package Manager (winget) — installed from the bundled App Installer package
-  · Chocolatey — installed as a fallback source for entries that have no winget id
-  · PowerShell execution policy — set to Bypass for the current process only
-
-Nothing is downloaded from a browser and no external page is opened. If a prerequisite cannot be installed the app says exactly which one failed and what the exit code was.`,
+If winget is unavailable or an operation fails, the app reports the exact failed operation and exit code. It never silently substitutes a higher-risk tweak, configuration, update-profile, AppX, or ISO operation.`,
   },
   {
     id: 'install-flow', title: 'How installs are processed', section: 'Install',
@@ -2705,40 +2701,8 @@ function aboutDialog(): HTMLElement {
       h('div', { class: 'row' }, h('span', { class: 'primary' }, 'Tweaks'), h('span', { class: 'snippet' }, `${state.catalog.tweaks.length} from config/tweaks.json`)),
       h('div', { class: 'row' }, h('span', { class: 'primary' }, 'Features'), h('span', { class: 'snippet' }, `${state.catalog.features.length} from config/feature.json`)),
       h('div', { class: 'row' }, h('span', { class: 'primary' }, 'Runtime'), h('span', { class: 'snippet' }, `Electron · ${bridge().platform}`))),
-    h('p', { style: 'margin-top:14px' }, 'WinUtil must be run as Administrator because it performs system-wide changes.'),
+    h('p', { style: 'margin-top:14px' }, 'The app launches without administrator rights. Windows may request elevation only when a selected package operation requires it.'),
   ], [h('button', { class: 'btn filled', onclick: closeDialog }, 'Close')]);
-}
-
-/* --------------------------------------------------------------- QR code -- */
-
-/** Minimal locally-drawn QR placeholder: a deterministic module grid plus finders. */
-function drawQr(): void {
-  const canvas = document.getElementById('qr') as HTMLCanvasElement | null;
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  const secret = state.dialog === 'lockwizard' ? state.wizard.secret : state.totp[0].secret;
-  const N = 25;
-  const cell = canvas.width / N;
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#000';
-  let seed = 0;
-  for (let i = 0; i < secret.length; i += 1) seed = (seed * 31 + secret.charCodeAt(i)) >>> 0;
-  const rand = (): number => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 0xffffffff; };
-  for (let y = 0; y < N; y += 1) {
-    for (let x = 0; x < N; x += 1) {
-      const inFinder = (x < 8 && y < 8) || (x > N - 9 && y < 8) || (x < 8 && y > N - 9);
-      if (inFinder) continue;
-      if (rand() > 0.52) ctx.fillRect(x * cell, y * cell, cell, cell);
-    }
-  }
-  const finder = (fx: number, fy: number): void => {
-    ctx.fillStyle = '#000'; ctx.fillRect(fx * cell, fy * cell, cell * 7, cell * 7);
-    ctx.fillStyle = '#fff'; ctx.fillRect((fx + 1) * cell, (fy + 1) * cell, cell * 5, cell * 5);
-    ctx.fillStyle = '#000'; ctx.fillRect((fx + 2) * cell, (fy + 2) * cell, cell * 3, cell * 3);
-  };
-  finder(0, 0); finder(N - 7, 0); finder(0, N - 7);
 }
 
 /* ------------------------------------------------------------------ boot -- */

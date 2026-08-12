@@ -47,6 +47,7 @@ test('app manifest captures the functional locks and exact bundled documentation
     "openOfflineArticle('docs/features/release-boundary.md')",
   );
   assert.doesNotMatch(JSON.stringify([...captures.values()]), /openDetail\('Release boundary'/u);
+  assert.match(captures.get('color-picker')?.prepare ?? '', /state\.selectionColor='#6750A4';openColorPicker\('selection','Smoke selection'\)/u);
 });
 
 test('single-target isolation rejects extra or unexpected targets', () => {

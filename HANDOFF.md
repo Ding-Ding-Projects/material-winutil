@@ -11,7 +11,9 @@ The current verified baseline includes:
 - local catalogue search, regex tooling, basic tabs/groups/pinning, and an appearance subset;
 - visible Squirrel.Windows update states, a bounded background check schedule, an unsigned-installer warning, and explicit restart control;
 - one-click runnable builds and unsigned Squirrel.Windows installer builds; and
-- a local responsive documentation site under `docs/site` with an explicit capability inventory.
+- a local responsive documentation site under `docs/site` with an explicit capability inventory;
+- vault-backed for-fun tab/property locks, local Support Tickets recovery disclosure, and a bundled offline documentation browser; and
+- a verified 71-state release capture matrix for `v0.1.8601`, including app and live-site surfaces.
 
 ## Key implementation boundaries
 
@@ -22,7 +24,7 @@ The current verified baseline includes:
 - GitHub immutable releases are disabled. Treat the unsigned Squirrel.Windows feed
   and release assets as mutable administrator-controlled inputs, and keep hash checks
   and the visible unsigned-feed warning intact.
-- The tracked application capture is evidence for the package catalogue surface only.
+- `docs/screenshots/release-v0.1.8601/` contains curated real capture evidence from the published `v0.1.8601` Squirrel full package; the full local matrix is validated by the smoke harness and deliberately excludes machine-local capture metadata from Git.
 
 ## Verification
 
@@ -35,8 +37,8 @@ The current verified baseline includes:
 
 - Installed-build automatic-update proof is not yet established here.
 - Complete narrow-layout, high-scale, keyboard, and screen-reader runtime evidence remains required.
-- Release `v0.1.0-build.6.1`, its three unsigned Squirrel.Windows assets, workflow timing,
-  release line counts, and the documentation endpoint are published and independently
+- Release `v0.1.8601`, its three unsigned Squirrel.Windows assets, workflow timing,
+  release line counts, 71 decoded capture frames, and the documentation endpoint are published and independently
   verified. This is release evidence, not proof of the unfinished universal contracts.
 - Higher-risk system adapters and the broader universal product contracts remain intentionally unavailable.
 

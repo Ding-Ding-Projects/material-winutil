@@ -13,16 +13,36 @@ unknown-publisher or SmartScreen warning.
 > Tweaks, optional features, update profiles, AppX removal, ISO servicing, and
 > other higher-risk operations fail closed until their reviewed adapters ship.
 
-![The real built Material System Utility package catalogue in dark mode, captured on an isolated Windows desktop](docs/screenshots/safe-package-catalogue-dark.png)
+![The real built Material System Utility package catalogue in dark mode, captured from the v0.1.8601 Squirrel package on an isolated Windows desktop](docs/screenshots/release-v0.1.8601/app-install-dark-comfortable-en-1440x940.png)
 
 <details>
 <summary>What this capture proves</summary>
 
-This image was captured from the locally built application after the icon,
-keyboard-focus, search-label, unsupported-action, and package-ID boundary repairs.
-It shows the 227-entry catalogue, distinct toolbar and row affordances, exact package
-identifiers, a frameless title bar, and the application running without touching the
-operator's visible desktop.
+This image was captured from the published `v0.1.8601` Squirrel full package at
+commit `3de1bba97d9f59daaba1fe10e083158ef8760183`. It shows the 227-entry catalogue,
+distinct toolbar and row affordances, exact package identifiers, a frameless title bar,
+and the application running without touching the operator's visible desktop.
+
+</details>
+
+<details>
+<summary>Release v0.1.8601 real capture gallery</summary>
+
+All six captures below are genuine frames from the published unsigned Squirrel full
+package at commit `3de1bba97d9f59daaba1fe10e083158ef8760183`, taken through the
+project's hidden-desktop capture harness. The full 71-state matrix was decoded and
+verified before this curated gallery was selected; it performed zero package commands,
+zero completed confirmations, and zero visible-desktop interactions.
+
+![The package catalogue at 360 by 600 pixels, showing compact readable controls and distinct icons](docs/screenshots/release-v0.1.8601/app-install-dark-en-360x600.png)
+
+![The empty functional Locks manager, explaining per-lock local vault credentials and recovery](docs/screenshots/release-v0.1.8601/app-locks-manager-empty-dark-en.png)
+
+![The local Support Tickets surface, explicitly disclosing that no ticket leaves the machine](docs/screenshots/release-v0.1.8601/app-locks-support-local-dark-en.png)
+
+![The built-in offline documentation browser showing 18 verified bundled articles](docs/screenshots/release-v0.1.8601/app-docs-bundle-18-index-dark-en-1440x940.png)
+
+![The opaque Material appearance editor over the dark settings surface](docs/screenshots/release-v0.1.8601/app-appearance-editor-root-dark-en.png)
 
 </details>
 
@@ -73,7 +93,7 @@ uses distinct branding and does not reuse upstream logos or screenshots.
 - System operations without a reviewed adapter return an explicit unsupported result.
 - The app bundles no remote fonts, analytics, credentials, sample history, or sample secrets.
 
-Release `v0.1.0-build.6.1`, its unsigned Squirrel.Windows assets, the documentation
-site, workflow timing, line counts, and two real captures are published. The broader
-capture matrix, installed-update end-to-end proof, reviewed system adapters, and
-universal product contracts remain active work and are not claimed complete.
+Release `v0.1.8601`, its unsigned Squirrel.Windows assets, the documentation site,
+workflow timing, line counts, and a verified 71-state capture matrix are published.
+Installed-update end-to-end proof, reviewed system adapters, and the remaining universal
+product contracts remain active work and are not claimed complete.

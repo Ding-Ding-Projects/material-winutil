@@ -52,8 +52,8 @@ assert.match(html, /data-setting="desktop school mode shared local record live w
 assert.match(js, /Read desktop display-name settings/);
 assert.match(js, /Read desktop dialog-emoji settings/);
 assert.match(js, /Read shared School mode settings/);
-assert.match(html, /href="screenshots\/safe-package-catalogue-dark\.png"/);
-assert.match(html, /src="screenshots\/safe-package-catalogue-dark\.png"/);
+assert.match(html, /href="screenshots\/release-v0\.1\.8601\/app-install-dark-comfortable-en-1440x940\.png"/);
+assert.match(html, /src="screenshots\/release-v0\.1\.8601\/app-install-dark-comfortable-en-1440x940\.png"/);
 assert.doesNotMatch(html, /(?:href|src)="\.\.\//);
 assert.match(js, /function syncTabOrientation\(\)/);
 assert.match(js, /setAttribute\('aria-orientation', vertical \? 'vertical' : 'horizontal'\)/);

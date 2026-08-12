@@ -19,7 +19,7 @@ This roadmap separates shipped behavior from future work. Dates are intentionall
 - [ ] Complete installed-build automatic-update verification against the published
       mutable unsigned feed, including hash mismatch, replacement, and rollback cases.
 - [ ] Finish runtime accessibility checks at narrow widths and 100%, 125%, 150%, and 200% display scale.
-- [ ] Capture every shipped surface from the exact release commit.
+- [x] Capture every shipped surface from the exact release commit (71 verified states for `v0.1.8601`).
 - [x] Publish a verified non-draft release with unsigned Squirrel.Windows assets, hashes, release timing, line-count evidence, and current documentation.
 - [x] Publish the documentation site with a versioned installer link and an explicit
       warning that immutable releases are disabled and assets can be replaced by administrators.
@@ -36,7 +36,9 @@ This roadmap separates shipped behavior from future work. Dates are intentionall
 - [ ] Complete language coverage for English, Hong Kong Cantonese, and bilingual mode.
 - [ ] Complete per-language humor controls, narration, and personal-vocabulary handling.
 - [ ] Implement shared mode, scheduled settings, external settings sources, and live cross-application propagation.
-- [ ] Complete per-element appearance editing, accessible color translation, exports, bulk actions, local Git-backed history, locks, TOTP, and recovery flows.
-- [ ] Finish the offline in-app documentation browser, changelog viewer, and command-palette coverage inventory.
+- [ ] Complete per-element appearance editing and accessible color translation across every rendered element and state.
+- [x] Provide structured exports, bulk actions, local Git-backed history, locks, TOTP, and local recovery flows.
+- [ ] Finish the changelog viewer and command-palette coverage inventory.
+- [x] Finish the offline in-app documentation browser.
 
 Items remain unchecked until their actual runtime behavior, documentation, tests, artifacts, and release evidence exist.

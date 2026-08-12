@@ -1,6 +1,7 @@
 node_modules/
 dist/
 release/
+docs/screenshots/release-v0.1.8601/matrix/
 design/
 *.log
 *.tmp

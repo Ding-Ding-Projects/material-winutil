@@ -30,7 +30,7 @@
     { "id": "appearance-subset", "label": "Local theme, density, and tab-dock preferences", "evidence": [{ "file": "index.html", "contains": "id=\"theme\"" }, { "file": "index.html", "contains": "id=\"density\"" }, { "file": "index.html", "contains": "id=\"dock\"" }, { "file": "app.js", "contains": "localStorage.setItem" }] },
     { "id": "published-release-truth", "label": "The current published unsigned installer is linked through the latest-release route", "evidence": [{ "file": "index.html", "contains": "releases/latest/download/MaterialSystemUtility-Setup.exe" }] },
     { "id": "mutable-feed-warning", "label": "Site states that immutable releases are disabled and unsigned feed assets are mutable", "evidence": [{ "file": "index.html", "contains": "GitHub immutable releases are disabled" }, { "file": "../../README.md", "contains": "GitHub immutable releases are disabled" }, { "file": "../features/release-boundary.md", "contains": "unsigned feed and release assets are mutable" }] },
-    { "id": "real-capture", "label": "Real built application capture", "evidence": [{ "file": "../screenshots/safe-package-catalogue-dark.png", "exists": true }] },
+    { "id": "real-capture", "label": "Real v0.1.8601 built application capture", "evidence": [{ "file": "../screenshots/release-v0.1.8601/app-install-dark-comfortable-en-1440x940.png", "exists": true }] },
     { "id": "offline-assets", "label": "No CDN, remote fonts, analytics, or runtime asset fetch", "evidence": [{ "file": "index.html", "contains": "<link rel=\"stylesheet\" href=\"styles.css\">" }, { "file": "index.html", "contains": "<script src=\"app.js\" defer></script>" }] }
   ],
   "requiredUnavailableIds": [

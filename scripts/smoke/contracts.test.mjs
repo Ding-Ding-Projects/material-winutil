@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promise
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
-import { assertBuiltArtifactFresh, assertGitClean, extractSquirrelApplication, parseArgs, selectCaptureManifests } from './lib/contracts.mjs';
+import { assertBuiltArtifactFresh, assertGitClean, extractSquirrelApplication, gitChangedPaths, parseArgs, selectCaptureManifests } from './lib/contracts.mjs';
 import { assertSingleTarget } from './lib/cdp.mjs';
 import { assertUniquePngs, inspectPng } from './lib/png.mjs';
 import { commandLine } from './lib/lowlevel.mjs';
@@ -83,6 +83,25 @@ test('Squirrel application extraction receives paths without PowerShell argument
     });
     await extractSquirrelApplication(root, { packagePath: archive }, destination);
     assert.equal(await readFile(join(destination, 'Smoke Product.exe'), 'utf8'), 'fixture');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('capture ancestry path inspection identifies product changes after evidence', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'material-winutil-capture-history-'));
+  try {
+    const run = async (...args) => new Promise((resolveRun, reject) => {
+      const child = spawn('git', args, { cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      let output = ''; child.stdout.setEncoding('utf8'); child.stdout.on('data', (chunk) => { output += chunk; });
+      child.once('error', reject); child.once('close', (code) => code === 0 ? resolveRun(output.trim()) : reject(new Error(`git ${args[0]} exited ${code}`)));
+    });
+    await run('init'); await run('config', 'user.name', 'Smoke Fixture'); await run('config', 'user.email', 'smoke@example.invalid');
+    await writeFile(join(root, 'source.ts'), 'one\n'); await run('add', '.'); await run('commit', '-m', 'source');
+    const sourceCommit = await run('rev-parse', 'HEAD');
+    await mkdir(join(root, 'docs', 'screenshots', 'smoke'), { recursive: true });
+    await writeFile(join(root, 'docs', 'screenshots', 'smoke', 'capture.png'), 'fixture'); await run('add', '.'); await run('commit', '-m', 'capture');
+    assert.deepEqual(await gitChangedPaths(root, sourceCommit), ['docs/screenshots/smoke/capture.png']);
+    await writeFile(join(root, 'source.ts'), 'two\n'); await run('add', '.'); await run('commit', '-m', 'product');
+    assert.deepEqual(await gitChangedPaths(root, sourceCommit), ['docs/screenshots/smoke/capture.png', 'source.ts']);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

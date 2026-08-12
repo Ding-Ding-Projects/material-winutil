@@ -1,6 +1,6 @@
 import { createServer } from 'node:net';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { assertBuiltArtifactFresh, assertGitClean, extractSquirrelApplication, findCurrentSquirrelPackage, gitCommit, parseArgs, selectCaptureManifests, sha256File } from './lib/contracts.mjs';
@@ -181,11 +181,11 @@ async function captureSession(kind, manifest, executable, argsForLaunch, expecte
       const png = await inspectPng(output);
       outputs.push({
         id: capture.id,
-        file: output,
+        file: `docs/screenshots/smoke/${kind}/${capture.file}`,
         relativeFile: `smoke/${kind}/${capture.file}`,
         surface: manifest.surface,
         commit,
-        executable,
+        executable: basename(executable),
         executableSha256: executableHash,
         artifact,
         captureMethod: 'cheap Lowlevel MCP hidden desktop + isolated loopback CDP Page.captureScreenshot',
@@ -238,10 +238,15 @@ async function main() {
       const artifact = await resolveAppArtifact(commit);
       try {
         const hash = await sha256File(artifact.executable);
+        const publicArtifact = {
+          ...artifact.metadata,
+          packagePath: artifact.metadata.packagePath ? basename(artifact.metadata.packagePath) : undefined,
+          provenancePath: artifact.metadata.provenancePath ? relative(repo, artifact.metadata.provenancePath) : undefined,
+        };
         all.push(...await captureSession(
           kind, manifest, artifact.executable, artifact.args,
           (target) => target.url.startsWith('file:') && /renderer\/index\.html$/u.test(new URL(target.url).pathname),
-          prepareApp, hash, commit, artifact.metadata,
+          prepareApp, hash, commit, publicArtifact,
         ));
       } finally {
         if (artifact.cleanupRoot) await rm(artifact.cleanupRoot, { recursive: true, force: true });
@@ -272,7 +277,7 @@ async function main() {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
     commit,
-    captureRoot,
+    captureRoot: captureRoot.startsWith(repo) ? relative(repo, captureRoot) : '[external capture root]',
     cleanTree,
     freshness,
     safety: {

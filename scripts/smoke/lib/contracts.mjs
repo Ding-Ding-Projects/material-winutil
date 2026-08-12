@@ -85,6 +85,11 @@ export async function assertGitClean(repo) {
   return { clean: true, commit: await gitCommit(repo) };
 }
 
+export async function gitChangedPaths(repo, fromCommit, toCommit = 'HEAD') {
+  const output = await gitText(repo, ['diff', '--name-only', `${fromCommit}..${toCommit}`, '--'], null, 'cannot inspect capture-source changes');
+  return output ? output.split(/\r?\n/u).filter(Boolean).map((path) => path.replaceAll('\\', '/')) : [];
+}
+
 export function selectCaptureManifests(manifests, ids) {
   if (!ids.length) return manifests;
   const wanted = new Set(ids);

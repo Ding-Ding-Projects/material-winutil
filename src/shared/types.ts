@@ -10,6 +10,9 @@ import type {
   LockUnlockResult, LockUpdateRequest, PreparedLockTotp,
 } from '../main/lock-service';
 import type { OfflineDocsBundle } from './offline-docs';
+import type {
+  ScheduledSettingRule, ScheduledSettingsDocument, ScheduledSettingValue,
+} from './scheduled-settings';
 
 /**
  * Shared contracts between the Electron main process, the preload bridge and the renderer.
@@ -162,6 +165,28 @@ export interface SettingsSurfaceState {
   dialogEmoji: DialogEmojiPreferences;
   dialogDecorations: Readonly<Record<DialogEmojiCategory, string | null>>;
   schoolMode: SchoolModeSnapshot;
+}
+
+export interface ScheduledSourceStatus {
+  ruleId: string;
+  state: 'local' | 'ready' | 'off' | 'missing-token' | 'error' | 'pending';
+  checkedAt: string | null;
+  nextRefreshAt: string | null;
+  code: string | null;
+}
+
+export interface ScheduledSettingsState {
+  document: ScheduledSettingsDocument;
+  effectiveSettings: Readonly<Record<string, ScheduledSettingValue>>;
+  activeRuleIds: readonly string[];
+  settingRuleIds: Readonly<Record<string, string>>;
+  sourceStatuses: readonly ScheduledSourceStatus[];
+  timezone: string;
+  evaluatedAt: string;
+}
+
+export interface ScheduledRuleSaveRequest {
+  rule: ScheduledSettingRule;
 }
 
 export type SchoolModeChangeResult =
@@ -358,6 +383,12 @@ export interface Bridge {
   resetSchoolModeCredential(): Promise<SettingsSurfaceState>;
   setSchoolModeEnabled(enabled: boolean, password?: string): Promise<SchoolModeChangeResult>;
   onSettingsSurfaceState(cb: (state: SettingsSurfaceState) => void): void;
+  scheduledSettingsState(): Promise<ScheduledSettingsState>;
+  saveScheduledSettings(document: ScheduledSettingsDocument): Promise<ScheduledSettingsState>;
+  refreshScheduledSettings(): Promise<ScheduledSettingsState>;
+  setScheduledHomeAssistantToken(ruleId: string, token: Uint8Array): Promise<ScheduledSettingsState>;
+  clearScheduledHomeAssistantToken(ruleId: string): Promise<ScheduledSettingsState>;
+  onScheduledSettingsState(cb: (state: ScheduledSettingsState) => void): void;
 }
 
 declare global {

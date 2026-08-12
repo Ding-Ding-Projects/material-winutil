@@ -22,6 +22,29 @@ export type ScheduledSettingValue =
   | ScheduledSettingValue[]
   | { [key: string]: ScheduledSettingValue };
 
+export interface LocalScheduledSettingsSource {
+  kind: 'local';
+}
+
+export interface JsonApiScheduledSettingsSource {
+  kind: 'json-api';
+  url: string;
+  refreshMinutes: number;
+  allowLoopbackHttpForDevelopment: boolean;
+}
+
+export interface HomeAssistantScheduledSettingsSource {
+  kind: 'home-assistant';
+  baseUrl: string;
+  entityId: string;
+  refreshMinutes: number;
+}
+
+export type ScheduledSettingsSource =
+  | LocalScheduledSettingsSource
+  | JsonApiScheduledSettingsSource
+  | HomeAssistantScheduledSettingsSource;
+
 export interface ScheduledSettingRule {
   id: string;
   label: string;
@@ -33,6 +56,7 @@ export interface ScheduledSettingRule {
   endTime: string;
   weekdays: 'every-day' | Weekday[];
   settings: Record<string, ScheduledSettingValue>;
+  source?: ScheduledSettingsSource;
 }
 
 export interface ScheduledSettingsDocument {
@@ -58,7 +82,11 @@ const RULE_FIELDS = new Set([
   'endTime',
   'weekdays',
   'settings',
+  'source',
 ]);
+const LOCAL_SOURCE_FIELDS = new Set(['kind']);
+const JSON_SOURCE_FIELDS = new Set(['kind', 'url', 'refreshMinutes', 'allowLoopbackHttpForDevelopment']);
+const HOME_ASSISTANT_SOURCE_FIELDS = new Set(['kind', 'baseUrl', 'entityId', 'refreshMinutes']);
 const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$/u;
 const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/u;
@@ -135,6 +163,40 @@ function validateSettingValue(value: unknown, context: string, depth = 0): Sched
   throw new Error(`${context} contains a non-JSON value`);
 }
 
+function validateSource(input: unknown, context: string): ScheduledSettingsSource {
+  if (!isRecord(input)) throw new Error(`${context} must be an object`);
+  if (input.kind === 'local') {
+    assertOnlyFields(input, LOCAL_SOURCE_FIELDS, context);
+    return { kind: 'local' };
+  }
+  if (!Number.isInteger(input.refreshMinutes) || Number(input.refreshMinutes) < 1 || Number(input.refreshMinutes) > 1440) {
+    throw new Error(`${context}.refreshMinutes must be an integer from 1 to 1440`);
+  }
+  if (input.kind === 'json-api') {
+    assertOnlyFields(input, JSON_SOURCE_FIELDS, context);
+    if (typeof input.url !== 'string' || input.url.length < 1 || input.url.length > 2048
+      || typeof input.allowLoopbackHttpForDevelopment !== 'boolean') {
+      throw new Error(`${context} contains invalid JSON API source fields`);
+    }
+    return {
+      kind: 'json-api', url: input.url, refreshMinutes: Number(input.refreshMinutes),
+      allowLoopbackHttpForDevelopment: input.allowLoopbackHttpForDevelopment,
+    };
+  }
+  if (input.kind === 'home-assistant') {
+    assertOnlyFields(input, HOME_ASSISTANT_SOURCE_FIELDS, context);
+    if (typeof input.baseUrl !== 'string' || input.baseUrl.length < 1 || input.baseUrl.length > 2048
+      || typeof input.entityId !== 'string' || !/^(?:binary_sensor|input_boolean)\.[a-z0-9_]{1,255}$/u.test(input.entityId)) {
+      throw new Error(`${context} contains invalid Home Assistant source fields`);
+    }
+    return {
+      kind: 'home-assistant', baseUrl: input.baseUrl, entityId: input.entityId,
+      refreshMinutes: Number(input.refreshMinutes),
+    };
+  }
+  throw new Error(`${context}.kind is unsupported`);
+}
+
 function validateRule(input: unknown, index: number): ScheduledSettingRule {
   const context = `rules[${index}]`;
   if (!isRecord(input)) throw new Error(`${context} must be an object`);
@@ -193,6 +255,7 @@ function validateRule(input: unknown, index: number): ScheduledSettingRule {
     endTime: input.endTime,
     weekdays,
     settings,
+    ...(input.source === undefined ? {} : { source: validateSource(input.source, `${context}.source`) }),
   };
 }
 

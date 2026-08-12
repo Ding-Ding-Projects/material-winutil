@@ -26,7 +26,7 @@ Narration yields when Electron reports active accessibility support and mutes fo
 
 School mode is a versioned shared record below local application data. The desktop process watches that record and applies generation-ordered updates live. Its label is user-renamable. Enabling requires a configured local password; only a salted verifier is stored in Windows Credential Manager. Disabling validates the password through the main process. This is a user-experience lock, not a security boundary, and the credential can be reset locally.
 
-While the mode is enabled, the renderer uses effective English presentation and omits Cantonese, bilingual, funny-level, personal-vocabulary, dialog-emoji, and dim-sum surfaces. Stored base preferences are not overwritten and return live after an accepted unlock. A corrupt or unwatched shared record is reported as unavailable and suppresses private personalization instead of being assumed off. The complete scheduled-settings surface remains unavailable.
+While the mode is enabled, the renderer uses effective English presentation and omits Cantonese, bilingual, funny-level, personal-vocabulary, dialog-emoji, and dim-sum surfaces. Stored base preferences are not overwritten and return live after an accepted unlock. A corrupt or unwatched shared record is reported as unavailable and suppresses private personalization instead of being assumed off. Scheduled settings remain visible and follow the effective English-only presentation boundary.
 
 ## Failure modes
 
@@ -44,7 +44,7 @@ Preferences contain no credentials. The files are local, bounded, and atomically
 
 ## Verification
 
-Local behavioral checks cover disabled-by-default narration, serialization without overlap, strict English-then-Cantonese order, funny-level formatting with preserved facts, debounce, category cooldowns, error handling, accessibility and quiet suppression, cancellation, stop, bounds, and the isolated renderer transport. Focused settings-service checks cover display-name and emoji persistence, a non-plaintext password verifier, School mode enable/unlock and preference restoration, corrupt-record fail-safe behavior, and bounded IPC/preload/renderer seams. All-copy localization, packaged interaction proof, and the complete scheduled-settings surface remain separate incomplete contracts.
+Local behavioral checks cover disabled-by-default narration, serialization without overlap, strict English-then-Cantonese order, funny-level formatting with preserved facts, debounce, category cooldowns, error handling, accessibility and quiet suppression, cancellation, stop, bounds, and the isolated renderer transport. Focused settings-service checks cover display-name and emoji persistence, a non-plaintext password verifier, School mode enable/unlock and preference restoration, corrupt-record fail-safe behavior, bounded IPC/preload/renderer seams, and the persistent scheduled/external-settings service. All-copy localization and packaged interaction proof remain separate incomplete contracts.
 
 ## Suggested articles
 

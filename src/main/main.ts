@@ -9,7 +9,7 @@ import type {
   AuthenticatorBeginRequest, AuthenticatorCodes, AuthenticatorEntry, AuthenticatorRegistration,
   CommandResult, ExportFormat, HistoryBrowseResult, HistoryEntry, HistoryQuery, NarrationClientResult, NarrationEvent, NarrationRuntimeState,
   PersonalVocabularyState, PersonalVocabularyUploadResult, Preferences, RunKind, SchoolModeChangeResult,
-  SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateStatus, WinutilCatalog,
+  ScheduledSettingsState, SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateStatus, WinutilCatalog,
 } from '../shared/types';
 import { resolvePackageRequest, validateCatalog, wingetArgs } from './package-policy';
 import { AuthenticatorService } from './authenticator-service';
@@ -24,6 +24,8 @@ import { detectExternalEditors, openExportInVSCode } from './external-editor';
 import { LocalHistory, LOCAL_HISTORY_ACTIONS, type JsonValue, type LocalHistoryAction } from './local-history';
 import { LockService, type LockCreateRequest, type LockSearchRequest, type LockUpdateRequest } from './lock-service';
 import { verifyOfflineDocsBundle, type OfflineDocsBundle } from '../shared/offline-docs';
+import { ScheduledSettingsService } from './scheduled-settings-service';
+import type { ScheduledSettingValue, ScheduledSettingsDocument } from '../shared/scheduled-settings';
 
 const ROOT = path.join(__dirname, '..', '..');
 const CONFIG_DIR = path.join(__dirname, '..', 'config');
@@ -41,6 +43,7 @@ let historyWriteQueue: Promise<void> = Promise.resolve();
 let authenticatorService: AuthenticatorService | null = null;
 let personalVocabularyStore: PersonalVocabularyStore | null = null;
 let settingsSurfaceService: SettingsSurfaceService | null = null;
+let scheduledSettingsService: ScheduledSettingsService | null = null;
 let localHistoryService: LocalHistory | null = null;
 let lockService: LockService | null = null;
 let offlineDocsCache: OfflineDocsBundle | null = null;
@@ -54,6 +57,7 @@ const narrationTransport = new IpcNarrationTransport(() => {
 });
 const narratorRuntime = new NarratorRuntime(narrationTransport);
 let currentNarratorPreferences: Preferences | null = null;
+let basePreferences: Preferences | null = null;
 const UPDATE_FEED = 'https://github.com/Ding-Ding-Projects/material-winutil/releases/latest/download/';
 const COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_TEXT_PAYLOAD = 2 * 1024 * 1024;
@@ -195,6 +199,37 @@ function sharedAppDataDirectory(): string {
 function settingsSurface(): SettingsSurfaceService {
   if (!settingsSurfaceService) throw new Error('The settings surface is unavailable.');
   return settingsSurfaceService;
+}
+
+function scheduledSettings(): ScheduledSettingsService {
+  if (!scheduledSettingsService) throw new Error('Scheduled settings are unavailable.');
+  return scheduledSettingsService;
+}
+
+function preferencesAsSettings(preferences: Preferences): Record<string, ScheduledSettingValue> {
+  return {
+    theme: preferences.theme, density: preferences.density, language: preferences.language,
+    narrator: preferences.narrator, narratorEnabled: preferences.narratorEnabled,
+    enFunny: preferences.enFunny, yueFunny: preferences.yueFunny, accent: preferences.accent,
+    font: preferences.font, scale: preferences.scale, weight: preferences.weight, radius: preferences.radius,
+    reducedMotion: preferences.reducedMotion, exportFormat: preferences.exportFormat,
+  };
+}
+
+function preferencesWithScheduledSettings(preferences: Preferences, scheduled: Readonly<Record<string, ScheduledSettingValue>>): Preferences {
+  return projectPreferences({ ...preferences, ...scheduled }) ?? preferences;
+}
+
+function applyScheduledSnapshot(snapshot: ScheduledSettingsState): void {
+  if (basePreferences) {
+    const effective = preferencesWithScheduledSettings(basePreferences, snapshot.effectiveSettings);
+    currentNarratorPreferences = effective;
+    narratorRuntime.configure(effectiveNarratorPreferences(effective), app.isAccessibilitySupportEnabled());
+  }
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
+  const scheduledName = snapshot.effectiveSettings.displayName;
+  win.setTitle(typeof scheduledName === 'string' ? scheduledName : settingsSurfaceService?.snapshot().displayName.displayName ?? 'Material System Utility');
+  win.webContents.send('scheduled-settings:state', snapshot);
 }
 
 function validatePasswordInput(password: unknown, optional = false): string | undefined {
@@ -640,8 +675,13 @@ ipcMain.handle('prefs:read', async (event): Promise<Partial<Preferences>> => {
   try {
     const preferences = projectPreferences(JSON.parse(await fs.readFile(PREFS_FILE(), 'utf8')) as unknown);
     if (preferences) {
-      currentNarratorPreferences = preferences;
-      narratorRuntime.configure(effectiveNarratorPreferences(preferences), app.isAccessibilitySupportEnabled());
+      basePreferences = preferences;
+      const effective = scheduledSettingsService
+        ? preferencesWithScheduledSettings(preferences, scheduledSettingsService.snapshot().effectiveSettings)
+        : preferences;
+      currentNarratorPreferences = effective;
+      narratorRuntime.configure(effectiveNarratorPreferences(effective), app.isAccessibilitySupportEnabled());
+      return effective;
     }
     return preferences ?? {};
   }
@@ -652,11 +692,45 @@ ipcMain.handle('prefs:write', async (_e, prefs: Preferences): Promise<void> => {
   if (!trustedSender(_e)) throw new Error('The preferences request did not originate from the application renderer.');
   const projected = projectPreferences(prefs);
   if (!projected) throw new Error('Preferences did not pass validation.');
-  currentNarratorPreferences = projected;
-  narratorRuntime.configure(effectiveNarratorPreferences(projected), app.isAccessibilitySupportEnabled());
+  const scheduledOwned = scheduledSettingsService?.snapshot().settingRuleIds ?? {};
+  const nextBase = { ...(basePreferences ?? projected) };
+  for (const [key, value] of Object.entries(projected)) {
+    if (scheduledOwned[key] === undefined) (nextBase as unknown as Record<string, unknown>)[key] = value;
+  }
+  basePreferences = nextBase;
+  const effective = scheduledSettingsService
+    ? preferencesWithScheduledSettings(nextBase, scheduledSettingsService.snapshot().effectiveSettings)
+    : nextBase;
+  currentNarratorPreferences = effective;
+  narratorRuntime.configure(effectiveNarratorPreferences(effective), app.isAccessibilitySupportEnabled());
   await fs.mkdir(USER_DIR(), { recursive: true });
-  await atomicWrite(PREFS_FILE(), JSON.stringify(projected, null, 2));
-  await settingsSurface().updatePreferences(defaultSchoolPreferences(projected));
+  await atomicWrite(PREFS_FILE(), JSON.stringify(nextBase, null, 2));
+  await scheduledSettingsService?.setBaseSettings(preferencesAsSettings(nextBase));
+  await settingsSurface().updatePreferences(defaultSchoolPreferences(effective));
+});
+
+ipcMain.handle('scheduled-settings:state', (event): ScheduledSettingsState => {
+  requireTrustedSender(event);
+  return scheduledSettings().snapshot();
+});
+ipcMain.handle('scheduled-settings:save', async (event, document: ScheduledSettingsDocument): Promise<ScheduledSettingsState> => {
+  requireTrustedSender(event);
+  return scheduledSettings().save(document);
+});
+ipcMain.handle('scheduled-settings:refresh', async (event): Promise<ScheduledSettingsState> => {
+  requireTrustedSender(event);
+  return scheduledSettings().refresh(true);
+});
+ipcMain.handle('scheduled-settings:set-ha-token', async (event, ruleId: unknown, token: unknown): Promise<ScheduledSettingsState> => {
+  requireTrustedSender(event);
+  if (typeof ruleId !== 'string' || !(token instanceof Uint8Array)) throw new Error('The Home Assistant credential request is invalid.');
+  try { return await scheduledSettings().configureHomeAssistantToken(ruleId, token); }
+  finally { token.fill(0); }
+});
+ipcMain.handle('scheduled-settings:clear-ha-token', async (event, ruleId: unknown): Promise<ScheduledSettingsState> => {
+  requireTrustedSender(event);
+  if (typeof ruleId !== 'string') throw new Error('The Home Assistant credential request is invalid.');
+  return scheduledSettings().clearHomeAssistantToken(ruleId);
 });
 
 ipcMain.handle('settings-surface:state', (event): SettingsSurfaceState => {
@@ -666,11 +740,15 @@ ipcMain.handle('settings-surface:state', (event): SettingsSurfaceState => {
 ipcMain.handle('display-name:rename', async (event, displayName: unknown): Promise<SettingsSurfaceState> => {
   requireTrustedSender(event);
   if (typeof displayName !== 'string') throw new Error('The display name did not pass validation.');
-  return settingsSurface().renameDisplayName(displayName);
+  const state = await settingsSurface().renameDisplayName(displayName);
+  await scheduledSettingsService?.setBaseSettings({ displayName: state.displayName.displayName }, true);
+  return state;
 });
 ipcMain.handle('display-name:reset', async (event): Promise<SettingsSurfaceState> => {
   requireTrustedSender(event);
-  return settingsSurface().resetDisplayName();
+  const state = await settingsSurface().resetDisplayName();
+  await scheduledSettingsService?.setBaseSettings({ displayName: state.displayName.displayName }, true);
+  return state;
 });
 ipcMain.handle('dialog-emoji:set', async (event, enabled: unknown): Promise<SettingsSurfaceState> => {
   requireTrustedSender(event);
@@ -931,6 +1009,11 @@ app.whenReady().then(async () => {
   let persistedPreferences: Preferences | undefined;
   try { persistedPreferences = projectPreferences(JSON.parse(await fs.readFile(PREFS_FILE(), 'utf8')) as unknown) ?? undefined; }
   catch { persistedPreferences = undefined; }
+  basePreferences = persistedPreferences ?? {
+    theme: 'dark', density: 'comfortable', language: 'English', narrator: 'English', narratorEnabled: false,
+    narratorQuiet: false, narratorReducedSound: false, enFunny: 3, yueFunny: 4, accent: '#6750A4',
+    font: 'Segoe UI Variable', scale: 1, weight: 400, radius: 16, reducedMotion: false, exportFormat: 'md',
+  };
   settingsSurfaceService = new SettingsSurfaceService({
     userDataDirectory: USER_DIR(), sharedAppDataDirectory: sharedAppDataDirectory(),
     vault: { write: writeCredential, read: readCredential, delete: deleteCredential },
@@ -938,6 +1021,11 @@ app.whenReady().then(async () => {
   lockService = new LockService({ appDataDirectory: USER_DIR() });
   await lockService.initialize();
   const initialSettings = await settingsSurfaceService.initialize(defaultSchoolPreferences(persistedPreferences));
+  scheduledSettingsService = new ScheduledSettingsService({
+    userDataDirectory: USER_DIR(), vault: { write: writeCredential, read: readCredential, delete: deleteCredential },
+    onApply: applyScheduledSnapshot,
+  });
+  await scheduledSettingsService.initialize({ ...preferencesAsSettings(basePreferences), displayName: initialSettings.displayName.displayName });
   createWindow();
   win?.setTitle(initialSettings.displayName.displayName);
   settingsSurfaceService.startWatching(broadcastSettingsSurface);
@@ -947,6 +1035,6 @@ app.on('accessibility-support-changed', (_event, enabled) => {
   if (currentNarratorPreferences) narratorRuntime.configure(effectiveNarratorPreferences(currentNarratorPreferences), enabled);
   win?.webContents.send('narration:state', narrationState());
 });
-app.on('before-quit', () => { lockService?.closeApp(); settingsSurfaceService?.close(); narrationTransport.stop(); void narratorRuntime.stop(); });
+app.on('before-quit', () => { lockService?.closeApp(); settingsSurfaceService?.close(); scheduledSettingsService?.close(); narrationTransport.stop(); void narratorRuntime.stop(); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

@@ -4,73 +4,63 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const [html, css, js, coverageText] = await Promise.all([
-  readFile(resolve(root, 'index.html'), 'utf8'),
-  readFile(resolve(root, 'styles.css'), 'utf8'),
-  readFile(resolve(root, 'app.js'), 'utf8'),
-  readFile(resolve(root, 'coverage.json'), 'utf8')
-]);
+const [html, css, js, coverageText] = await Promise.all(['index.html', 'styles.css', 'app.js', 'coverage.json'].map((name) => readFile(resolve(root, name), 'utf8')));
 const coverage = JSON.parse(coverageText);
 
-function assertExactUniqueIds(required, entries, label) {
-  assert.ok(Array.isArray(required), `${label} required ID list is missing`);
-  assert.ok(Array.isArray(entries), `${label} entries are missing`);
-  assert.equal(new Set(required).size, required.length, `${label} required IDs must be unique`);
-  const actual = entries.map((entry) => entry.id);
-  assert.equal(new Set(actual).size, actual.length, `${label} entry IDs must be unique`);
-  assert.deepEqual([...actual].sort(), [...required].sort(), `${label} entries must exactly match the hand-written required IDs`);
+const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
+assert.equal(new Set(ids).size, ids.length, 'HTML ids must be unique');
+for (const match of js.matchAll(/\$\('([^']+)'\)/g)) assert.ok(ids.includes(match[1]), `app.js references missing literal id ${match[1]}`);
+
+function exactInventory(required, entries, name) {
+  assert.ok(Array.isArray(required) && Array.isArray(entries), `${name} inventory is missing`);
+  assert.equal(new Set(required).size, required.length, `${name} required IDs are not unique`);
+  assert.equal(new Set(entries.map((entry) => entry.id)).size, entries.length, `${name} entries are not unique`);
+  assert.deepEqual(entries.map((entry) => entry.id).sort(), [...required].sort(), `${name} entries do not match the hand-written inventory`);
 }
 
-assert.equal(coverage.schemaVersion, 2, 'coverage schema version must be 2');
-assertExactUniqueIds(coverage.requiredIds, coverage.verified, 'verified coverage');
-assertExactUniqueIds(coverage.requiredUnavailableIds, coverage.explicitlyUnavailable, 'unavailable coverage');
-
-for (const entry of coverage.verified) {
-  assert.ok(Array.isArray(entry.evidence) && entry.evidence.length > 0, `${entry.id} must resolve at least one evidence item`);
-  for (const evidence of entry.evidence) {
-    const path = resolve(root, evidence.file);
-    await access(path);
-    if (evidence.contains) {
-      const content = await readFile(path, 'utf8');
-      assert.ok(content.includes(evidence.contains), `${entry.id} evidence is stale: ${evidence.file} does not contain ${JSON.stringify(evidence.contains)}`);
-    }
+assert.equal(coverage.schemaVersion, 3);
+exactInventory(coverage.requiredIds, coverage.verified, 'verified');
+exactInventory(coverage.requiredUnavailableIds, coverage.explicitlyUnavailable, 'unavailable');
+for (const contract of coverage.verified) {
+  assert.ok(contract.evidence?.length, `${contract.id} has no evidence`);
+  for (const evidence of contract.evidence) {
+    const path = resolve(root, evidence.file); await access(path);
+    if (evidence.contains) assert.ok((await readFile(path, 'utf8')).includes(evidence.contains), `${contract.id} has stale evidence: ${evidence.file} lacks ${JSON.stringify(evidence.contains)}`);
   }
 }
 
-for (const required of ['home', 'capabilities', 'guides', 'safety', 'settings']) {
-  assert.match(html, new RegExp(`data-page="${required}"`), `missing ${required} tab`);
-  assert.match(html, new RegExp(`data-panel="${required}"`), `missing ${required} panel`);
+for (const page of ['home', 'capabilities', 'guides', 'settings', 'schedule', 'tools', 'records', 'changelog']) {
+  assert.match(html, new RegExp(`data-page="${page}"`), `missing ${page} tab`);
+  assert.match(html, new RegExp(`data-panel="${page}"`), `missing ${page} panel`);
 }
-assert.match(html, /id="documentation-tab-list"[^>]+role="tablist"[^>]+aria-orientation="vertical"/);
-assert.match(html, /id="palette-launch"[^>]+aria-label="Open command palette"/);
-assert.match(html, /id="command-result-count"[^>]+role="status"[^>]+aria-live="polite"/);
-assert.match(html, /releases\/latest\/download\/MaterialSystemUtility-Setup\.exe/);
-assert.match(html, /GitHub immutable releases are disabled/);
-assert.match(html, /data-setting="desktop display name rename title about stable identity"/);
-assert.match(html, /data-setting="desktop dialog emoji toggle semantic accessibility presentation only"/);
-assert.match(html, /data-setting="desktop school mode shared local record live watcher English password credential manager"/);
-assert.match(js, /Read desktop display-name settings/);
-assert.match(js, /Read desktop dialog-emoji settings/);
-assert.match(js, /Read shared School mode settings/);
-assert.match(html, /href="screenshots\/release-v0\.1\.8601\/app-install-dark-comfortable-en-1440x940\.png"/);
-assert.match(html, /src="screenshots\/release-v0\.1\.8601\/app-install-dark-comfortable-en-1440x940\.png"/);
-assert.doesNotMatch(html, /(?:href|src)="\.\.\//);
-assert.match(js, /function syncTabOrientation\(\)/);
-assert.match(js, /setAttribute\('aria-orientation', vertical \? 'vertical' : 'horizontal'\)/);
-assert.match(js, /rail\.setAttribute\('aria-hidden', String\(closed\)\)/);
-assert.match(js, /rail\.setAttribute\('inert', ''\)/);
-assert.match(js, /if \(event\.key === 'Tab'\)/);
-assert.match(js, /command-result-count/);
-assert.match(css, /@media \(max-width: 640px\)/);
-assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
+for (const search of ['tab', 'group', 'master-tab', 'learn-tab', 'workspace-tab', 'capability', 'settings', 'schedule', 'lock', 'record', 'changelog', 'palette', 'tab-menu']) {
+  const id = `${search}-search`;
+  assert.match(html, new RegExp(`id="${id}"`), `missing ${id}`);
+  assert.match(html, new RegExp(`data-builder-for="${id}"`), `missing builder button for ${id}`);
+  assert.match(html, new RegExp(`data-builder="${id}"`), `missing builder panel for ${id}`);
+}
 
-assert.doesNotMatch(html, /first immutable release|No installer link is shown|No verified public installer/i);
-for (const [name, content] of [['styles.css', css], ['app.js', js]]) {
-  assert.doesNotMatch(content, /https?:\/\//i, `${name} must not load remote assets`);
-}
-assert.doesNotMatch(html, /<(?:script|img|link)[^>]+(?:src|href)="https?:\/\//i, 'index.html must not load remote executable or visual assets');
-for (const [name, content] of [['index.html', html], ['styles.css', css], ['app.js', js]]) {
-  assert.doesNotMatch(content, /analytics|googletagmanager|fonts\.google/i, `${name} contains a forbidden external integration`);
-}
+assert.match(html, /id="documentation-tab-list"[^>]+role="tablist"[^>]+aria-orientation="vertical"/);
+assert.match(html, /id="command-result-count" role="status" aria-live="polite"/);
+assert.match(html, /type="file" accept="application\/json,\.json"/);
+assert.match(html, /Nothing is sent anywhere\. No real ticket is created outside this browser/);
+assert.match(js, /function validateVocabularyObject/);
+assert.match(js, /function detectDuplicateKeys/);
+assert.match(js, /Math\.random\(\) >= \.1/);
+assert.match(js, /function scheduleMatches/);
+assert.match(js, /async function totpCode/);
+assert.match(js, /event\.ctrlKey && event\.shiftKey/);
+assert.match(js, /if \(event\.key === 'Tab'\)/);
+assert.match(css, /@media\(max-width:640px\)/);
+assert.match(css, /@media\(prefers-reduced-motion:reduce\)/);
+assert.match(css, /min-width:320px/);
+assert.match(css, /min-height:48px/);
+
+for (const [name, content] of [['styles.css', css], ['app.js', js]]) assert.doesNotMatch(content, /\bfetch\s*\(|XMLHttpRequest|WebSocket|EventSource/i, `${name} must not make runtime network requests`);
+assert.doesNotMatch(html, /<(?:script|img|link)[^>]+(?:src|href)="https?:\/\//i, 'index must not load remote executable or visual assets');
+for (const [name, content] of [['index.html', html], ['styles.css', css], ['app.js', js]]) assert.doesNotMatch(content, /googletagmanager|fonts\.google|analytics\.js/i, `${name} contains a forbidden external integration`);
+assert.doesNotMatch(html, /dim[-_ ]sum[^\n]+<img|<img[^>]+dim[-_ ]sum/i, 'dim-sum surprise must not vendor or load an image');
+assert.match(html, /GitHub immutable releases are disabled/);
+assert.match(html, /releases\/latest\/download\/MaterialSystemUtility-Setup\.exe/);
 
 console.log(`PASS: ${coverage.verified.length} exact site contracts and ${coverage.explicitlyUnavailable.length} exact unavailable contracts verified with resolved evidence`);

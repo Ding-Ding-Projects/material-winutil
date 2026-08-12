@@ -35,7 +35,8 @@ This roadmap separates shipped behavior from future work. Dates are intentionall
 
 - [ ] Complete language coverage for English, Hong Kong Cantonese, and bilingual mode.
 - [ ] Complete per-language humor controls, narration, and personal-vocabulary handling.
-- [ ] Implement shared mode, scheduled settings, external settings sources, and live cross-application propagation.
+- [x] Implement shared mode plus persistent scheduled settings with bounded HTTPS and Home Assistant boolean activation.
+- [ ] Extend live cross-application propagation beyond the shared School-mode record and capture packaged scheduled-settings interaction proof.
 - [ ] Complete per-element appearance editing and accessible color translation across every rendered element and state.
 - [x] Provide structured exports, bulk actions, local Git-backed history, locks, TOTP, and local recovery flows.
 - [ ] Finish the changelog viewer and command-palette coverage inventory.

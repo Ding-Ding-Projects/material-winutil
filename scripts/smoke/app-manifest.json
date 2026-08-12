@@ -9,7 +9,7 @@
     { "id": "updates-idle", "file": "app-updates-idle-dark-en-1440x940.png", "view": "updates", "theme": "dark", "language": "English" },
     { "id": "iso-readonly", "file": "app-win11-creator-readonly-dark-en-1440x940.png", "view": "iso", "theme": "dark", "language": "English" },
     { "id": "history-empty", "file": "app-history-empty-dark-en-1440x940.png", "view": "history", "theme": "dark", "language": "English", "prepare": "state.history=[]" },
-    { "id": "docs-bundle-18-index", "file": "app-docs-bundle-18-index-dark-en-1440x940.png", "view": "docs", "theme": "dark", "language": "English" },
+    { "id": "docs-bundle-19-index", "file": "app-docs-bundle-19-index-dark-en-1440x940.png", "view": "docs", "theme": "dark", "language": "English" },
     { "id": "docs-bundle-article-release-boundary", "file": "app-docs-bundle-article-release-boundary-dark-en-1440x940.png", "view": "docs", "theme": "dark", "language": "English", "prepare": "openOfflineArticle('docs/features/release-boundary.md')" },
     { "id": "settings-dark", "file": "app-settings-dark-comfortable-en-1440x940.png", "view": "settings", "theme": "dark", "language": "English" },
     { "id": "install-light", "file": "app-install-light-comfortable-en-1440x940.png", "view": "install", "theme": "light", "language": "English" },

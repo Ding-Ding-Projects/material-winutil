@@ -345,6 +345,20 @@ pre.block { margin: 0; padding: 14px; border-radius: 12px; background: var(--md-
   height: 44px; border-radius: 10px; background: var(--md-sys-color-surface-container-lowest);
   border: 1px solid var(--md-sys-color-outline-variant); padding: 0 12px; font-size: 13.5px; outline: none; }
 .field > textarea { height: auto; padding: 10px 12px; resize: vertical; }
+.schedule-surface { grid-column: 1 / -1; background: var(--md-sys-color-surface-container-low); border-radius: var(--shape-l); padding: 18px; min-width: 0; }
+.settings-subtabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
+.settings-subtabs > button { min-height: 44px; padding: 0 16px; border: 0; border-radius: 14px 14px 0 0; color: var(--md-sys-color-on-surface-variant); background: transparent; }
+.settings-subtabs > button[aria-selected="true"] { color: var(--md-sys-color-on-primary-container); background: var(--md-sys-color-primary-container); font-weight: 700; }
+.schedule-panel { min-width: 0; }
+.schedule-editor, .schedule-source-list, .schedule-rule-list { display: grid; gap: 14px; }
+.weekday-fieldset { border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--shape-m); padding: 12px; display: flex; flex-wrap: wrap; gap: 10px 16px; }
+.weekday-fieldset legend { padding: 0 6px; font-weight: 700; }
+.check-row { display: inline-flex; align-items: center; min-height: 44px; gap: 8px; }
+.check-row input { width: 20px; height: 20px; }
+.schedule-rule-row { display: grid; grid-template-columns: minmax(220px,1fr) auto auto auto; align-items: center; gap: 10px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--shape-m); padding: 12px; }
+.schedule-rule-row p { margin: 4px 0 0; color: var(--md-sys-color-on-surface-variant); }
+.schedule-setting { min-width: 0; }
+.btn.compact { min-height: 36px; padding: 0 8px; }
 .field > input:focus, .field > select:focus, .field > textarea:focus { border-color: var(--md-sys-color-primary); }
 .field > input:focus-visible, .field > select:focus-visible, .field > textarea:focus-visible,
 .lock-input:focus-visible { outline: 3px solid var(--md-sys-color-primary); outline-offset: 2px; }
@@ -646,6 +660,7 @@ input[type="range"].gradient::-webkit-slider-thumb { -webkit-appearance: none; a
   .field-row > input, .field-row > select, .field-row > textarea,
   .field-row > .field, .field-row > .select-button { flex: 1 1 160px; width: auto; min-width: 0; }
   .field > input, .field > select, .field > textarea, .lock-input { width: 100%; max-width: 100%; min-width: 0; }
+  .schedule-rule-row { grid-template-columns: 1fr; }
   .switch-row { align-items: flex-start; }
   .switch-row > span { min-width: 0; overflow-wrap: anywhere; }
   .btn { max-width: 100%; white-space: normal; text-align: center; justify-content: center; }

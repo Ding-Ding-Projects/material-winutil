@@ -2,6 +2,8 @@
 
 ## Current state
 
+- Scheduled settings are main-process owned, atomically persisted, evaluated in local time, exposed through trusted IPC/preload types, and editable from the Settings destination. JSON API sources retain the existing HTTPS/loopback, size, timeout, redirect, schema, DNS-rebinding, and generation boundaries. Home Assistant tokens live only in Windows Credential Manager. Packaged visual interaction proof remains pending.
+
 Material System Utility is a public Windows Electron project derived from the reviewed data catalogue in WinUtil. The executable boundary is intentionally narrower than the source catalogue: exact package operations are enabled; higher-risk operating-system adapters are refused.
 
 The current verified baseline includes:

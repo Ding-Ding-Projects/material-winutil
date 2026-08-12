@@ -40,8 +40,8 @@ test('app manifest captures the functional locks and exact bundled documentation
 
   assert.equal(captures.has('docs-index'), false);
   assert.equal(captures.has('docs-article'), false);
-  assert.equal(offlineBundle.articles.length, 18);
-  assert.equal(captures.get('docs-bundle-18-index')?.view, 'docs');
+  assert.equal(offlineBundle.articles.length, 19);
+  assert.equal(captures.get('docs-bundle-19-index')?.view, 'docs');
   assert.equal(
     captures.get('docs-bundle-article-release-boundary')?.prepare,
     "openOfflineArticle('docs/features/release-boundary.md')",

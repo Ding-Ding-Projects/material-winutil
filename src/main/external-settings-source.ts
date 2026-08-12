@@ -94,6 +94,7 @@ function validateSetting(key: string, value: unknown): ScheduledSettingValue {
     case 'yueFunny': if (Number.isInteger(value) && inNumberRange(value, 1, 5)) return value; break;
     case 'accent': if (typeof value === 'string' && HEX_COLOUR.test(value)) return value; break;
     case 'font': if (typeof value === 'string' && value.length > 0 && value.length <= EXTERNAL_SETTINGS_SOURCE_LIMITS.fontLength && !/[\u0000-\u001f\u007f]/u.test(value)) return value; break;
+    case 'displayName': if (typeof value === 'string' && value.trim().length > 0 && value.length <= 80 && !/[\u0000-\u001f\u007f]/u.test(value)) return value.trim(); break;
     case 'scale': if (inNumberRange(value, 0.5, 3)) return value; break;
     case 'weight': if (Number.isInteger(value) && inNumberRange(value, 100, 1_000)) return value; break;
     case 'radius': if (inNumberRange(value, 0, 64)) return value; break;

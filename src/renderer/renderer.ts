@@ -48,6 +48,24 @@ interface SettingsSurfaceState {
     | { status: 'unavailable'; code: 'shared-store-unavailable'; cause: 'read-failed' | 'watch-failed'; eventGeneration: number; recordGeneration: number | null }
     | { status: 'ready'; eventGeneration: number; recordGeneration: number; state: { enabled: boolean; displayLabel: string; credential: { method: 'none' | 'password' | 'totp'; credentialId: string | null; revision: number } }; effective: { enabled: boolean; displayLabel: string; language: LanguageMode; personalVocabularyEnabled: boolean; dimSumEnabled: boolean } };
 }
+type ScheduledSettingValue = null | boolean | number | string | ScheduledSettingValue[] | { [key: string]: ScheduledSettingValue };
+type ScheduledSource =
+  | { kind: 'local' }
+  | { kind: 'json-api'; url: string; refreshMinutes: number; allowLoopbackHttpForDevelopment: boolean }
+  | { kind: 'home-assistant'; baseUrl: string; entityId: string; refreshMinutes: number };
+interface ScheduledRule {
+  id: string; label: string; enabled: boolean; priority: number; startDate?: string; endDate?: string;
+  startTime: string; endTime: string; weekdays: 'every-day' | number[];
+  settings: Record<string, ScheduledSettingValue>; source?: ScheduledSource;
+}
+interface ScheduledSettingsState {
+  document: { schemaVersion: 1; rules: ScheduledRule[] };
+  effectiveSettings: Readonly<Record<string, ScheduledSettingValue>>;
+  activeRuleIds: readonly string[];
+  settingRuleIds: Readonly<Record<string, string>>;
+  sourceStatuses: ReadonlyArray<{ ruleId: string; state: 'local' | 'ready' | 'off' | 'missing-token' | 'error' | 'pending'; checkedAt: string | null; nextRefreshAt: string | null; code: string | null }>;
+  timezone: string; evaluatedAt: string;
+}
 type PersonalVocabularyState =
   | { state: 'empty'; entryCount: 0; mappings: Record<string, never> }
   | { state: 'invalid'; entryCount: 0; mappings: Record<string, never> }
@@ -150,6 +168,12 @@ interface Bridge {
   resetSchoolModeCredential(): Promise<SettingsSurfaceState>;
   setSchoolModeEnabled(enabled: boolean, password?: string): Promise<{ ok: boolean; code?: 'credential-rejected' | 'credential-unavailable' }>;
   onSettingsSurfaceState(cb: (state: SettingsSurfaceState) => void): void;
+  scheduledSettingsState(): Promise<ScheduledSettingsState>;
+  saveScheduledSettings(document: ScheduledSettingsState['document']): Promise<ScheduledSettingsState>;
+  refreshScheduledSettings(): Promise<ScheduledSettingsState>;
+  setScheduledHomeAssistantToken(ruleId: string, token: Uint8Array): Promise<ScheduledSettingsState>;
+  clearScheduledHomeAssistantToken(ruleId: string): Promise<ScheduledSettingsState>;
+  onScheduledSettingsState(cb: (state: ScheduledSettingsState) => void): void;
 }
 
 /* ------------------------------------------------------------- constants -- */
@@ -612,6 +636,11 @@ const state = {
   narration: { platformSpeechAvailable: true, screenReaderActive: false, activeSpeechId: 0 },
   settingsSurface: null as SettingsSurfaceState | null,
   settingsDraft: { displayName: '', schoolLabel: '', password: '', confirmPassword: '', error: '', busy: false },
+  schedule: {
+    data: null as ScheduledSettingsState | null, selectedId: '', tab: 'rules' as 'rules' | 'editor' | 'sources',
+    busy: false, error: '', token: '',
+    draft: null as ScheduledRule | null,
+  },
   snack: '',
   isoLog: '[00:00:00] Waiting for an ISO. Select an official Microsoft image to begin.',
 };
@@ -1026,6 +1055,15 @@ function bridge(): Bridge {
     resetSchoolModeCredential: async () => fake.settingsSurfaceState(),
     setSchoolModeEnabled: async () => ({ ok: false, code: 'credential-unavailable' }),
     onSettingsSurfaceState: () => undefined,
+    scheduledSettingsState: async () => state.schedule.data ?? {
+      document: { schemaVersion: 1, rules: [] }, effectiveSettings: {}, activeRuleIds: [], settingRuleIds: {}, sourceStatuses: [],
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local system time', evaluatedAt: new Date().toISOString(),
+    },
+    saveScheduledSettings: async (document) => ({ ...(await fake.scheduledSettingsState()), document }),
+    refreshScheduledSettings: async () => fake.scheduledSettingsState(),
+    setScheduledHomeAssistantToken: async () => fake.scheduledSettingsState(),
+    clearScheduledHomeAssistantToken: async () => fake.scheduledSettingsState(),
+    onScheduledSettingsState: () => undefined,
   };
   w.winutil = fake;
   return fake;
@@ -1103,7 +1141,7 @@ function lighten(hex: string, amount = 0.55): string {
   return '#' + ch.map((c) => c.toString(16).padStart(2, '0')).join('');
 }
 
-function applyPrefs(): void {
+function applyPrefs(persist = true): void {
   const r = document.documentElement;
   const p = state.prefs;
   r.dataset.theme = p.theme;
@@ -1115,7 +1153,7 @@ function applyPrefs(): void {
   r.style.setProperty('font-size', `${Math.round(14 * p.scale)}px`);
   document.body.style.fontFamily = `${p.font}, "Segoe UI", system-ui, sans-serif`;
   document.body.style.fontWeight = String(p.weight);
-  void bridge().writePrefs(p);
+  if (persist) void bridge().writePrefs(p);
   persistWorkspace();
   try { localStorage.setItem('winutil.profiles', JSON.stringify(state.profiles)); } catch { /* profiles stay in memory */ }
 }
@@ -1137,6 +1175,21 @@ function acceptSettingsSurface(next: SettingsSurfaceState): void {
     state.settingsDraft.schoolLabel = next.schoolMode.state.displayLabel;
   }
   document.title = next.displayName.displayName;
+}
+
+function scheduledDisplayName(): string {
+  const value = state.schedule.data?.effectiveSettings.displayName;
+  return typeof value === 'string' ? value : state.settingsSurface?.displayName.displayName ?? 'Material System Utility';
+}
+
+function acceptScheduledSettings(next: ScheduledSettingsState): void {
+  state.schedule.data = next;
+  const effective = next.effectiveSettings;
+  for (const key of ['theme', 'density', 'language', 'narrator', 'narratorEnabled', 'enFunny', 'yueFunny', 'accent', 'font', 'scale', 'weight', 'radius', 'reducedMotion', 'exportFormat'] as const) {
+    if (effective[key] !== undefined) (state.prefs as unknown as Record<string, ScheduledSettingValue>)[key] = effective[key];
+  }
+  document.title = scheduledDisplayName();
+  applyPrefs(false);
 }
 
 function effectiveLanguage(): LanguageMode { return schoolModeRestrictsPersonalization() ? 'English' : state.prefs.language; }
@@ -1220,7 +1273,7 @@ function appBar(): HTMLElement {
     }, icon('menu')),
     h('div', { class: 'brand', 'data-personalizable': 'true' },
       h('div', { class: 'brand-mark' }, 'W'),
-      h('div', { class: 'brand-name' }, state.settingsSurface?.displayName.displayName ?? 'Material System Utility')),
+      h('div', { class: 'brand-name' }, scheduledDisplayName())),
     searchField(),
     h('div', { style: 'flex:1' }),
     h('button', { class: 'icon-btn', title: t('notificationCentre'), style: 'position:relative', onclick: () => openDialog('notifications') },
@@ -1949,6 +2002,152 @@ function historyPane(): HTMLElement {
       state.historyMessage || 'Local Git-backed history is append-only. Browse, date/action filtering, redacted diff, restore-as-new-revision, labels, retention decisions, and redacted export are available. Snapshot contents and credentials are omitted from exports.')));
 }
 
+const SCHEDULE_WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function newScheduledRule(): ScheduledRule {
+  const id = `rule-${Date.now().toString(36)}`;
+  return {
+    id, label: 'New schedule', enabled: true, priority: 0, startTime: '09:00', endTime: '17:00',
+    weekdays: 'every-day', settings: { theme: state.prefs.theme }, source: { kind: 'local' },
+  };
+}
+
+function editScheduledRule(rule: ScheduledRule): void {
+  state.schedule.selectedId = rule.id;
+  state.schedule.draft = structuredClone(rule);
+  state.schedule.tab = 'editor';
+  state.schedule.error = '';
+  render();
+}
+
+async function persistScheduledDocument(document: ScheduledSettingsState['document']): Promise<void> {
+  state.schedule.busy = true; state.schedule.error = ''; render();
+  try { acceptScheduledSettings(await bridge().saveScheduledSettings(document)); snack(settingsCopy('Schedule saved.', '排程已儲存。')); }
+  catch (error) { state.schedule.error = error instanceof Error ? error.message : settingsCopy('The schedule is invalid.', '排程無效。'); }
+  finally { state.schedule.busy = false; render(); }
+}
+
+function scheduleSettingEditor(draft: ScheduledRule): HTMLElement {
+  const setting = (label: string, key: string, control: HTMLElement): HTMLElement => h('div', { class: 'schedule-setting' }, control,
+    h('button', { class: 'btn text compact', disabled: draft.settings[key] === undefined, onclick: () => { delete draft.settings[key]; render(); } }, `Clear ${label}`));
+  const stringSelect = (label: string, key: string, options: string[], fallback: string): HTMLElement => setting(label, key,
+    selectField(label, options, String(draft.settings[key] ?? fallback), (value) => { draft.settings[key] = value; }));
+  return h('div', { class: 'grid2 schedule-values' },
+    stringSelect('Language', 'language', ['English', 'Yue', 'Bilingual'], state.prefs.language),
+    stringSelect('Theme', 'theme', ['dark', 'light'], state.prefs.theme),
+    stringSelect('Density', 'density', ['comfortable', 'compact'], state.prefs.density),
+    setting('Accent color', 'accent', colorField('Accent color', String(draft.settings.accent ?? state.prefs.accent), (value) => { draft.settings.accent = value; })),
+    setting('Font family', 'font', h('label', { class: 'field' }, 'FONT FAMILY', h('input', { value: String(draft.settings.font ?? state.prefs.font), maxlength: '120', oninput: (e: Event) => { draft.settings.font = (e.target as HTMLInputElement).value; } }))),
+    setting('Font scale', 'scale', rangeField('Font scale', .5, 3, .05, Number(draft.settings.scale ?? state.prefs.scale), (value) => { draft.settings.scale = value; })),
+    setting('Font weight', 'weight', rangeField('Font weight', 100, 1000, 100, Number(draft.settings.weight ?? state.prefs.weight), (value) => { draft.settings.weight = value; })),
+    setting('Corner radius', 'radius', rangeField('Corner radius', 0, 64, 1, Number(draft.settings.radius ?? state.prefs.radius), (value) => { draft.settings.radius = value; })),
+    setting('Motion', 'reducedMotion', switchField('Reduce motion', draft.settings.reducedMotion === true, () => { draft.settings.reducedMotion = draft.settings.reducedMotion !== true; render(); })),
+    setting('Display name', 'displayName', h('label', { class: 'field' }, 'DISPLAY NAME', h('input', { value: String(draft.settings.displayName ?? scheduledDisplayName()), maxlength: '80', oninput: (e: Event) => { draft.settings.displayName = (e.target as HTMLInputElement).value; } }))));
+}
+
+function scheduledEditor(): HTMLElement {
+  const draft = state.schedule.draft;
+  if (!draft) return emptyState(settingsCopy('Choose a rule to edit.', '揀一條規則先可以編輯。'));
+  const source = draft.source ?? { kind: 'local' as const };
+  const dateField = (label: string, key: 'startDate' | 'endDate'): HTMLElement => h('label', { class: 'field' }, label,
+    h('input', { type: 'date', value: draft[key] ?? '', oninput: (e: Event) => {
+      const value = (e.target as HTMLInputElement).value; if (value) draft[key] = value; else delete draft[key];
+    } }));
+  const timeField = (label: string, key: 'startTime' | 'endTime'): HTMLElement => h('label', { class: 'field' }, label,
+    h('input', { type: 'time', value: draft[key], required: true, oninput: (e: Event) => { draft[key] = (e.target as HTMLInputElement).value; } }));
+  const weekdays = draft.weekdays === 'every-day' ? new Set<number>([0, 1, 2, 3, 4, 5, 6]) : new Set(draft.weekdays);
+  const sourceFields = source.kind === 'json-api' ? h('div', { class: 'grid2' },
+    h('label', { class: 'field' }, 'HTTPS OR LOOPBACK URL', h('input', { type: 'url', value: source.url, maxlength: '2048', oninput: (e: Event) => { source.url = (e.target as HTMLInputElement).value; } })),
+    numberField('Refresh minutes', 1, 1440, source.refreshMinutes, (value) => { source.refreshMinutes = value; }),
+    switchField('Allow explicit loopback HTTP for development', source.allowLoopbackHttpForDevelopment, () => { source.allowLoopbackHttpForDevelopment = !source.allowLoopbackHttpForDevelopment; render(); }))
+    : source.kind === 'home-assistant' ? h('div', { class: 'grid2' },
+      h('label', { class: 'field' }, 'HOME ASSISTANT BASE URL', h('input', { type: 'url', value: source.baseUrl, maxlength: '2048', oninput: (e: Event) => { source.baseUrl = (e.target as HTMLInputElement).value; } })),
+      h('label', { class: 'field' }, 'BOOLEAN ENTITY', h('input', { value: source.entityId, maxlength: '270', placeholder: 'input_boolean.evening_mode', oninput: (e: Event) => { source.entityId = (e.target as HTMLInputElement).value; } })),
+      numberField('Refresh minutes', 1, 1440, source.refreshMinutes, (value) => { source.refreshMinutes = value; })) : null;
+  return h('div', { class: 'schedule-editor' },
+    h('div', { class: 'grid2' },
+      h('label', { class: 'field' }, 'RULE LABEL', h('input', { value: draft.label, maxlength: '120', oninput: (e: Event) => { draft.label = (e.target as HTMLInputElement).value; } })),
+      numberField('Priority', -1000, 1000, draft.priority, (value) => { draft.priority = value; }),
+      dateField('OPTIONAL START DATE', 'startDate'), dateField('OPTIONAL END DATE', 'endDate'),
+      timeField('START TIME', 'startTime'), timeField('END TIME', 'endTime'),
+      switchField('Rule enabled', draft.enabled, () => { draft.enabled = !draft.enabled; render(); })),
+    h('fieldset', { class: 'weekday-fieldset' }, h('legend', {}, 'Weekdays'),
+      h('label', { class: 'check-row' }, h('input', { type: 'checkbox', checked: draft.weekdays === 'every-day', onchange: () => { draft.weekdays = 'every-day'; render(); } }), 'Every day'),
+      ...SCHEDULE_WEEKDAYS.map((day, index) => h('label', { class: 'check-row' }, h('input', { type: 'checkbox', checked: weekdays.has(index), onchange: () => {
+        const next = new Set(weekdays); if (next.has(index)) next.delete(index); else next.add(index); draft.weekdays = [...next].sort(); render();
+      } }), day))),
+    h('div', { class: 'notice' }, `Times use ${state.schedule.data?.timezone ?? 'the local system timezone'}. Daylight-saving changes follow the operating system. Cross-midnight windows belong to the day they start; equal start and end times are inactive. Start is inclusive and end is exclusive.`),
+    selectField('Activation source', ['Local schedule', 'JSON API', 'Home Assistant boolean'], source.kind === 'local' ? 'Local schedule' : source.kind === 'json-api' ? 'JSON API' : 'Home Assistant boolean', (value) => {
+      draft.source = value === 'JSON API' ? { kind: 'json-api', url: 'https://', refreshMinutes: 15, allowLoopbackHttpForDevelopment: false }
+        : value === 'Home Assistant boolean' ? { kind: 'home-assistant', baseUrl: 'https://', entityId: 'input_boolean.schedule', refreshMinutes: 5 }
+          : { kind: 'local' }; render();
+    }), sourceFields,
+    h('h3', {}, settingsCopy('Scheduled values', '排程值')), scheduleSettingEditor(draft),
+    h('div', { class: 'btnrow' },
+      h('button', { class: 'btn filled', disabled: state.schedule.busy, onclick: () => {
+        const data = state.schedule.data; if (!data) return;
+        const rules = data.document.rules.filter(({ id }) => id !== draft.id); rules.push(structuredClone(draft));
+        void persistScheduledDocument({ schemaVersion: 1, rules });
+      } }, settingsCopy('Save rule', '儲存規則')),
+      h('button', { class: 'btn outlined', onclick: () => { state.schedule.tab = 'rules'; render(); } }, settingsCopy('Back to rules', '返回規則'))));
+}
+
+function scheduledSources(): HTMLElement {
+  const data = state.schedule.data;
+  if (!data) return emptyState(settingsCopy('Scheduled settings are unavailable.', '排程設定暫時不可用。'));
+  const external = data.document.rules.filter(({ source }) => source && source.kind !== 'local');
+  if (!external.length) return emptyState(settingsCopy('No external sources are configured.', '未有設定外部來源。'));
+  return h('div', { class: 'schedule-source-list' }, ...external.map((rule) => {
+    const status = data.sourceStatuses.find(({ ruleId }) => ruleId === rule.id);
+    const isHa = rule.source?.kind === 'home-assistant';
+    return card(rule.label, 'External source', [
+      h('p', { class: `feedback ${status?.state === 'error' || status?.state === 'missing-token' ? 'bad' : ''}`, role: 'status' },
+        `State: ${status?.state ?? 'pending'}${status?.code ? ` (${status.code})` : ''}. Last checked: ${status?.checkedAt ? new Date(status.checkedAt).toLocaleString() : 'not yet'}.`),
+      isHa ? h('label', { class: 'field' }, 'HOME ASSISTANT ACCESS TOKEN', h('input', { type: 'password', value: state.schedule.token, autocomplete: 'off', maxlength: '4096', oninput: (e: Event) => { state.schedule.token = (e.target as HTMLInputElement).value; } })) : null,
+      h('div', { class: 'btnrow' },
+        isHa ? h('button', { class: 'btn tonal', disabled: !state.schedule.token, onclick: async () => {
+          const bytes = new TextEncoder().encode(state.schedule.token); state.schedule.token = '';
+          try { acceptScheduledSettings(await bridge().setScheduledHomeAssistantToken(rule.id, bytes)); snack('Home Assistant token stored in the operating-system credential vault.'); }
+          catch { state.schedule.error = 'The Home Assistant token could not be stored or verified.'; }
+          finally { bytes.fill(0); render(); }
+        } }, 'Store token') : null,
+        isHa ? h('button', { class: 'btn outlined', onclick: () => void bridge().clearScheduledHomeAssistantToken(rule.id).then((next) => { acceptScheduledSettings(next); render(); }) }, 'Clear token') : null,
+        h('button', { class: 'btn outlined', onclick: () => void bridge().refreshScheduledSettings().then((next) => { acceptScheduledSettings(next); render(); }) }, 'Retry now')),
+      h('p', { class: 'feedback' }, 'Failures keep the last valid external value only until the rule is evaluated again; otherwise the local base setting remains in effect. Redirects, credentials in URLs, private targets, oversized payloads, and invalid schemas are rejected.'),
+    ], 'wide');
+  }));
+}
+
+function scheduledSettingsSurface(): HTMLElement {
+  const data = state.schedule.data;
+  const tabs: Array<['rules' | 'editor' | 'sources', string]> = [['rules', 'Rules'], ['editor', 'Editor'], ['sources', 'Sources']];
+  const tablist = h('div', { class: 'settings-subtabs', role: 'tablist', 'aria-label': 'Scheduled settings sections' }, ...tabs.map(([id, label]) => h('button', {
+    role: 'tab', 'aria-selected': state.schedule.tab === id ? 'true' : 'false', tabindex: state.schedule.tab === id ? '0' : '-1',
+    onclick: () => { state.schedule.tab = id; render(); },
+  }, label)));
+  let panel: HTMLElement;
+  if (state.schedule.tab === 'editor') panel = scheduledEditor();
+  else if (state.schedule.tab === 'sources') panel = scheduledSources();
+  else if (!data || !data.document.rules.length) panel = emptyState(settingsCopy('No schedule rules yet. Add one to begin.', '未有排程規則；新增一條開始。'));
+  else panel = h('div', { class: 'schedule-rule-list' }, ...data.document.rules.map((rule) => {
+    const status = data.sourceStatuses.find(({ ruleId }) => ruleId === rule.id);
+    return h('div', { class: 'schedule-rule-row' },
+      h('div', {}, h('strong', {}, rule.label), h('p', {}, `${rule.startTime}–${rule.endTime} · priority ${rule.priority} · ${status?.state ?? 'pending'}${data.activeRuleIds.includes(rule.id) ? ' · active now' : ''}`)),
+      switchField(`Enable ${rule.label}`, rule.enabled, () => { void persistScheduledDocument({ schemaVersion: 1, rules: data.document.rules.map((item) => item.id === rule.id ? { ...item, enabled: !item.enabled } : item) }); }),
+      h('button', { class: 'btn tonal', onclick: () => editScheduledRule(rule) }, 'Edit'),
+      h('button', { class: 'btn text', onclick: () => gate(`Delete schedule ${rule.label}`, undefined, undefined, () => { void persistScheduledDocument({ schemaVersion: 1, rules: data.document.rules.filter(({ id }) => id !== rule.id) }); }) }, 'Delete'));
+  }));
+  return h('section', { class: 'schedule-surface', 'aria-labelledby': 'scheduled-settings-heading' },
+    h('div', { class: 'section-title' }, h('div', {}, h('h2', { id: 'scheduled-settings-heading' }, settingsCopy('Scheduled settings', '排程設定')),
+      h('p', {}, settingsCopy('Temporarily override language, theme, density, accent, font, display name, and motion without overwriting your base choices.', '暫時覆蓋語言、主題、密度、強調色、字型、顯示名稱同動態，而唔會改寫基本選擇。')))),
+    tablist,
+    h('div', { role: 'tabpanel', class: 'schedule-panel' }, panel),
+    state.schedule.error ? h('p', { class: 'feedback bad', role: 'alert' }, state.schedule.error) : null,
+    h('div', { class: 'btnrow' }, h('button', { class: 'btn filled', onclick: () => editScheduledRule(newScheduledRule()) }, 'Add rule'),
+      h('button', { class: 'btn outlined', onclick: () => void bridge().refreshScheduledSettings().then((next) => { acceptScheduledSettings(next); render(); }) }, 'Refresh evaluation')),
+    h('p', { class: 'feedback' }, `Timezone: ${data?.timezone ?? 'loading'} · Evaluated: ${data ? new Date(data.evaluatedAt).toLocaleString() : 'not yet'}. Higher priority wins; ties use the lexicographically smaller stable rule ID. When an override ends, the saved base value returns.`));
+}
+
 function settingsPane(): HTMLElement {
   const p = state.prefs;
   const match = makeMatcher(sq('settings'));
@@ -1957,6 +2156,9 @@ function settingsPane(): HTMLElement {
 
   const surface = state.settingsSurface;
   const school = schoolModeReady();
+  if (show('Scheduled settings schedule external source Home Assistant JSON API timezone daylight saving cross-midnight precedence fallback language theme density accent font display name motion')) {
+    cards.appendChild(scheduledSettingsSurface());
+  }
   if (show(`Application display name rename reset title about notifications ${surface?.displayName.displayName ?? ''}`)) {
     const displayInput = h('input', {
       value: state.settingsDraft.displayName, maxlength: '80', autocomplete: 'off',
@@ -3841,7 +4043,7 @@ function notificationsDialog(): HTMLElement {
     snack(`${msg} · ${targets.length} notification(s).`);
     render();
   };
-  const displayName = state.settingsSurface?.displayName.displayName ?? 'Material System Utility';
+  const displayName = scheduledDisplayName();
   return dialogShell(`Reviewable local notices · ${displayName}`, `${displayName} notification centre`, [
     searchLine('notifications', 'Search notifications'),
     h('div', { class: 'bulkbar' },
@@ -4286,7 +4488,7 @@ function gateDialog(): HTMLElement {
 }
 
 function aboutDialog(): HTMLElement {
-  const displayName = state.settingsSurface?.displayName.displayName ?? 'Material System Utility';
+  const displayName = scheduledDisplayName();
   return dialogShell('Pure Electron · TypeScript · Material 3', `About ${displayName}`, [
     h('p', {}, 'A Material Design 3 desktop interface for the open-source WinUtil catalogue. Package actions use exact WinGet identifiers; higher-risk operations remain unavailable until their verified adapter is installed.'),
     h('div', { class: 'listbox', style: 'margin-top:14px' },
@@ -4328,6 +4530,9 @@ async function boot(): Promise<void> {
     };
   }
   bridge().onSettingsSurfaceState((next) => { acceptSettingsSurface(next); render(); });
+  try { acceptScheduledSettings(await bridge().scheduledSettingsState()); }
+  catch { state.schedule.error = 'Scheduled settings could not be loaded.'; }
+  bridge().onScheduledSettingsState((next) => { acceptScheduledSettings(next); render(); });
   bindPlatformNarration();
   try { state.narration = { ...state.narration, ...await bridge().narrationState() }; } catch { state.narration.platformSpeechAvailable = false; }
   await loadPersonalVocabulary();

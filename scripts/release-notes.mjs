@@ -95,8 +95,8 @@ ${assetRows()}
 
 ## Checks actually run
 
-- The one-click application build ran its locked dependency install, TypeScript build, asset copy, and baseline contract verifier.
-- The one-click installer build repeated the locked bootstrap, built Squirrel.Windows output, required Setup.exe, RELEASES, and a full .nupkg, and rejected any signed Setup executable.
+- The cloud one-click application build ran its locked dependency install, production TypeScript compilation, and asset copy. The local-only baseline and behavioral checks were intentionally skipped in GitHub Actions.
+- The cloud one-click installer build repeated the locked bootstrap, compiled and packaged Squirrel.Windows output, validated the exact Setup.exe, RELEASES, and .nupkg set, checked index hashes and package version, and rejected any signed Setup executable.
 - GitHub Actions contains no test, lint, type-check, static-analysis, accessibility, or screenshot job. These checks therefore do not gate publication. A release can ship from a commit whose unrun checks would have failed; that is the repository's accepted delivery trade-off.
 
 ## Dim sum code name

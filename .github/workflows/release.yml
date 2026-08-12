@@ -167,6 +167,7 @@ jobs:
         env:
           WORKFLOW_STARTED_AT: ${{ steps.timing_start.outputs.started_at }}
           WORKFLOW_COMPLETED_AT: ${{ steps.timing_start.outputs.started_at }}
+          RELEASE_TAG: ${{ steps.package_version.outputs.tag }}
           RELEASE_COMMIT: ${{ github.sha }}
           WORKFLOW_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RUNNER_IMAGE: ${{ env.ImageOS || 'windows-2025' }}
@@ -195,6 +196,7 @@ jobs:
         shell: pwsh
         env:
           WORKFLOW_STARTED_AT: ${{ steps.timing_start.outputs.started_at }}
+          RELEASE_TAG: ${{ steps.package_version.outputs.tag }}
           RELEASE_COMMIT: ${{ github.sha }}
           WORKFLOW_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RUNNER_IMAGE: ${{ env.ImageOS || 'windows-2025' }}

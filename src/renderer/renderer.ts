@@ -813,7 +813,11 @@ function render(): void {
 function appBar(): HTMLElement {
   const unread = state.notifications.filter((n) => !n.read).length;
   return h('header', { class: 'appbar' },
-    h('button', { class: 'icon-btn', title: t('mainMenu'), onclick: () => { state.drawerCollapsed = !state.drawerCollapsed; render(); } }, icon('menu')),
+    h('button', {
+      class: 'icon-btn', title: t('mainMenu'), 'aria-label': t('mainMenu'),
+      'aria-controls': 'primary-navigation', 'aria-expanded': state.drawerCollapsed ? 'true' : 'false',
+      onclick: () => { state.drawerCollapsed = !state.drawerCollapsed; render(); },
+    }, icon('menu')),
     h('div', { class: 'brand' },
       h('div', { class: 'brand-mark' }, 'W'),
       h('div', { class: 'brand-name' }, 'Material System Utility')),
@@ -883,7 +887,7 @@ function drawer(): HTMLElement {
       ], item.label),
     }, icon(item.icon), h('b', {}, label), count ? h('span', { class: 'nav-count' }, count) : null));
   }
-  return h('nav', { class: 'drawer' }, ...nodes);
+  return h('nav', { id: 'primary-navigation', class: 'drawer', 'aria-label': t('searchDestinations') }, ...nodes);
 }
 
 function content(): HTMLElement {

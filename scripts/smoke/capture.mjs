@@ -112,6 +112,7 @@ async function waitForApp(client) {
 async function prepareApp(client, capture, defaults) {
   const viewport = capture.viewport ?? defaults;
   await client.setViewport(viewport.width, viewport.height, viewport.scale ?? 1);
+  await client.evaluate("document.querySelectorAll('.menu').forEach((node)=>node.remove())");
   const update = capture.update ? `state.update={...state.update,...${literal(capture.update)}};` : '';
   const expression = `(()=>{
     state.dialog=null;state.reading=null;state.snack='';state.search.text='';state.selected.clear();

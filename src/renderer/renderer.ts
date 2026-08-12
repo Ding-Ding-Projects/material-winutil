@@ -736,6 +736,7 @@ function loadWorkspace(): void {
 
 function setTabDock(dock: TabDock): void {
   state.prefs.tabDock = dock;
+  savePrefs();
   render();
 }
 
@@ -1168,7 +1169,7 @@ function lighten(hex: string, amount = 0.55): string {
   return '#' + ch.map((c) => c.toString(16).padStart(2, '0')).join('');
 }
 
-function applyPrefs(persist = true): void {
+function applyPrefs(persist = false): void {
   const r = document.documentElement;
   const p = state.prefs;
   r.dataset.theme = p.theme;
@@ -1184,6 +1185,8 @@ function applyPrefs(persist = true): void {
   persistWorkspace();
   try { localStorage.setItem('winutil.profiles', JSON.stringify(state.profiles)); } catch { /* profiles stay in memory */ }
 }
+
+function savePrefs(): void { applyPrefs(true); }
 
 function schoolModeReady(): SettingsSurfaceState['schoolMode'] & { status: 'ready' } | null {
   const value = state.settingsSurface?.schoolMode;
@@ -1282,7 +1285,7 @@ function countFor(view: ViewId): string {
 /* ----------------------------------------------------------------- shell -- */
 
 function render(): void {
-  applyPrefs();
+  applyPrefs(false);
   const root = $('#app');
   if (!root) return;
   root.replaceChildren(appBar(), h('div', { class: `body${state.drawerCollapsed ? ' drawer-collapsed' : ''}` }, drawer(), content(), sideRail()));
@@ -1305,7 +1308,7 @@ function appBar(): HTMLElement {
     h('div', { style: 'flex:1' }),
     h('button', { class: 'icon-btn', title: t('notificationCentre'), style: 'position:relative', onclick: () => openDialog('notifications') },
       icon('notifications'), unread ? h('span', { class: 'badge-dot' }) : null),
-    h('button', { class: 'icon-btn', title: t('theme'), onclick: () => { state.prefs.theme = state.prefs.theme === 'dark' ? 'light' : 'dark'; render(); } },
+    h('button', { class: 'icon-btn', title: t('theme'), onclick: () => { state.prefs.theme = state.prefs.theme === 'dark' ? 'light' : 'dark'; savePrefs(); render(); } },
       icon(state.prefs.theme === 'dark' ? 'light_mode' : 'dark_mode')),
     h('button', { class: 'icon-btn', title: t('settings'), onclick: () => go('settings') }, icon('settings')),
     h('div', { class: 'win-controls' },
@@ -2295,13 +2298,13 @@ function settingsPane(): HTMLElement {
   }
 
   const lang = h('div', { class: 'grid2' },
-    selectField(narratorText('displayLanguage'), ['English', 'Yue', 'Bilingual'], p.language, (v) => { p.language = v as LanguageMode; render(); }),
-    selectField(narratorText('language'), ['English', 'Yue', 'Both'], p.narrator, (v) => { p.narrator = v as Prefs['narrator']; applyPrefs(); render(); narrateFact('settings', NARRATOR_COPY.English.settings, NARRATOR_COPY.Yue.settings); }),
-    rangeField(narratorText('englishFunny'), 1, 5, 1, p.enFunny, (v) => { p.enFunny = v; applyPrefs(); }),
-    rangeField(narratorText('cantoneseFunny'), 1, 5, 1, p.yueFunny, (v) => { p.yueFunny = v; applyPrefs(); }),
-    switchField(narratorText('enabled'), p.narratorEnabled, () => { p.narratorEnabled = !p.narratorEnabled; applyPrefs(); render(); if (p.narratorEnabled) narrateFact('settings', NARRATOR_COPY.English.settings, NARRATOR_COPY.Yue.settings); else void bridge().stopNarration(); }),
-    switchField(narratorText('quiet'), p.narratorQuiet, () => { p.narratorQuiet = !p.narratorQuiet; applyPrefs(); render(); }),
-    switchField(narratorText('reducedSound'), p.narratorReducedSound, () => { p.narratorReducedSound = !p.narratorReducedSound; applyPrefs(); render(); }),
+    selectField(narratorText('displayLanguage'), ['English', 'Yue', 'Bilingual'], p.language, (v) => { p.language = v as LanguageMode; savePrefs(); render(); }),
+    selectField(narratorText('language'), ['English', 'Yue', 'Both'], p.narrator, (v) => { p.narrator = v as Prefs['narrator']; savePrefs(); render(); narrateFact('settings', NARRATOR_COPY.English.settings, NARRATOR_COPY.Yue.settings); }),
+    rangeField(narratorText('englishFunny'), 1, 5, 1, p.enFunny, (v) => { p.enFunny = v; savePrefs(); }),
+    rangeField(narratorText('cantoneseFunny'), 1, 5, 1, p.yueFunny, (v) => { p.yueFunny = v; savePrefs(); }),
+    switchField(narratorText('enabled'), p.narratorEnabled, () => { p.narratorEnabled = !p.narratorEnabled; savePrefs(); render(); if (p.narratorEnabled) narrateFact('settings', NARRATOR_COPY.English.settings, NARRATOR_COPY.Yue.settings); else void bridge().stopNarration(); }),
+    switchField(narratorText('quiet'), p.narratorQuiet, () => { p.narratorQuiet = !p.narratorQuiet; savePrefs(); render(); }),
+    switchField(narratorText('reducedSound'), p.narratorReducedSound, () => { p.narratorReducedSound = !p.narratorReducedSound; savePrefs(); render(); }),
     h('p', {}, narratorText('disclosure')),
     h('p', { class: 'feedback', role: 'status' }, state.narration.screenReaderActive ? narratorText('screenReader')
       : !state.narration.platformSpeechAvailable ? narratorText('unavailable')
@@ -2346,18 +2349,18 @@ function settingsPane(): HTMLElement {
   }
 
   const appearance = h('div', { class: 'grid2' },
-    selectField('Theme', ['dark', 'light'], p.theme, (v) => { p.theme = v as ThemeMode; render(); }),
-    selectField('Density', ['comfortable', 'compact'], p.density, (v) => { p.density = v as Density; render(); }),
-    colorField('Accent color', p.accent, (v) => { p.accent = v; render(); }),
-    selectField('Font family', ['Segoe UI Variable', 'Segoe UI', 'Arial', 'Consolas', 'Georgia'], p.font, (v) => { p.font = v; render(); }),
-    rangeField('Font scale', 0.9, 1.25, 0.05, p.scale, (v) => { p.scale = v; applyPrefs(); }),
-    rangeField('Font weight', 300, 700, 100, p.weight, (v) => { p.weight = v; applyPrefs(); }),
-    rangeField('Corner radius', 8, 28, 1, p.radius, (v) => { p.radius = v; applyPrefs(); }),
-    switchField('Reduce motion', p.reducedMotion, () => { p.reducedMotion = !p.reducedMotion; render(); }));
+    selectField('Theme', ['dark', 'light'], p.theme, (v) => { p.theme = v as ThemeMode; savePrefs(); render(); }),
+    selectField('Density', ['comfortable', 'compact'], p.density, (v) => { p.density = v as Density; savePrefs(); render(); }),
+    colorField('Accent color', p.accent, (v) => { p.accent = v; savePrefs(); render(); }),
+    selectField('Font family', ['Segoe UI Variable', 'Segoe UI', 'Arial', 'Consolas', 'Georgia'], p.font, (v) => { p.font = v; savePrefs(); render(); }),
+    rangeField('Font scale', 0.9, 1.25, 0.05, p.scale, (v) => { p.scale = v; savePrefs(); }),
+    rangeField('Font weight', 300, 700, 100, p.weight, (v) => { p.weight = v; savePrefs(); }),
+    rangeField('Corner radius', 8, 28, 1, p.radius, (v) => { p.radius = v; savePrefs(); }),
+    switchField('Reduce motion', p.reducedMotion, () => { p.reducedMotion = !p.reducedMotion; savePrefs(); render(); }));
   if (show('Appearance')) cards.appendChild(card('Appearance', '', [appearance,
     h('div', { class: 'btnrow' },
       h('button', { class: 'btn tonal', onclick: () => openDialog('export') }, 'Export settings'),
-      h('button', { class: 'btn outlined', onclick: () => gate('Reset every setting to its default', undefined, undefined, () => { state.prefs = { ...DEFAULT_PREFS }; applyPrefs(); render(); snack('Settings reset to their shipped defaults.'); }) }, 'Reset settings'))], 'wide'));
+      h('button', { class: 'btn outlined', onclick: () => gate('Reset every setting to its default', undefined, undefined, () => { state.prefs = { ...DEFAULT_PREFS }; savePrefs(); render(); snack('Settings reset to their shipped defaults.'); }) }, 'Reset settings'))], 'wide'));
 
   if (show('Every surface')) cards.appendChild(card('Every surface', '', [
     h('p', {}, 'Search fields, tabs, cards, menus, notifications, the command palette, and per-element appearance editors keep their state local to this profile.'),
@@ -3006,9 +3009,9 @@ function paletteDialog(): HTMLElement {
   const cmds: Cmd[] = [
     ...NAV.filter((n): n is { id: ViewId; label: string; icon: string } => 'id' in n)
       .map((n) => ({ label: `Go to ${n.label}`, sub: 'Navigation', icon: n.icon, act: () => { closeDialog(); go(n.id); } })),
-    { label: 'Toggle theme', sub: `Currently ${state.prefs.theme}`, icon: 'contrast', act: () => { state.prefs.theme = state.prefs.theme === 'dark' ? 'light' : 'dark'; closeDialog(); } },
-    { label: 'Toggle density', sub: `Currently ${state.prefs.density}`, icon: 'density_medium', act: () => { state.prefs.density = state.prefs.density === 'compact' ? 'comfortable' : 'compact'; closeDialog(); } },
-    ...(schoolModeRestrictsPersonalization() ? [] : [{ label: 'Cycle language mode', sub: `Currently ${state.prefs.language}`, icon: 'translate', act: () => { const o: LanguageMode[] = ['English', 'Yue', 'Bilingual']; state.prefs.language = o[(o.indexOf(state.prefs.language) + 1) % 3]; closeDialog(); } }]),
+    { label: 'Toggle theme', sub: `Currently ${state.prefs.theme}`, icon: 'contrast', act: () => { state.prefs.theme = state.prefs.theme === 'dark' ? 'light' : 'dark'; savePrefs(); closeDialog(); } },
+    { label: 'Toggle density', sub: `Currently ${state.prefs.density}`, icon: 'density_medium', act: () => { state.prefs.density = state.prefs.density === 'compact' ? 'comfortable' : 'compact'; savePrefs(); closeDialog(); } },
+    ...(schoolModeRestrictsPersonalization() ? [] : [{ label: 'Cycle language mode', sub: `Currently ${state.prefs.language}`, icon: 'translate', act: () => { const o: LanguageMode[] = ['English', 'Yue', 'Bilingual']; state.prefs.language = o[(o.indexOf(state.prefs.language) + 1) % 3]; savePrefs(); closeDialog(); } }]),
     { label: 'Manage application display name', sub: state.settingsSurface?.displayName.displayName ?? 'Material System Utility', icon: 'edit', act: () => { closeDialog(); go('settings'); state.searches.settings = { text: 'Application display name', regex: false, flags: 'iu' }; render(); } },
     { label: schoolModeReady()?.state.displayLabel ?? 'Shared mode status', sub: schoolModeReady() ? (schoolModeEnabled() ? 'Enabled' : 'Disabled') : 'Shared record unavailable', icon: 'security', act: () => { closeDialog(); go('settings'); state.searches.settings = { text: schoolModeReady()?.state.displayLabel ?? 'shared mode', regex: false, flags: 'iu' }; render(); } },
     { label: 'Open the regex builder', sub: 'Search tool', icon: 'data_object', act: () => { state.regexDraft.target = 'main'; openDialog('regex'); } },
@@ -3447,7 +3450,7 @@ function appearanceDialog(): HTMLElement {
     h('button', { class: 'btn tonal', disabled: true, title: 'Named-theme storage is not installed in this build' }, 'Save named theme'),
     h('button', {
       class: 'btn filled',
-      onclick: () => { if (target.id === 'app-root') { state.prefs.accent = o.accent; state.prefs.font = o.font; state.prefs.radius = o.radius; state.prefs.scale = o.scale; state.prefs.weight = o.weight; } closeDialog(); snack('Appearance applied and persisted.'); },
+      onclick: () => { if (target.id === 'app-root') { state.prefs.accent = o.accent; state.prefs.font = o.font; state.prefs.radius = o.radius; state.prefs.scale = o.scale; state.prefs.weight = o.weight; savePrefs(); } closeDialog(); snack('Appearance applied and persisted.'); },
     }, 'Apply appearance'),
   ]);
 }
@@ -4223,7 +4226,7 @@ function exportDialog(): HTMLElement {
   const preview = `${records.length} structured record(s) · ${scope}\nUTF-8 ${draft.lineEnding.toUpperCase()} · private vocabulary and TOTP/authenticator secrets are always omitted.\n${draft.archive === 'none' ? 'A plain file will be saved.' : `${draft.archive.toUpperCase()} archive · ${draft.level} compression.`}`;
   return dialogShell('Multi-format export', `Export ${VIEW_META[state.view].title}`, [
     h('div', { class: 'grid2' },
-      selectField('Format', EXPORT_FORMATS.map(([v]) => v), format, (v) => { state.prefs.exportFormat = v; render(); }),
+      selectField('Format', EXPORT_FORMATS.map(([v]) => v), format, (v) => { state.prefs.exportFormat = v; savePrefs(); render(); }),
       selectField('Line ending', ['lf', 'crlf'], draft.lineEnding, (v) => { draft.lineEnding = v; render(); }),
       selectField('Archive', ['none', 'zip', '7z'], draft.archive, (v) => { draft.archive = v; render(); }),
       draft.archive === 'none' ? null : selectField('Compression level', ['store', 'fastest', 'fast', 'normal', 'maximum', 'ultra'], draft.level, (v) => { draft.level = v; render(); })),

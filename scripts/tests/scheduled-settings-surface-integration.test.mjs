@@ -39,6 +39,15 @@ test('renderer ships an accessible tabbed schedule editor and local search contr
   assert.match(styles, /\.schedule-rule-row/u);
 });
 
+test('scheduled-state events render once without writing effective preferences back as a base setting', () => {
+  assert.match(renderer, /function applyPrefs\(persist = false\)/u);
+  assert.match(renderer, /function savePrefs\(\): void \{ applyPrefs\(true\); \}/u);
+  assert.match(renderer, /function acceptScheduledSettings[\s\S]*?applyPrefs\(false\);/u);
+  assert.match(renderer, /function render\(\): void \{\s+applyPrefs\(false\);/u);
+  assert.equal((renderer.match(/bridge\(\)\.writePrefs\(/gu) ?? []).length, 1, 'only explicit savePrefs may write renderer preferences');
+  assert.match(renderer, /onScheduledSettingsState\(\(next\) => \{ acceptScheduledSettings\(next\); render\(\); \}\)/u);
+});
+
 test('docs state persistence, precedence, fallback, timezone, and security boundaries', () => {
   for (const phrase of ['local timezone', 'daylight-saving', 'cross-midnight', 'Higher priority', 'last valid', 'Credential Manager', 'private-network']) {
     assert.match(docs, new RegExp(phrase, 'iu'));

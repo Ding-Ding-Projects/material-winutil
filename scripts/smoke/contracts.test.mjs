@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { assertBuiltArtifactFresh, assertCaptureArtifactProvenance, assertGitClean, extractSquirrelApplication, gitChangedPaths, parseArgs, selectCaptureManifests } from './lib/contracts.mjs';
-import { assertSingleTarget } from './lib/cdp.mjs';
+import { assertSingleTarget, waitForTargets } from './lib/cdp.mjs';
 import { assertUniquePngs, inspectPng } from './lib/png.mjs';
 import { commandLine } from './lib/lowlevel.mjs';
 
@@ -54,6 +54,23 @@ test('single-target isolation rejects extra or unexpected targets', () => {
   assert.equal(assertSingleTarget([page], (target) => target.url === page.url, 'fixture'), page);
   assert.throws(() => assertSingleTarget([page, page], () => true, 'fixture'), /exactly one/u);
   assert.throws(() => assertSingleTarget([page], () => false, 'fixture'), /not the expected/u);
+});
+
+test('CDP startup fails immediately when the launched application exits', async () => {
+  const started = Date.now();
+  await assert.rejects(() => waitForTargets(1, 10000, async () => false), /application process exited before the CDP endpoint became ready/u);
+  assert.ok(Date.now() - started < 2000, 'process exit should not be misreported after the full CDP timeout');
+});
+
+test('runtime packages imported by the main process are production dependencies', async () => {
+  const packageJson = JSON.parse(await readFile(join(repo, 'package.json'), 'utf8'));
+  const authenticator = await readFile(join(repo, 'src', 'main', 'authenticator-service.ts'), 'utf8');
+  const runtimePackages = [...authenticator.matchAll(/^import .* from '([^./][^']*)';$/gmu)].map((match) => match[1].split('/').slice(0, match[1].startsWith('@') ? 2 : 1).join('/'));
+  for (const packageName of runtimePackages) {
+    assert.ok(packageName.startsWith('node:') || Object.hasOwn(packageJson.dependencies, packageName), `${packageName} must be packaged as a production dependency`);
+  }
+  assert.equal(packageJson.devDependencies.jsqr, undefined);
+  assert.equal(packageJson.devDependencies.pngjs, undefined);
 });
 
 test('command line quotes paths without changing argument boundaries', () => {

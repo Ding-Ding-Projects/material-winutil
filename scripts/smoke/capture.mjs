@@ -184,7 +184,10 @@ async function captureSession(kind, manifest, executable, argsForLaunch, expecte
     const args = argsForLaunch(profile, port);
     const launched = await lowlevel('launch_on_headless_desktop', { name: desktop, command: commandLine(executable, args) });
     pid = launched.pid;
-    const targets = await waitForTargets(port);
+    const targets = await waitForTargets(port, 20000, async () => {
+      const listed = await lowlevel('list_processes');
+      return listed.processes?.some((process) => process.pid === pid) ?? false;
+    });
     const target = assertSingleTarget(targets, expectedTarget, kind);
     client = await CdpClient.connect(target.webSocketDebuggerUrl);
     await client.call('Page.enable');

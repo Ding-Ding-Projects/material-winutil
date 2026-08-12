@@ -1,9 +1,12 @@
 import { setTimeout as delay } from 'node:timers/promises';
 
-export async function waitForTargets(port, timeoutMs = 20000) {
+export async function waitForTargets(port, timeoutMs = 20000, isProcessAlive) {
   const deadline = Date.now() + timeoutMs;
   let last = '';
   while (Date.now() < deadline) {
+    if (isProcessAlive && !(await isProcessAlive())) {
+      throw new Error(`application process exited before the CDP endpoint became ready on port ${port}`);
+    }
     try {
       const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1500) });
       if (response.ok) return await response.json();

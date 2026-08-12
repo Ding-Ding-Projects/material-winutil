@@ -3,6 +3,7 @@
 ## Current state
 
 - Scheduled settings are main-process owned, atomically persisted, evaluated in local time, exposed through trusted IPC/preload types, and editable from the Settings destination. JSON API sources retain the existing HTTPS/loopback, size, timeout, redirect, schema, DNS-rebinding, and generation boundaries. Home Assistant tokens live only in Windows Credential Manager. Packaged visual interaction proof remains pending.
+- The renderer color picker now consumes `src/shared/appearance.ts` directly through a renderer-only bootstrap. It supports selectable/editable/copyable HEX, RGB, HSL, HSV, HWB, Lab/LCH, OKLab/OKLCH, and CMYK representations with alpha, a 512-character input limit, explicit sRGB clipping-channel feedback, and composited WCAG contrast results. Packaged visual interaction proof remains pending.
 
 Material System Utility is a public Windows Electron project derived from the reviewed data catalogue in WinUtil. The executable boundary is intentionally narrower than the source catalogue: exact package operations are enabled; higher-risk operating-system adapters are refused.
 
@@ -10,7 +11,7 @@ The current verified baseline includes:
 
 - exact validated WinGet and Microsoft Store catalogue installs and uninstalls;
 - WinGet upgrade-all and installed-package detection;
-- local catalogue search, regex tooling, basic tabs/groups/pinning, and an appearance subset;
+- local catalogue search, regex tooling, basic tabs/groups/pinning, and an appearance subset with the shared color translator and contrast feedback;
 - visible Squirrel.Windows update states, a bounded background check schedule, an unsigned-installer warning, and explicit restart control;
 - one-click runnable builds and unsigned Squirrel.Windows installer builds; and
 - a local responsive documentation site under `docs/site` with an explicit capability inventory;
@@ -31,6 +32,7 @@ The current verified baseline includes:
 ## Verification
 
 - The TypeScript build and committed baseline verifier are the local source checks.
+- `node --test scripts/tests/appearance.test.mjs scripts/tests/appearance-color-surface.test.mjs` covers the shared color mathematics and its renderer surface contract after `npm run build`.
 - `build.bat /s` is the supported runnable-build path.
 - `build-installer.bat /s` is the supported manual installer path and must verify unsigned Squirrel.Windows output plus SHA-256.
 - `node docs/site/scripts/verify-site.mjs` verifies the local site structure, capability manifest, real capture reference, responsive contracts, and lack of remote assets.

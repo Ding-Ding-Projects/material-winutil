@@ -37,7 +37,7 @@ This roadmap separates shipped behavior from future work. Dates are intentionall
 - [ ] Complete per-language humor controls, narration, and personal-vocabulary handling.
 - [x] Implement shared mode plus persistent scheduled settings with bounded HTTPS and Home Assistant boolean activation.
 - [ ] Extend live cross-application propagation beyond the shared School-mode record and capture packaged scheduled-settings interaction proof.
-- [ ] Complete per-element appearance editing and accessible color translation across every rendered element and state.
+- [ ] Complete per-element appearance editing across every rendered element and state. The shared color translator, alpha, clipping feedback, copy actions, and WCAG contrast readout now exist in the picker; packaged interaction and full per-element coverage remain.
 - [x] Provide structured exports, bulk actions, local Git-backed history, locks, TOTP, and local recovery flows.
 - [ ] Finish the changelog viewer and command-palette coverage inventory.
 - [x] Finish the offline in-app documentation browser.

@@ -11,6 +11,25 @@ type ThemeMode = 'light' | 'dark';
 type Density = 'comfortable' | 'compact';
 type LanguageMode = 'English' | 'Yue' | 'Bilingual';
 type TabDock = 'left' | 'right' | 'top' | 'bottom';
+type AppearanceColorSpace = 'hex' | 'rgb' | 'hsl' | 'hsv' | 'hwb' | 'lab' | 'lch' | 'oklab' | 'oklch' | 'cmyk';
+type AppearanceColorValue = { space: AppearanceColorSpace; [channel: string]: string | number | undefined };
+interface AppearanceColorConversion {
+  value: AppearanceColorValue;
+  inGamut: boolean;
+  clipped: boolean;
+  clippedChannels: readonly string[];
+}
+interface AppearanceContrastResult {
+  ratio: number;
+  normalTextAA: boolean;
+  normalTextAAA: boolean;
+  largeTextAA: boolean;
+  largeTextAAA: boolean;
+}
+interface AppearanceColorRuntime {
+  convertColor(input: AppearanceColorValue, targetSpace: AppearanceColorSpace): AppearanceColorConversion;
+  contrastRatio(foreground: AppearanceColorValue, background: AppearanceColorValue): AppearanceContrastResult;
+}
 type TabSearchKey = 'current' | 'groupNames' | 'master' | 'inGroup' | 'closeContaining' | 'closeNot';
 type DialogId =
   | 'palette' | 'regex' | 'tabs' | 'appearance' | 'lock' | 'auth'
@@ -564,7 +583,7 @@ const state = {
   profiles: [] as Array<{ id: string; name: string; color: string; view: ViewId; ids: string[] }>,
   profileDraft: { name: '', color: '#6750A4' },
   dimSumSeen: 0,
-  picker: { target: '', label: '', h: 258, s: 32, l: 48, recents: [] as string[] },
+  picker: { target: '', label: '', h: 258, s: 32, l: 48, alpha: 1, representation: 'hex' as AppearanceColorSpace, representationInput: '', contrastBackground: '#ffffff', error: '', recents: [] as string[] },
   collapsedGroups: new Set<string>(),
   reading: null as null | { title: string; path: string; body: string; article?: OfflineDocArticle },
   offlineDocs: null as OfflineDocsBundle | null,
@@ -4334,13 +4353,48 @@ function hexToHsl(hex: string): { h: number; s: number; l: number } | null {
   return { h: Math.round(((hu * 60) + 360) % 360), s: Math.round(s * 100), l: Math.round(l * 100) };
 }
 
+const APPEARANCE_COLOR_SPACES: readonly AppearanceColorSpace[] = Object.freeze([
+  'hex', 'rgb', 'hsl', 'hsv', 'hwb', 'lab', 'lch', 'oklab', 'oklch', 'cmyk',
+]);
+const COLOR_TRANSLATOR_INPUT_LIMIT = 512;
+
+function appearanceColorRuntime(): AppearanceColorRuntime {
+  const runtime = (window as unknown as { appearanceColor?: AppearanceColorRuntime }).appearanceColor;
+  if (!runtime) throw new Error('The appearance colour translator is unavailable.');
+  return runtime;
+}
+
+function pickerColor(): AppearanceColorValue {
+  return { space: 'hsl', h: state.picker.h, s: state.picker.s / 100, l: state.picker.l / 100, alpha: state.picker.alpha };
+}
+
+function formatColorValue(value: AppearanceColorValue): string {
+  return value.space === 'hex' ? String(value.value).toUpperCase() : JSON.stringify(value);
+}
+
+function parseColorRepresentation(space: AppearanceColorSpace, input: string): AppearanceColorValue {
+  if (Array.from(input).length > COLOR_TRANSLATOR_INPUT_LIMIT) throw new TypeError(`Input must be ${COLOR_TRANSLATOR_INPUT_LIMIT} characters or fewer.`);
+  if (space === 'hex') return { space, value: input.trim() };
+  let parsed: unknown;
+  try { parsed = JSON.parse(input); } catch { throw new TypeError(`Enter ${space.toUpperCase()} as a valid JSON object.`); }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || (parsed as { space?: unknown }).space !== space) {
+    throw new TypeError(`The JSON object must use "space":"${space}".`);
+  }
+  return parsed as AppearanceColorValue;
+}
+
 /** target: 'selection' | 'row:<id>' | 'profile:<id>' */
 function openColorPicker(target: string, label: string): void {
   const current = target.startsWith('row:')
     ? state.rowColors[target.slice(4)] ?? state.selectionColor
     : state.selectionColor;
-  const hsl = hexToHsl(current) ?? { h: 258, s: 32, l: 48 };
-  state.picker = { ...state.picker, target, label, ...hsl };
+  const converted = appearanceColorRuntime().convertColor({ space: 'hex', value: current }, 'hsl');
+  const hsl = converted.value as AppearanceColorValue;
+  state.picker = {
+    ...state.picker, target, label,
+    h: Number(hsl.h), s: Number(hsl.s) * 100, l: Number(hsl.l) * 100,
+    alpha: Number(hsl.alpha ?? 1), error: '',
+  };
   openDialog('color');
 }
 
@@ -4364,36 +4418,73 @@ function applyPickedColor(hex: string): void {
 
 function colorDialog(): HTMLElement {
   const p = state.picker;
+  const runtime = appearanceColorRuntime();
   const chip = h('div', { class: 'picker-chip' });
   const hexLabel = h('div', { class: 'mono', style: 'font-size:20px' });
   const hslLabel = h('div', { style: 'font-size:12px;color:var(--md-sys-color-on-surface-variant)' });
-  const hexInput = h('input', { class: 'mono' }) as HTMLInputElement;
+  const representationInput = h('textarea', { class: 'mono color-representation-input', maxlength: String(COLOR_TRANSLATOR_INPUT_LIMIT), rows: '3', spellcheck: 'false' }) as HTMLTextAreaElement;
   const nativeInput = h('input', { type: 'color' }) as HTMLInputElement;
-  const readouts = { h: h('b', { class: 'mono' }), s: h('b', { class: 'mono' }), l: h('b', { class: 'mono' }) };
-  const tracks = {} as Record<'h' | 's' | 'l', HTMLInputElement>;
+  const contrastInput = h('input', { class: 'mono', maxlength: '9', value: p.contrastBackground, spellcheck: 'false' }) as HTMLInputElement;
+  const errorFeedback = h('div', { class: 'feedback error color-feedback', role: 'alert', hidden: true });
+  const gamutFeedback = h('div', { class: 'feedback color-feedback', role: 'status', 'aria-live': 'polite' });
+  const contrastFeedback = h('div', { class: 'feedback color-feedback', role: 'status', 'aria-live': 'polite' });
+  const readouts = { h: h('b', { class: 'mono' }), s: h('b', { class: 'mono' }), l: h('b', { class: 'mono' }), alpha: h('b', { class: 'mono' }) };
+  const tracks = {} as Record<'h' | 's' | 'l' | 'alpha', HTMLInputElement>;
+
+  const showError = (message = ''): void => {
+    p.error = message;
+    errorFeedback.hidden = !message;
+    errorFeedback.textContent = message;
+  };
+
+  const contrastSummary = (foreground: AppearanceColorValue): void => {
+    try {
+      const contrast = runtime.contrastRatio(foreground, { space: 'hex', value: p.contrastBackground });
+      contrastInput.setAttribute('aria-invalid', 'false');
+      contrastFeedback.textContent = `${contrast.ratio.toFixed(2)}:1 against ${p.contrastBackground.toUpperCase()} · normal text AA ${contrast.normalTextAA ? 'passes' : 'fails'}, AAA ${contrast.normalTextAAA ? 'passes' : 'fails'} · large text AA ${contrast.largeTextAA ? 'passes' : 'fails'}, AAA ${contrast.largeTextAAA ? 'passes' : 'fails'}.`;
+    } catch {
+      contrastInput.setAttribute('aria-invalid', 'true');
+      contrastFeedback.textContent = 'Enter a valid HEX or HEX8 background to calculate WCAG contrast.';
+    }
+  };
 
   /** Repaint every dependent node in place. Re-rendering would replace the range
    *  input mid-drag and the browser would drop pointer capture. */
-  const sync = (from = ''): void => {
-    const hex = hslToHex(p.h, p.s, p.l);
+  const sync = (from = '', reported?: AppearanceColorConversion): void => {
+    const current = pickerColor();
+    const hexConversion = runtime.convertColor(current, 'hex');
+    const hex = String(hexConversion.value.value);
     chip.style.setProperty('--pick', hex);
     hexLabel.textContent = hex.toUpperCase();
-    hslLabel.textContent = `hsl(${Math.round(p.h)} ${Math.round(p.s)}% ${Math.round(p.l)}%)`;
+    hslLabel.textContent = `hsl(${Math.round(p.h)} ${Math.round(p.s)}% ${Math.round(p.l)}% / ${Math.round(p.alpha * 100)}%)`;
     readouts.h.textContent = `${Math.round(p.h)}\u00b0`;
     readouts.s.textContent = `${Math.round(p.s)}%`;
     readouts.l.textContent = `${Math.round(p.l)}%`;
+    readouts.alpha.textContent = `${Math.round(p.alpha * 100)}%`;
     tracks.s.style.setProperty('--track', `linear-gradient(90deg,${hslToHex(p.h, 0, p.l)},${hslToHex(p.h, 100, p.l)})`);
     tracks.l.style.setProperty('--track', `linear-gradient(90deg,#000,${hslToHex(p.h, p.s, 50)},#fff)`);
-    (['h', 's', 'l'] as const).forEach((k) => { if (from !== k) tracks[k].value = String(Math.round(p[k])); });
-    if (from !== 'hex') hexInput.value = hex;
-    nativeInput.value = hex;
+    tracks.alpha.style.setProperty('--track', `linear-gradient(90deg,transparent,${hex.slice(0, 7)})`);
+    (['h', 's', 'l'] as const).forEach((key) => { if (from !== key) tracks[key].value = String(Math.round(p[key])); });
+    if (from !== 'alpha') tracks.alpha.value = String(Math.round(p.alpha * 100));
+    if (from !== 'representation') {
+      const conversion = runtime.convertColor(current, p.representation);
+      p.representationInput = formatColorValue(conversion.value);
+      representationInput.value = p.representationInput;
+    }
+    const gamut = reported ?? runtime.convertColor(current, p.representation);
+    gamutFeedback.classList.toggle('bad', gamut.clipped);
+    gamutFeedback.textContent = gamut.clipped
+      ? `Outside sRGB gamut. The ${gamut.clippedChannels.join(', ')} channel${gamut.clippedChannels.length === 1 ? ' was' : 's were'} clipped for display.`
+      : `In sRGB gamut · ${p.representation.toUpperCase()} conversion can be displayed without clipping.`;
+    nativeInput.value = hex.slice(0, 7);
+    contrastSummary(current);
   };
 
-  const slider = (label: string, key: 'h' | 's' | 'l', max: number, track: string): HTMLElement => {
+  const slider = (label: string, key: 'h' | 's' | 'l' | 'alpha', max: number, track: string): HTMLElement => {
     const input = h('input', {
-      type: 'range', min: '0', max: String(max), step: '1', value: String(Math.round(p[key])),
+      type: 'range', min: '0', max: String(max), step: '1', value: String(Math.round(key === 'alpha' ? p.alpha * 100 : p[key])),
       class: 'gradient', style: `--track:${track};height:44px;border:0;background:none;padding:0`,
-      oninput: (e: Event) => { p[key] = Number((e.target as HTMLInputElement).value); sync(key); },
+      oninput: (e: Event) => { const value = Number((e.target as HTMLInputElement).value); if (key === 'alpha') p.alpha = value / 100; else p[key] = value; showError(); sync(key); },
     }) as HTMLInputElement;
     tracks[key] = input;
     return h('label', { class: 'field' },
@@ -4401,25 +4492,55 @@ function colorDialog(): HTMLElement {
       input);
   };
 
-  hexInput.addEventListener('input', () => {
-    const parsed = hexToHsl(hexInput.value);
-    if (parsed) { Object.assign(p, parsed); sync('hex'); }
+  representationInput.addEventListener('input', () => {
+    p.representationInput = representationInput.value;
+    try {
+      const parsed = parseColorRepresentation(p.representation, representationInput.value);
+      const conversion = runtime.convertColor(parsed, 'hsl');
+      const hsl = conversion.value;
+      p.h = Number(hsl.h); p.s = Number(hsl.s) * 100; p.l = Number(hsl.l) * 100; p.alpha = Number(hsl.alpha ?? 1);
+      representationInput.setAttribute('aria-invalid', 'false');
+      showError(); sync('representation', conversion);
+    } catch (error) {
+      representationInput.setAttribute('aria-invalid', 'true');
+      showError(error instanceof Error ? error.message : 'The colour representation is invalid.');
+    }
   });
   nativeInput.addEventListener('input', () => {
-    const parsed = hexToHsl(nativeInput.value);
-    if (parsed) { Object.assign(p, parsed); sync(); }
+    const conversion = runtime.convertColor({ space: 'hex', value: nativeInput.value }, 'hsl');
+    const hsl = conversion.value;
+    p.h = Number(hsl.h); p.s = Number(hsl.s) * 100; p.l = Number(hsl.l) * 100;
+    showError(); sync();
   });
-  const jump = (hex: string): void => { const parsed = hexToHsl(hex); if (parsed) { Object.assign(p, parsed); sync(); } };
+  contrastInput.addEventListener('input', () => { p.contrastBackground = contrastInput.value.slice(0, 9); contrastSummary(pickerColor()); });
+  const jump = (hex: string): void => {
+    const conversion = runtime.convertColor({ space: 'hex', value: hex }, 'hsl');
+    const hsl = conversion.value;
+    p.h = Number(hsl.h); p.s = Number(hsl.s) * 100; p.l = Number(hsl.l) * 100; p.alpha = Number(hsl.alpha ?? 1);
+    showError(); sync();
+  };
+
+  const representationTabs = h('div', { class: 'color-space-tabs', role: 'tablist', 'aria-label': 'Colour representation' },
+    ...APPEARANCE_COLOR_SPACES.map((space) => h('button', {
+      class: `chip${p.representation === space ? ' active' : ''}`, role: 'tab', 'aria-selected': String(p.representation === space),
+      onclick: () => { p.representation = space; showError(); render(); },
+    }, space.toUpperCase())));
 
   const dialog = dialogShell(`Colour \u00b7 ${p.label}`, 'Infinite colour picker', [
     h('div', { class: 'picker-preview' }, chip, h('div', { style: 'flex:1;min-width:0' }, hexLabel, hslLabel)),
     h('div', { class: 'grid2' },
       slider('Hue', 'h', 360, 'linear-gradient(90deg,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)'),
       slider('Saturation', 's', 100, 'linear-gradient(90deg,#888,#888)'),
-      slider('Lightness', 'l', 100, 'linear-gradient(90deg,#000,#888,#fff)')),
+      slider('Lightness', 'l', 100, 'linear-gradient(90deg,#000,#888,#fff)'),
+      slider('Alpha', 'alpha', 100, 'linear-gradient(90deg,transparent,#000)')),
+    h('div', { class: 'field color-translator' }, 'COLOUR TRANSLATOR', representationTabs,
+      h('label', { class: 'field' }, `${p.representation.toUpperCase()} VALUE · MAXIMUM ${COLOR_TRANSLATOR_INPUT_LIMIT} CHARACTERS`, representationInput)),
+    errorFeedback,
+    gamutFeedback,
     h('div', { class: 'grid2' },
-      h('label', { class: 'field' }, 'HEX \u2014 TYPE ANY VALUE', hexInput),
-      h('label', { class: 'field' }, 'SYSTEM PICKER \u2014 FULL SPECTRUM', nativeInput)),
+      h('label', { class: 'field' }, 'SYSTEM PICKER \u2014 FULL SPECTRUM', nativeInput),
+      h('label', { class: 'field' }, 'CONTRAST BACKGROUND \u2014 HEX OR HEX8', contrastInput)),
+    contrastFeedback,
     h('div', { class: 'field' }, 'PRESET STARTING POINTS \u2014 NOT A LIMIT',
       h('div', { class: 'chips' }, ...SELECTION_COLORS.map(([name, sw]) => h('button', {
         class: 'swatch', title: name, style: `--sw:${sw}`, onclick: () => jump(sw),
@@ -4432,8 +4553,8 @@ function colorDialog(): HTMLElement {
       : null,
   ], [
     h('button', { class: 'btn text', onclick: closeDialog }, 'Cancel'),
-    h('button', { class: 'btn tonal', onclick: () => { void navigator.clipboard?.writeText(hslToHex(p.h, p.s, p.l)); snack('Copied the hex value.'); } }, 'Copy hex'),
-    h('button', { class: 'btn filled', onclick: () => applyPickedColor(hslToHex(p.h, p.s, p.l)) }, 'Apply colour'),
+    h('button', { class: 'btn tonal', onclick: () => { const value = formatColorValue(runtime.convertColor(pickerColor(), p.representation).value); void navigator.clipboard?.writeText(value); snack(`Copied the ${p.representation.toUpperCase()} value.`); } }, `Copy ${p.representation.toUpperCase()}`),
+    h('button', { class: 'btn filled', onclick: () => applyPickedColor(String(runtime.convertColor(pickerColor(), 'hex').value.value)) }, 'Apply colour'),
   ], true);
 
   sync();

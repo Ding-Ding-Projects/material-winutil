@@ -444,6 +444,14 @@ input[type="color"] { height: 44px; padding: 3px; }
   background: var(--md-sys-color-surface-container-lowest); }
 .picker-chip { width: 64px; height: 64px; border-radius: 20px; background: var(--pick); flex: none;
   border: 1px solid var(--md-sys-color-outline-variant); }
+.color-translator { padding: 14px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--shape-l);
+  background: var(--md-sys-color-surface-container-lowest); }
+.color-space-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 12px; }
+.color-space-tabs .chip { min-height: 44px; }
+.color-space-tabs .chip.active { color: var(--md-sys-color-on-primary-container); background: var(--md-sys-color-primary-container);
+  border-color: var(--md-sys-color-primary); }
+.color-representation-input { min-height: 84px; resize: vertical; overflow-wrap: anywhere; }
+.color-feedback { margin-bottom: 14px; }
 input[type="range"].gradient { -webkit-appearance: none; appearance: none; width: 100%; background: none; }
 input[type="range"].gradient::-webkit-slider-runnable-track { height: 14px; border-radius: 7px; background: var(--track);
   border: 1px solid var(--md-sys-color-outline-variant); }

@@ -10,6 +10,8 @@ type ViewId = 'install' | 'tweaks' | 'config' | 'updates' | 'iso' | 'history' | 
 type ThemeMode = 'light' | 'dark';
 type Density = 'comfortable' | 'compact';
 type LanguageMode = 'English' | 'Yue' | 'Bilingual';
+type TabDock = 'left' | 'right' | 'top' | 'bottom';
+type TabSearchKey = 'current' | 'groupNames' | 'master' | 'inGroup' | 'closeContaining' | 'closeNot';
 type DialogId =
   | 'palette' | 'regex' | 'tabs' | 'appearance' | 'lock' | 'auth'
   | 'notifications' | 'export' | 'gate' | 'about' | 'profiles' | 'saveselection' | 'dimsum' | 'color' | null;
@@ -26,6 +28,7 @@ interface Prefs {
   narrator: 'English' | 'Yue' | 'Both'; narratorEnabled: boolean;
   enFunny: number; yueFunny: number; accent: string; font: string;
   scale: number; weight: number; radius: number; reducedMotion: boolean; exportFormat: string;
+  tabDock: TabDock;
 }
 interface SearchState { text: string; regex: boolean; flags: string; }
 interface Bridge {
@@ -336,8 +339,10 @@ const STRINGS: Record<LanguageMode, Record<string, string>> = {
 const DEFAULT_PREFS: Prefs = {
   theme: 'dark', density: 'comfortable', language: 'English', narrator: 'English', narratorEnabled: false,
   enFunny: 3, yueFunny: 4, accent: '#6750A4', font: 'Segoe UI Variable', scale: 1, weight: 400, radius: 16,
-  reducedMotion: false, exportFormat: 'md',
+  reducedMotion: false, exportFormat: 'md', tabDock: 'left',
 };
+
+const makeSearchState = (): SearchState => ({ text: '', regex: false, flags: 'iu' });
 
 const state = {
   catalog: { apps: [], tweaks: [], features: [], presets: {}, dns: {} } as Catalog,
@@ -364,8 +369,12 @@ const state = {
     { id: 't3', view: 'config', pinned: false, group: 'System', locked: false },
     { id: 't4', view: 'updates', pinned: false, group: 'Maintenance', locked: false },
   ] as WorkspaceTab[],
+  groups: ['System', 'Maintenance'] as string[],
   activeTab: 't1',
-  tabQueries: { current: '', groupNames: '', master: '', inGroup: '', closeContaining: '', closeNot: '' },
+  tabSearches: {
+    current: makeSearchState(), groupNames: makeSearchState(), master: makeSearchState(),
+    inGroup: makeSearchState(), closeContaining: makeSearchState(), closeNot: makeSearchState(),
+  } as Record<TabSearchKey, SearchState>,
   tabClosePreview: [] as string[],
   tabIncludePinned: false,
   selectedGroup: 'System',
@@ -392,6 +401,102 @@ const state = {
   snack: '',
   isoLog: '[00:00:00] Waiting for an ISO. Select an official Microsoft image to begin.',
 };
+
+const WORKSPACE_STORAGE_KEY = 'material-system-utility.workspace.v1';
+const VALID_VIEWS = new Set<ViewId>(['install', 'tweaks', 'config', 'updates', 'iso', 'history', 'docs', 'settings']);
+let workspaceReady = false;
+
+interface StoredWorkspace {
+  schemaVersion: 1;
+  tabs: WorkspaceTab[];
+  groups: string[];
+  collapsedGroups: string[];
+  activeTab: string;
+  selectedGroup: string;
+  tabDock: TabDock;
+}
+
+function normalizeGroupName(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').slice(0, 64);
+}
+
+function persistWorkspace(): void {
+  if (!workspaceReady) return;
+  const stored: StoredWorkspace = {
+    schemaVersion: 1,
+    tabs: state.tabs.map((tab) => ({ ...tab, locked: Boolean(tab.locked) })),
+    groups: [...state.groups],
+    collapsedGroups: [...state.collapsedGroups],
+    activeTab: state.activeTab,
+    selectedGroup: state.selectedGroup,
+    tabDock: state.prefs.tabDock,
+  };
+  try { localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(stored)); } catch { /* retain the live workspace */ }
+}
+
+function loadWorkspace(): void {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(WORKSPACE_STORAGE_KEY) ?? 'null') as Partial<StoredWorkspace> | null;
+    if (!parsed || parsed.schemaVersion !== 1 || !Array.isArray(parsed.tabs)) return;
+    const seen = new Set<string>();
+    const tabs = parsed.tabs.filter((tab): tab is WorkspaceTab => {
+      if (!tab || typeof tab.id !== 'string' || seen.has(tab.id) || !VALID_VIEWS.has(tab.view)) return false;
+      seen.add(tab.id);
+      return typeof tab.pinned === 'boolean' && (tab.group === null || typeof tab.group === 'string');
+    }).map((tab) => ({ ...tab, group: tab.group ? normalizeGroupName(tab.group) : null, locked: Boolean(tab.locked) }));
+    if (!tabs.length) return;
+    const groups = Array.isArray(parsed.groups)
+      ? parsed.groups.filter((group): group is string => typeof group === 'string').map(normalizeGroupName).filter(Boolean)
+      : [];
+    tabs.forEach((tab) => { if (tab.group) groups.push(tab.group); });
+    state.tabs = tabs;
+    state.groups = [...new Set(groups)];
+    state.collapsedGroups = new Set(Array.isArray(parsed.collapsedGroups)
+      ? parsed.collapsedGroups.filter((group): group is string => typeof group === 'string' && state.groups.includes(group))
+      : []);
+    state.activeTab = tabs.some((tab) => tab.id === parsed.activeTab) ? parsed.activeTab! : tabs[0].id;
+    state.selectedGroup = typeof parsed.selectedGroup === 'string' && state.groups.includes(parsed.selectedGroup)
+      ? parsed.selectedGroup : state.groups[0] ?? 'Ungrouped';
+    if (parsed.tabDock && ['left', 'right', 'top', 'bottom'].includes(parsed.tabDock)) state.prefs.tabDock = parsed.tabDock;
+    const active = tabs.find((tab) => tab.id === state.activeTab)!;
+    state.view = active.view;
+  } catch { /* a malformed workspace falls back to the reviewed defaults */ }
+}
+
+function setTabDock(dock: TabDock): void {
+  state.prefs.tabDock = dock;
+  render();
+}
+
+function moveTabToGroup(tab: WorkspaceTab, group: string | null): void {
+  tab.group = group;
+  if (group && !state.groups.includes(group)) state.groups.push(group);
+  persistWorkspace();
+  render();
+}
+
+function tabSearch(key: TabSearchKey): SearchState {
+  return state.tabSearches[key];
+}
+
+function searchValidation(search: SearchState): { valid: boolean; message: string; match: (text: string) => boolean } {
+  const text = search.text.trim();
+  if (!text) return { valid: false, message: 'Enter text before previewing a close action.', match: () => false };
+  if (!search.regex) {
+    const lower = text.toLocaleLowerCase();
+    return { valid: true, message: 'Plain-text matching is active.', match: (candidate) => candidate.toLocaleLowerCase().includes(lower) };
+  }
+  try {
+    const expression = new RegExp(text, search.flags);
+    return {
+      valid: true,
+      message: `Valid pattern · /${text}/${search.flags}`,
+      match: (candidate) => { expression.lastIndex = 0; return expression.test(candidate); },
+    };
+  } catch (error) {
+    return { valid: false, message: `Invalid pattern · ${error instanceof Error ? error.message : String(error)}`, match: () => false };
+  }
+}
 
 /* ------------------------------------------------------------- utilities -- */
 
@@ -442,6 +547,10 @@ const icon = (name: string, cls = ''): HTMLElement => h('span', {
 /** Every search field in the app is registered by key, so each one gets its own
  *  persisted text, its own plain-text/regex mode, and its own anchored builder. */
 function sq(key: string): SearchState {
+  if (key.startsWith('tabs:')) {
+    const tabKey = key.slice(5) as TabSearchKey;
+    if (tabKey in state.tabSearches) return tabSearch(tabKey);
+  }
   state.searches[key] = state.searches[key] ?? { text: '', regex: false, flags: 'iu' };
   return state.searches[key];
 }
@@ -550,12 +659,14 @@ function applyPrefs(): void {
   r.dataset.theme = p.theme;
   r.dataset.density = p.density;
   r.dataset.motion = p.reducedMotion ? 'reduced' : 'full';
+  r.dataset.tabDock = p.tabDock;
   r.style.setProperty('--md-sys-color-primary', p.theme === 'dark' ? lighten(p.accent) : p.accent);
   r.style.setProperty('--shape-l', `${p.radius}px`);
   r.style.setProperty('font-size', `${Math.round(14 * p.scale)}px`);
   document.body.style.fontFamily = `${p.font}, "Segoe UI", system-ui, sans-serif`;
   document.body.style.fontWeight = String(p.weight);
   void bridge().writePrefs(p);
+  persistWorkspace();
   try { localStorage.setItem('winutil.profiles', JSON.stringify(state.profiles)); } catch { /* profiles stay in memory */ }
 }
 
@@ -683,22 +794,58 @@ function drawer(): HTMLElement {
 }
 
 function content(): HTMLElement {
-  return h('section', { class: 'content' }, tabStrip(), actionToolbar(), pane());
+  return h('section', { class: `content tab-dock-${state.prefs.tabDock}` },
+    tabStrip(), actionToolbar(), workspacePanels());
+}
+
+function workspacePanels(): HTMLElement {
+  const panels = h('div', { class: 'workspace-panels' });
+  for (const tab of state.tabs) {
+    const active = tab.id === state.activeTab;
+    panels.appendChild(h('div', {
+      class: 'workspace-panel', id: `workspace-panel-${tab.id}`, role: 'tabpanel',
+      'aria-labelledby': `workspace-tab-${tab.id}`, tabindex: active ? '0' : '-1', hidden: active ? false : 'hidden',
+    }, active ? pane() : null));
+  }
+  return panels;
 }
 
 function tabStrip(): HTMLElement {
-  const strip = h('div', { class: 'tabstrip', role: 'tablist', 'aria-label': 'Open workspace tabs', 'aria-orientation': 'horizontal' });
+  const vertical = state.prefs.tabDock === 'left' || state.prefs.tabDock === 'right';
+  const strip = h('div', {
+    class: 'tabstrip', role: 'tablist', 'aria-label': 'Open workspace tabs',
+    'aria-orientation': vertical ? 'vertical' : 'horizontal',
+  });
+  const activate = (tab: WorkspaceTab, focus = false): void => {
+    if (tab.locked) { openLockWizard(`tab-${tab.id}`, `Tab · ${VIEW_META[tab.view].title}`, 'unlock'); return; }
+    state.activeTab = tab.id;
+    state.view = tab.view;
+    state.reading = null;
+    persistWorkspace();
+    render();
+    if (focus) window.setTimeout(() => document.getElementById(`workspace-tab-${tab.id}`)?.focus(), 0);
+  };
   for (const tab of state.tabs) {
     const meta = VIEW_META[tab.view];
     const navItem = NAV.find((n) => 'id' in n && n.id === tab.view) as { icon: string } | undefined;
-    strip.appendChild(h('div', {
+    strip.appendChild(h('button', {
+      type: 'button', id: `workspace-tab-${tab.id}`, 'aria-controls': `workspace-panel-${tab.id}`,
       class: `wtab${state.activeTab === tab.id ? ' active' : ''}`, title: meta.title,
       role: 'tab', tabindex: state.activeTab === tab.id ? '0' : '-1',
       'aria-selected': state.activeTab === tab.id ? 'true' : 'false',
-      'aria-label': `${meta.title}${tab.pinned ? ', pinned' : ''}`,
-      onclick: () => { if (tab.locked) { openLockWizard(`tab-${tab.id}`, `Tab · ${meta.title}`, 'unlock'); return; } state.activeTab = tab.id; go(tab.view); },
+      'aria-label': `${meta.title}${tab.pinned ? ', pinned' : ''}${tab.locked ? ', locked' : ''}`,
+      onclick: () => activate(tab),
       onkeydown: (e: KeyboardEvent) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (tab.locked) openLockWizard(`tab-${tab.id}`, `Tab · ${meta.title}`, 'unlock'); else { state.activeTab = tab.id; go(tab.view); } }
+        const previous = vertical ? 'ArrowUp' : 'ArrowLeft';
+        const next = vertical ? 'ArrowDown' : 'ArrowRight';
+        const index = state.tabs.findIndex((item) => item.id === tab.id);
+        let target = -1;
+        if (e.key === previous) target = (index - 1 + state.tabs.length) % state.tabs.length;
+        if (e.key === next) target = (index + 1) % state.tabs.length;
+        if (e.key === 'Home') target = 0;
+        if (e.key === 'End') target = state.tabs.length - 1;
+        if (target >= 0) { e.preventDefault(); activate(state.tabs[target], true); }
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(tab); }
       },
       oncontextmenu: (e: MouseEvent) => { e.preventDefault(); tabMenu(tab, e.clientX, e.clientY); },
     },
@@ -707,19 +854,23 @@ function tabStrip(): HTMLElement {
       tab.locked ? icon('lock', 'pin') : null,
       h('b', {}, meta.title),
       tab.group ? h('span', { class: 'group-chip' }, tab.group) : null,
-      h('button', { class: 'icon-btn small', title: 'Close tab', onclick: (e: MouseEvent) => { e.stopPropagation(); closeTab(tab.id); } }, icon('close'))));
+      h('span', { class: 'tab-close-mark', 'aria-hidden': 'true' }, '×')));
   }
-  strip.appendChild(h('button', { class: 'icon-btn', title: 'Open a tab', style: 'margin:8px 2px', onclick: () => newTab() }, icon('add')));
-  strip.appendChild(h('button', { class: 'icon-btn', title: 'Tabs, groups and safe closing', style: 'margin:8px 2px', onclick: () => openDialog('tabs') }, icon('menu_open')));
+  strip.appendChild(h('button', { class: 'icon-btn tabstrip-action', title: 'Open a tab', onclick: () => newTab() }, icon('add')));
+  strip.appendChild(h('button', { class: 'icon-btn tabstrip-action', title: 'Tabs, groups and safe closing', onclick: () => openDialog('tabs') }, icon('menu_open')));
   strip.appendChild(h('div', {
-    style: 'flex:1;min-width:40px',
+    class: 'tabstrip-spacer',
     oncontextmenu: ctx('tabstrip', () => [
       { icon: 'add', label: 'Open a new tab', act: () => newTab() },
       { icon: 'tab_group', label: 'Open the tab manager', act: () => openDialog('tabs') },
       { icon: 'filter_alt_off', label: 'Close tabs not containing text…', act: () => openDialog('tabs') },
       { icon: 'push_pin', label: 'Unpin every tab', act: () => state.tabs.forEach((tb) => { tb.pinned = false; }) },
-      { icon: 'lock', label: 'Lock this tab strip…', act: () => openLockWizard('tabstrip', 'Tab strip') },
+      { icon: 'lock', label: 'Locks are unavailable in this build', act: () => openDialog('lock') },
       { icon: 'palette', label: 'Edit the tab strip appearance…', act: () => openAppearance('tabstrip', 'Tab strip') },
+      { section: 'Docking' },
+      ...(['left', 'right', 'top', 'bottom'] as TabDock[]).map((dock) => ({
+        icon: state.prefs.tabDock === dock ? 'check' : 'tab', label: `Dock tabs on the ${dock}`, act: () => setTabDock(dock),
+      })),
     ], 'Tab strip'),
   }));
   return strip;
@@ -1392,8 +1543,10 @@ function go(view: ViewId): void {
   else {
     const tab: WorkspaceTab = { id: `t-${Date.now()}`, view, pinned: false, group: isSystemView(view) ? 'System' : 'Maintenance', locked: false };
     state.tabs = [...state.tabs, tab];
+    if (tab.group && !state.groups.includes(tab.group)) state.groups.push(tab.group);
     state.activeTab = tab.id;
   }
+  persistWorkspace();
   render();
 }
 
@@ -1515,6 +1668,7 @@ function newTab(): void {
   const tab: WorkspaceTab = { id: `t-${Date.now()}`, view: state.view, pinned: false, group: null, locked: false };
   state.tabs = [...state.tabs, tab];
   state.activeTab = tab.id;
+  persistWorkspace();
   render();
 }
 
@@ -1528,6 +1682,7 @@ function closeTab(id: string): void {
     state.activeTab = state.tabs[0].id;
     state.view = state.tabs[0].view;
   }
+  persistWorkspace();
   render();
 }
 
@@ -1615,10 +1770,10 @@ function tabMenu(tab: WorkspaceTab, x: number, y: number): void {
   contextMenu(`tab-${tab.id}`, x, y, [
     { section: 'This tab' },
     { icon: tab.pinned ? 'keep_off' : 'push_pin', label: tab.pinned ? 'Unpin tab' : 'Pin tab', act: () => { tab.pinned = !tab.pinned; } },
-    { icon: tab.locked ? 'lock_open' : 'lock', label: tab.locked ? 'Unlock this tab…' : 'Lock this tab…', act: () => openLockWizard(`tab-${tab.id}`, `Tab · ${VIEW_META[tab.view].title}`, tab.locked ? 'unlock' : 'set') },
+    { icon: 'lock', label: 'Locks are unavailable in this build', act: () => openDialog('lock') },
     { icon: 'content_copy', label: 'Duplicate tab', act: () => { state.tabs = [...state.tabs, { ...tab, id: `t-${Date.now()}`, pinned: false }]; } },
     { section: 'Groups' },
-    { icon: 'drive_file_move', label: tab.group ? `Move out of ${tab.group}` : 'Add to a group', act: () => { tab.group = tab.group ? null : state.selectedGroup; } },
+    { icon: 'drive_file_move', label: tab.group ? `Move out of ${tab.group}` : `Move into ${state.selectedGroup}`, act: () => moveTabToGroup(tab, tab.group ? null : state.selectedGroup) },
     { icon: 'tab_group', label: 'Open the tab manager', act: () => openDialog('tabs') },
     { section: 'Appearance' },
     { icon: 'palette', label: 'Edit tab appearance…', act: () => openAppearance(`tab-${tab.id}`, VIEW_META[tab.view].title) },
@@ -1629,12 +1784,19 @@ function tabMenu(tab: WorkspaceTab, x: number, y: number): void {
 }
 
 function previewTabClose(inverse: boolean): void {
-  const query = inverse ? state.tabQueries.closeNot : state.tabQueries.closeContaining;
-  const match = makeMatcher({ text: query, regex: state.dialogSearch.regex, flags: state.dialogSearch.flags });
+  const search = tabSearch(inverse ? 'closeNot' : 'closeContaining');
+  const validation = searchValidation(search);
+  if (!validation.valid) {
+    state.tabClosePreview = [];
+    snack(validation.message);
+    render();
+    return;
+  }
   state.tabClosePreview = state.tabs
     .filter((t) => (state.tabIncludePinned || !t.pinned) && !t.locked)
-    .filter((t) => (inverse ? !match(VIEW_META[t.view].title) : match(VIEW_META[t.view].title)))
+    .filter((t) => (inverse ? !validation.match(VIEW_META[t.view].title) : validation.match(VIEW_META[t.view].title)))
     .map((t) => t.id);
+  if (!state.tabClosePreview.length) snack('No closable tab matches this preview. Pinned and unavailable locked tabs stay excluded.');
   render();
 }
 
@@ -1821,7 +1983,8 @@ function regexDialog(): HTMLElement {
     : d.target === 'bulk:select' ? 'BULK SELECT in the current view'
       : d.target === 'bulk:deselect' ? 'BULK DESELECT in the current view'
         : d.target === 'dialog' ? 'the dialog search'
-          : d.target.startsWith('menu:') ? `the “${d.target.slice(5)}” menu`
+          : d.target.startsWith('tabs:') ? `the “${d.target.slice(5)}” tab-manager search`
+            : d.target.startsWith('menu:') ? `the “${d.target.slice(5)}” menu`
             : `the “${d.target}” field`;
 
   let error = '';
@@ -1978,7 +2141,7 @@ function applyRegex(asRegex: boolean): void {
   target.text = state.regexDraft.pattern;
   target.regex = asRegex;
   target.flags = state.regexDraft.flags;
-  state.dialog = key === 'dialog' ? 'tabs' : null;
+  state.dialog = key === 'dialog' || key.startsWith('tabs:') ? 'tabs' : null;
   render();
   snack(asRegex ? 'Regex applied to that search field.' : 'Pattern applied as plain text.');
 }
@@ -2002,46 +2165,112 @@ function searchableRows(): Array<[string, string]> {
 }
 
 function tabsDialog(): HTMLElement {
-  const groups = [...new Set(state.tabs.map((t) => t.group).filter(Boolean))] as string[];
-  const searchLine = (label: string, key: keyof typeof state.tabQueries, placeholder: string): HTMLElement =>
-    h('label', { class: 'field' }, label.toUpperCase(), h('div', { class: 'field-row' },
-      h('input', {
-        value: state.tabQueries[key], placeholder, style: 'flex:1;height:44px;border-radius:10px;background:var(--md-sys-color-surface-container-lowest);border:1px solid var(--md-sys-color-outline-variant);padding:0 12px',
-        oninput: (e: Event) => { state.tabQueries[key] = (e.target as HTMLInputElement).value; },
-      }),
-      h('button', { class: 'regex-btn', title: 'Open the regex builder', onclick: () => { state.regexDraft.target = 'dialog'; openDialog('regex'); } }, '.*')));
+  const groupFilter = searchValidation(tabSearch('groupNames'));
+  const groups = state.groups.filter((group) => !tabSearch('groupNames').text.trim() || (groupFilter.valid && groupFilter.match(group)));
+  const currentFilter = searchValidation(tabSearch('current'));
+  const masterFilter = searchValidation(tabSearch('master'));
+  const inGroupFilter = searchValidation(tabSearch('inGroup'));
+  const currentTabs = state.tabs.filter((tab) => !tabSearch('current').text.trim() || (currentFilter.valid && currentFilter.match(`${VIEW_META[tab.view].title} ${tab.group ?? 'Ungrouped'}`)));
+  const masterTabs = currentTabs.filter((tab) => !tabSearch('master').text.trim() || (masterFilter.valid && masterFilter.match(`${VIEW_META[tab.view].title} ${tab.group ?? 'Ungrouped'}`)));
+  const foundTabs = masterTabs.filter((tab) => {
+    if (!tabSearch('inGroup').text.trim()) return true;
+    return tab.group === state.selectedGroup && inGroupFilter.valid && inGroupFilter.match(VIEW_META[tab.view].title);
+  });
 
-  const list = h('div', { class: 'listbox' }, ...state.tabs.map((tab) =>
+  const managerSearch = (label: string, key: TabSearchKey, placeholder: string): HTMLElement => {
+    const search = tabSearch(key);
+    const validation = searchValidation(search);
+    return h('label', { class: 'field tab-manager-search', 'data-search': `tabs:${key}` }, label.toUpperCase(),
+      h('div', { class: 'field-row' },
+        h('input', {
+          value: search.text, placeholder, 'aria-label': label, spellcheck: 'false',
+          oninput: (e: Event) => { search.text = (e.target as HTMLInputElement).value; state.tabClosePreview = []; render(); },
+        }),
+        h('button', {
+          class: `regex-btn${search.regex ? ' on' : ''}`, title: `Open the regex builder for ${label}`,
+          onclick: () => { state.regexDraft.target = `tabs:${key}`; state.regexDraft.pattern = search.text || state.regexDraft.pattern; openDialog('regex'); },
+        }, '.*')),
+      search.text ? h('span', { class: `search-validation${validation.valid ? '' : ' invalid'}` }, validation.message) : null);
+  };
+
+  const list = h('div', { class: 'listbox', 'aria-label': 'Filtered workspace tabs' }, ...(foundTabs.length ? foundTabs.map((tab) =>
     h('div', { class: `row${state.tabClosePreview.includes(tab.id) ? ' selected' : ''}` },
       h('span', { class: 'lead' }, icon(tab.pinned ? 'push_pin' : tab.locked ? 'lock' : 'tab')),
       h('span', { class: 'primary' }, VIEW_META[tab.view].title),
-      h('span', { class: 'snippet' }, tab.group ? `Group: ${tab.group}` : 'Ungrouped'),
+      h('span', { class: 'snippet' }, tab.group ? `Group: ${tab.group}${state.collapsedGroups.has(tab.group) ? ' · collapsed' : ''}` : 'Ungrouped'),
       h('span', { class: 'row-actions', style: 'display:flex' },
-        h('button', { class: 'icon-btn small', title: 'Pin', onclick: () => { tab.pinned = !tab.pinned; render(); } }, icon('push_pin')),
-        h('button', { class: 'icon-btn small', title: 'Locks are unavailable in this build', onclick: () => openLockWizard(`tab-${tab.id}`, `Tab · ${VIEW_META[tab.view].title}`) }, icon('lock')),
-        h('button', { class: 'icon-btn small', title: 'Close', onclick: () => closeTab(tab.id) }, icon('close'))))));
+        h('button', { class: 'icon-btn', title: tab.pinned ? 'Unpin tab' : 'Pin tab', onclick: () => { tab.pinned = !tab.pinned; persistWorkspace(); render(); } }, icon('push_pin')),
+        h('button', {
+          class: 'icon-btn', title: tab.group === state.selectedGroup ? 'Move out of the selected group' : 'Move into the selected group',
+          onclick: () => moveTabToGroup(tab, tab.group === state.selectedGroup ? null : state.selectedGroup),
+        }, icon('drive_file_move')),
+        h('button', { class: 'icon-btn', title: 'Locks are unavailable in this build', onclick: () => openDialog('lock') }, icon('lock')),
+        h('button', { class: 'icon-btn', title: 'Close tab', onclick: () => closeTab(tab.id) }, icon('close')))))
+    : [emptyState('No workspace tab matches all active tab-manager filters.')]));
+
+  const createGroup = (): void => {
+    const input = $<HTMLInputElement>('#new-group-name');
+    const name = normalizeGroupName(input?.value ?? '');
+    if (!name) { snack('Enter a group name before creating it.'); return; }
+    if (!state.groups.includes(name)) state.groups.push(name);
+    state.selectedGroup = name;
+    persistWorkspace();
+    render();
+    snack(`Group “${name}” created.`);
+  };
+  const renameGroup = (): void => {
+    const input = $<HTMLInputElement>('#rename-group-name');
+    const next = normalizeGroupName(input?.value ?? '');
+    const previous = state.selectedGroup;
+    if (!previous || previous === 'Ungrouped') { snack('Select a named group before renaming it.'); return; }
+    if (!next) { snack('Enter a replacement group name.'); return; }
+    if (state.groups.includes(next) && next !== previous) { snack(`A group named “${next}” already exists.`); return; }
+    state.groups = state.groups.map((group) => group === previous ? next : group);
+    state.tabs.forEach((tab) => { if (tab.group === previous) tab.group = next; });
+    if (state.collapsedGroups.delete(previous)) state.collapsedGroups.add(next);
+    state.selectedGroup = next;
+    persistWorkspace();
+    render();
+    snack(`Group renamed from “${previous}” to “${next}”.`);
+  };
+  const toggleGroup = (): void => {
+    const group = state.selectedGroup;
+    if (!state.groups.includes(group)) { snack('Select a named group before changing its collapsed state.'); return; }
+    state.collapsedGroups.has(group) ? state.collapsedGroups.delete(group) : state.collapsedGroups.add(group);
+    persistWorkspace();
+    render();
+    snack(`Group “${group}” ${state.collapsedGroups.has(group) ? 'collapsed' : 'expanded'}.`);
+  };
 
   return dialogShell('Workspace navigation', 'Tabs, groups, and safe closing', [
     h('div', { class: 'grid2' },
-      searchLine('Current strip search', 'current', 'Search this strip'),
-      searchLine('Group name search', 'groupNames', 'Search groups'),
-      searchLine('Master tab search', 'master', 'Search every tab'),
-      searchLine('Group tab search', 'inGroup', 'Search the selected group')),
+      managerSearch('Current strip search', 'current', 'Search this strip'),
+      managerSearch('Group name search', 'groupNames', 'Search groups'),
+      managerSearch('Master tab search', 'master', 'Search every tab'),
+      managerSearch('Group tab search', 'inGroup', 'Search the selected group')),
     h('div', { style: 'height:14px' }),
     h('div', { class: 'grid2' },
-      selectField('Selected group', groups.length ? groups : ['Ungrouped'], state.selectedGroup, (v) => { state.selectedGroup = v; }),
+      selectField('Selected group', groups.length ? groups : ['Ungrouped'], state.selectedGroup, (v) => { state.selectedGroup = v; persistWorkspace(); }),
       h('label', { class: 'field' }, 'NEW GROUP', h('input', { placeholder: 'Group name', id: 'new-group-name' }))),
     h('div', { class: 'btnrow', style: 'margin:12px 0' },
-      h('button', { class: 'btn tonal', onclick: () => { const v = $<HTMLInputElement>('#new-group-name')?.value; if (v) { state.selectedGroup = v; snack(`Group “${v}” created.`); } } }, 'Create group'),
-      h('button', { class: 'btn outlined', onclick: () => snack(`Group renamed to ${state.selectedGroup}.`) }, 'Rename group'),
-      h('button', { class: 'btn outlined', onclick: () => snack(`Group ${state.selectedGroup} collapsed.`) }, 'Toggle collapse')),
+      h('button', { class: 'btn tonal', onclick: createGroup }, 'Create group'),
+      h('label', { class: 'field inline-field' }, 'RENAME SELECTED GROUP', h('input', { placeholder: 'Replacement name', id: 'rename-group-name' })),
+      h('button', { class: 'btn outlined', onclick: renameGroup }, 'Rename group'),
+      h('button', { class: 'btn outlined', onclick: toggleGroup }, state.collapsedGroups.has(state.selectedGroup) ? 'Expand group' : 'Collapse group')),
+    h('div', { class: 'group-membership', 'aria-label': 'Filtered group membership' },
+      ...groups.map((group) => h('div', { class: 'membership-row' },
+        h('button', {
+          class: 'btn text', onclick: () => { state.selectedGroup = group; persistWorkspace(); render(); },
+          'aria-pressed': state.selectedGroup === group ? 'true' : 'false',
+        }, state.collapsedGroups.has(group) ? icon('expand_more') : icon('expand_less'), group),
+        h('span', {}, `${state.tabs.filter((tab) => tab.group === group).length} tab(s)`)))),
     list,
     h('div', { style: 'height:14px' }),
     h('div', { class: 'grid2' },
-      searchLine('Close tabs containing text', 'closeContaining', 'Visible label text'),
-      searchLine('Close tabs not containing text', 'closeNot', 'Visible label text')),
+      managerSearch('Close tabs containing text', 'closeContaining', 'Visible label text'),
+      managerSearch('Close tabs not containing text', 'closeNot', 'Visible label text')),
     h('div', { class: 'switch-row', style: 'margin:12px 0' },
-      h('button', { class: `switch${state.tabIncludePinned ? ' on' : ''}`, onclick: () => { state.tabIncludePinned = !state.tabIncludePinned; render(); } }, h('i', {})),
+      h('button', { class: `switch${state.tabIncludePinned ? ' on' : ''}`, role: 'switch', 'aria-checked': state.tabIncludePinned ? 'true' : 'false', 'aria-label': 'Include pinned tabs after preview', onclick: () => { state.tabIncludePinned = !state.tabIncludePinned; state.tabClosePreview = []; render(); } }, h('i', {})),
       h('span', {}, 'Include pinned tabs after preview')),
     h('div', { class: 'feedback' }, state.tabClosePreview.length
       ? `${state.tabClosePreview.length} tab(s) match. Authorize to close them.`
@@ -2052,7 +2281,15 @@ function tabsDialog(): HTMLElement {
     h('button', { class: 'btn tonal', onclick: () => previewTabClose(true) }, 'Preview “not containing”'),
     h('button', {
       class: 'btn filled', disabled: !state.tabClosePreview.length,
-      onclick: () => { const ids = [...state.tabClosePreview]; state.tabClosePreview = []; ids.forEach(closeTab); snack(`Closed ${ids.length} tab(s).`); },
+      onclick: () => {
+        const ids = state.tabClosePreview.filter((id) => {
+          const tab = state.tabs.find((candidate) => candidate.id === id);
+          return Boolean(tab) && !tab!.locked && (state.tabIncludePinned || !tab!.pinned);
+        });
+        state.tabClosePreview = [];
+        ids.forEach(closeTab);
+        snack(`Closed ${ids.length} tab(s) from the reviewed preview.`);
+      },
     }, 'Authorize previewed close'),
   ], true);
 }
@@ -2535,6 +2772,8 @@ async function boot(): Promise<void> {
   const saved = await bridge().readPrefs();
   state.prefs = { ...DEFAULT_PREFS, ...saved };
   try { state.profiles = JSON.parse(localStorage.getItem('winutil.profiles') ?? '[]'); } catch { state.profiles = []; }
+  loadWorkspace();
+  workspaceReady = true;
   bindShortcuts();
   bridge().onProgress((p) => {
     state.queue = { active: p.state !== 'done', index: p.index, total: p.total, current: p.detail || p.id, log: state.queue.log };

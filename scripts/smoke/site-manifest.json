@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "surface": "live documentation site",
+  "defaultViewport": { "width": 1440, "height": 1000, "scale": 1 },
+  "captures": [
+    { "id": "home-dark", "file": "site-home-dark-desktop.png", "page": "home", "theme": "dark", "language": "en" },
+    { "id": "capabilities-dark", "file": "site-capabilities-dark-desktop.png", "page": "capabilities", "theme": "dark", "language": "en" },
+    { "id": "guides-dark", "file": "site-guides-dark-desktop.png", "page": "guides", "theme": "dark", "language": "en" },
+    { "id": "safety-dark", "file": "site-safety-dark-desktop.png", "page": "safety", "theme": "dark", "language": "en" },
+    { "id": "settings-dark", "file": "site-settings-dark-desktop.png", "page": "settings", "theme": "dark", "language": "en" },
+    { "id": "home-light", "file": "site-home-light-desktop.png", "page": "home", "theme": "light", "language": "en" },
+    { "id": "settings-bilingual-light", "file": "site-settings-bilingual-light.png", "page": "settings", "theme": "light", "language": "both" },
+    { "id": "capability-regex-valid", "file": "site-capabilities-regex-valid-dark.png", "page": "capabilities", "theme": "dark", "language": "en", "prepare": "document.getElementById('capability-regex-button').click();document.getElementById('capability-pattern').value='catalogue|workspace';document.getElementById('capability-pattern').dispatchEvent(new Event('input',{bubbles:true}))" },
+    { "id": "capability-regex-invalid", "file": "site-capabilities-regex-invalid-dark.png", "page": "capabilities", "theme": "dark", "language": "en", "prepare": "document.getElementById('capability-regex-button').click();document.getElementById('capability-pattern').value='([broken';document.getElementById('capability-pattern').dispatchEvent(new Event('input',{bubbles:true}))" },
+    { "id": "capability-empty", "file": "site-capabilities-empty-dark.png", "page": "capabilities", "theme": "dark", "language": "en", "prepare": "document.getElementById('capability-filter').value='no-capability-can-match';document.getElementById('capability-filter').dispatchEvent(new Event('input',{bubbles:true}))" },
+    { "id": "settings-regex-invalid", "file": "site-settings-regex-invalid-dark.png", "page": "settings", "theme": "dark", "language": "en", "prepare": "document.getElementById('settings-regex-button').click();document.getElementById('settings-pattern').value='([broken';document.getElementById('settings-pattern').dispatchEvent(new Event('input',{bubbles:true}))" },
+    { "id": "palette", "file": "site-command-palette-dark.png", "page": "home", "theme": "dark", "language": "en", "prepare": "document.getElementById('palette-launch').click()" },
+    { "id": "palette-empty", "file": "site-command-palette-empty-dark.png", "page": "home", "theme": "dark", "language": "en", "prepare": "document.getElementById('palette-launch').click();document.getElementById('palette-search').value='no-command-can-match';document.getElementById('palette-search').dispatchEvent(new Event('input',{bubbles:true}))" },
+    { "id": "home-mobile-360", "file": "site-home-mobile-360x800-dark.png", "page": "home", "theme": "dark", "language": "en", "viewport": { "width": 360, "height": 800, "scale": 1 } },
+    { "id": "mobile-rail-360", "file": "site-mobile-rail-360x800-dark.png", "page": "home", "theme": "dark", "language": "en", "viewport": { "width": 360, "height": 800, "scale": 1 }, "prepare": "document.getElementById('menu-button').click()" },
+    { "id": "settings-mobile-390", "file": "site-settings-bilingual-390x844-dark.png", "page": "settings", "theme": "dark", "language": "both", "viewport": { "width": 390, "height": 844, "scale": 1 } },
+    { "id": "dock-right", "file": "site-settings-dock-right-dark.png", "page": "settings", "theme": "dark", "language": "en", "dock": "right" },
+    { "id": "dock-top", "file": "site-settings-dock-top-dark.png", "page": "settings", "theme": "dark", "language": "en", "dock": "top" },
+    { "id": "dock-bottom", "file": "site-settings-dock-bottom-dark.png", "page": "settings", "theme": "dark", "language": "en", "dock": "bottom" },
+    { "id": "reset-snackbar", "file": "site-settings-reset-snackbar-dark.png", "page": "settings", "theme": "dark", "language": "en", "prepare": "document.getElementById('reset-preferences').click()" }
+  ]
+}

@@ -187,6 +187,10 @@ code, pre, kbd, .mono { font-family: ui-monospace, Consolas, monospace; }
 
 .tabstrip { display: flex; align-items: stretch; gap: 0; overflow-x: auto; overflow-y: hidden; border-bottom: 1px solid var(--md-sys-color-outline-variant); }
 .tabstrip::-webkit-scrollbar { height: 0; }
+.workspace-panels { min-width: 0; min-height: 0; overflow: hidden; }
+.tabstrip-action { margin: 4px; flex: none; }
+.tabstrip-spacer { flex: 1; min-width: 40px; min-height: 16px; }
+.tab-close-mark { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; margin-left: auto; }
 .wtab { display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 12px 0 20px; flex: none;
   color: var(--md-sys-color-on-surface-variant); border-bottom: 3px solid transparent; max-width: 260px; cursor: pointer; }
 .wtab:hover { background: var(--md-state-hover); }
@@ -196,6 +200,30 @@ code, pre, kbd, .mono { font-family: ui-monospace, Consolas, monospace; }
 .wtab .group-chip { font-size: 10px; padding: 1px 7px; border-radius: 6px;
   background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
 .wtab .pin { font-size: 13px; color: var(--md-sys-color-primary); }
+
+.content.tab-dock-left, .content.tab-dock-right { grid-template-columns: minmax(180px, 238px) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+.content.tab-dock-left .tabstrip, .content.tab-dock-right .tabstrip { grid-row: 1 / span 2; flex-direction: column; overflow-x: hidden; overflow-y: auto; border-bottom: 0; }
+.content.tab-dock-left .tabstrip { grid-column: 1; border-right: 1px solid var(--md-sys-color-outline-variant); }
+.content.tab-dock-right .tabstrip { grid-column: 2; border-left: 1px solid var(--md-sys-color-outline-variant); }
+.content.tab-dock-left .toolbar, .content.tab-dock-left .workspace-panels { grid-column: 2; }
+.content.tab-dock-right .toolbar, .content.tab-dock-right .workspace-panels { grid-column: 1; }
+.content.tab-dock-left .wtab, .content.tab-dock-right .wtab { width: 100%; max-width: none; border-bottom: 0; border-left: 3px solid transparent; }
+.content.tab-dock-left .wtab.active, .content.tab-dock-right .wtab.active { border-left-color: var(--md-sys-color-primary); }
+.content.tab-dock-bottom .tabstrip { grid-row: 3; border-top: 1px solid var(--md-sys-color-outline-variant); border-bottom: 0; }
+.content.tab-dock-bottom .toolbar { grid-row: 1; }
+.content.tab-dock-bottom .workspace-panels { grid-row: 2; }
+
+@media (max-width: 720px) {
+  .body { grid-template-columns: 64px minmax(0, 1fr); }
+  .siderail { display: none; }
+  .content.tab-dock-left, .content.tab-dock-right { grid-template-columns: 56px minmax(0, 1fr); }
+  .content.tab-dock-left .wtab, .content.tab-dock-right .wtab { padding: 0; justify-content: center; }
+  .content.tab-dock-left .wtab b, .content.tab-dock-right .wtab b,
+  .content.tab-dock-left .group-chip, .content.tab-dock-right .group-chip,
+  .content.tab-dock-left .tab-close-mark, .content.tab-dock-right .tab-close-mark { display: none; }
+  .toolbar { grid-template-columns: 1fr; }
+  .toolbar-right { overflow-x: auto; }
+}
 
 .toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px;
   padding: 6px 10px; overflow-x: hidden;

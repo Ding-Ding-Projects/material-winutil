@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "generatedBy": "scripts/smoke/capture.mjs",
+  "metadata": "smoke/metadata.json",
+  "applicationManifest": "../../scripts/smoke/app-manifest.json",
+  "siteManifest": "../../scripts/smoke/site-manifest.json",
+  "capturePolicy": "Only genuine built-application and live-site captures produced on an isolated hidden desktop are accepted. The verifier checks PNG decoding, non-uniform pixels, hashes, duplicates, commit identity, executable identity, and capture method."
+}

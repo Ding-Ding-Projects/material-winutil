@@ -1,0 +1,248 @@
+import { createServer } from 'node:net';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { assertBuiltArtifactFresh, gitCommit, parseArgs, sha256File } from './lib/contracts.mjs';
+import { CdpClient, assertSingleTarget, waitForTargets } from './lib/cdp.mjs';
+import { commandLine, lowlevel } from './lib/lowlevel.mjs';
+import { assertUniquePngs, inspectPng } from './lib/png.mjs';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const repo = resolve(here, '..', '..');
+const options = parseArgs(process.argv.slice(2));
+const captureRoot = options.captureRoot || join(repo, 'docs', 'screenshots', 'smoke');
+
+function selected(entries) {
+  if (!options.ids.length) return entries;
+  const wanted = new Set(options.ids);
+  const found = entries.filter((entry) => wanted.has(entry.id));
+  const missing = [...wanted].filter((id) => !found.some((entry) => entry.id === id));
+  if (missing.length) throw new Error(`unknown capture id(s): ${missing.join(', ')}`);
+  return found;
+}
+
+async function loadManifest(name) {
+  const path = join(here, `${name}-manifest.json`);
+  const manifest = JSON.parse(await readFile(path, 'utf8'));
+  if (manifest.schemaVersion !== 1 || !Array.isArray(manifest.captures)) throw new Error(`${path} has an unsupported schema`);
+  const ids = new Set();
+  const files = new Set();
+  for (const capture of manifest.captures) {
+    if (!capture.id || !capture.file || ids.has(capture.id) || files.has(capture.file)) throw new Error(`${path} has duplicate or incomplete capture entries`);
+    ids.add(capture.id);
+    files.add(capture.file);
+  }
+  return { ...manifest, captures: selected(manifest.captures) };
+}
+
+async function freePort() {
+  return new Promise((resolvePort, reject) => {
+    const server = createServer();
+    server.unref();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+      server.close(() => resolvePort(port));
+    });
+  });
+}
+
+function literal(value) {
+  return JSON.stringify(value);
+}
+
+async function waitForApp(client) {
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
+    const ready = await client.evaluate("document.readyState==='complete' && Boolean(document.querySelector('#app .appbar')) && state.catalog.apps.length>0");
+    if (ready) return;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 150));
+  }
+  throw new Error('desktop application did not reach the catalogue-ready state');
+}
+
+async function prepareApp(client, capture, defaults) {
+  const viewport = capture.viewport ?? defaults;
+  await client.setViewport(viewport.width, viewport.height, viewport.scale ?? 1);
+  const update = capture.update ? `state.update={...state.update,...${literal(capture.update)}};` : '';
+  const expression = `(()=>{
+    state.dialog=null;state.reading=null;state.snack='';state.search.text='';state.selected.clear();
+    state.prefs={...state.prefs,theme:${literal(capture.theme ?? 'dark')},density:${literal(capture.density ?? 'comfortable')},language:${literal(capture.language ?? 'English')},reducedMotion:${Boolean(capture.reducedMotion)}};
+    ${update}
+    go(${literal(capture.view ?? 'install')});
+    state.search.text=${literal(capture.search ?? '')};
+    ${capture.dialog ? `openDialog(${literal(capture.dialog)});` : ''}
+    ${capture.prepare ?? ''};
+    render();
+    return {view:state.view,dialog:state.dialog,theme:state.prefs.theme,language:state.prefs.language,density:state.prefs.density};
+  })()`;
+  const result = await client.evaluate(expression);
+  const audit = await client.evaluate(`(()=>{
+    const expectedWidth=${viewport.width};
+    const root=document.documentElement;
+    const active=document.querySelector('.pane,.reader');
+    const dialog=document.querySelector('.dialog');
+    const overflow=Math.max(root.scrollWidth,document.body.scrollWidth)-root.clientWidth;
+    return {ready:document.readyState,heading:Boolean(document.querySelector('.appbar')),active:Boolean(active),dialog:${capture.dialog ? 'Boolean(dialog)' : 'true'},overflow,clientWidth:root.clientWidth,expectedWidth};
+  })()`);
+  if (!audit.heading || !audit.active || !audit.dialog || audit.overflow > 2) throw new Error(`${capture.id} failed DOM audit: ${JSON.stringify(audit)}`);
+  return { ...result, audit, viewport };
+}
+
+async function prepareSite(client, capture, defaults) {
+  const viewport = capture.viewport ?? defaults;
+  await client.setViewport(viewport.width, viewport.height, viewport.scale ?? 1);
+  const expression = `(()=>{
+    localStorage.setItem('material-winutil-site-v1',JSON.stringify({page:${literal(capture.page ?? 'home')},language:${literal(capture.language ?? 'en')},englishLevel:3,cantoneseLevel:4,theme:${literal(capture.theme ?? 'dark')},density:'comfortable',dock:${literal(capture.dock ?? 'left')}}));
+    location.reload(); return true;
+  })()`;
+  await client.evaluate(expression);
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    try {
+      const ready = await client.evaluate(`document.readyState==='complete' && document.querySelector('[data-panel=${literal(capture.page ?? 'home')}]:not([hidden])')!==null`);
+      if (ready) break;
+    } catch { /* reload reconnects the execution context */ }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 150));
+  }
+  if (capture.prepare) await client.evaluate(`(()=>{${capture.prepare};return true})()`);
+  const audit = await client.evaluate(`(()=>{const root=document.documentElement;return {page:${literal(capture.page ?? 'home')},panel:Boolean(document.querySelector('[data-panel=${literal(capture.page ?? 'home')}]:not([hidden])')),overflow:Math.max(root.scrollWidth,document.body.scrollWidth)-root.clientWidth,clientWidth:root.clientWidth}})()`);
+  if (!audit.panel || audit.overflow > 2) throw new Error(`${capture.id} failed DOM audit: ${JSON.stringify(audit)}`);
+  return { page: capture.page ?? 'home', theme: capture.theme ?? 'dark', language: capture.language ?? 'en', audit, viewport };
+}
+
+async function captureSession(kind, manifest, executable, argsForLaunch, expectedTarget, prepare, executableHash, commit) {
+  const desktop = `material-winutil-smoke-${kind}-${process.pid}-${Date.now()}`;
+  const profile = await mkdtemp(join(tmpdir(), `material-winutil-${kind}-`));
+  const port = await freePort();
+  const outputs = [];
+  let pid = 0;
+  let client;
+  try {
+    await lowlevel('create_headless_desktop', { name: desktop });
+    const args = argsForLaunch(profile, port);
+    const launched = await lowlevel('launch_on_headless_desktop', { name: desktop, command: commandLine(executable, args) });
+    pid = launched.pid;
+    const targets = await waitForTargets(port);
+    const target = assertSingleTarget(targets, expectedTarget, kind);
+    client = await CdpClient.connect(target.webSocketDebuggerUrl);
+    await client.call('Page.enable');
+    await client.call('Runtime.enable');
+    if (kind === 'app') await waitForApp(client);
+    for (const capture of manifest.captures) {
+      const state = await prepare(client, capture, manifest.defaultViewport);
+      const output = join(captureRoot, kind, capture.file);
+      await mkdir(dirname(output), { recursive: true });
+      await writeFile(output, await client.capturePng());
+      const png = await inspectPng(output);
+      outputs.push({
+        id: capture.id,
+        file: output,
+        relativeFile: `smoke/${kind}/${capture.file}`,
+        surface: manifest.surface,
+        commit,
+        executable,
+        executableSha256: executableHash,
+        captureMethod: 'cheap Lowlevel MCP hidden desktop + isolated loopback CDP Page.captureScreenshot',
+        state,
+        png,
+      });
+      process.stdout.write(`captured ${kind}:${capture.id} ${png.width}x${png.height} ${png.sha256}\n`);
+    }
+  } finally {
+    client?.close();
+    if (pid) { try { await lowlevel('kill_process', { pid, force: true }); } catch { /* close the desktop below */ } }
+    try { await lowlevel('close_headless_desktop', { name: desktop }); } catch { /* preserve primary error */ }
+    await rm(profile, { recursive: true, force: true });
+  }
+  return outputs;
+}
+
+async function verifyOnly(manifests, commit) {
+  const results = [];
+  for (const [kind, manifest] of manifests) {
+    for (const capture of manifest.captures) {
+      const file = join(captureRoot, kind, capture.file);
+      let png;
+      try { png = await inspectPng(file); }
+      catch (error) {
+        if (options.allowPartial && error?.code === 'ENOENT') continue;
+        throw error;
+      }
+      results.push({ id: capture.id, file, png, surface: manifest.surface, commit });
+    }
+  }
+  if (!results.length) throw new Error('verify-only found no capture files');
+  assertUniquePngs(results);
+  process.stdout.write(`verified ${results.length} non-uniform, uniquely hashed PNG capture(s)\n`);
+}
+
+async function main() {
+  const commit = await gitCommit(repo);
+  const manifests = [];
+  if (options.mode === 'app' || options.mode === 'all') manifests.push(['app', await loadManifest('app')]);
+  if (options.mode === 'site' || options.mode === 'all') manifests.push(['site', await loadManifest('site')]);
+  if (options.verifyOnly) return verifyOnly(manifests, commit);
+
+  const freshness = await assertBuiltArtifactFresh(repo);
+  const all = [];
+  for (const [kind, manifest] of manifests) {
+    if (kind === 'app') {
+      const executable = join(repo, 'node_modules', 'electron', 'dist', 'electron.exe');
+      const hash = await sha256File(executable);
+      all.push(...await captureSession(
+        kind,
+        manifest,
+        executable,
+        (profile, port) => [repo, `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`, '--remote-allow-origins=*', '--no-first-run'],
+        (target) => target.url.startsWith('file:') && /renderer\/index\.html$/u.test(new URL(target.url).pathname),
+        prepareApp,
+        hash,
+        commit,
+      ));
+    } else {
+      const executable = process.env.EDGE_EXE || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+      const hash = await sha256File(executable);
+      const expected = new URL(options.siteUrl).href;
+      all.push(...await captureSession(
+        kind,
+        manifest,
+        executable,
+        (profile, port) => [`--user-data-dir=${profile}`, `--remote-debugging-port=${port}`, '--remote-allow-origins=*', '--guest', '--disable-sync', '--disable-extensions', '--disable-component-extensions-with-background-pages', '--no-first-run', '--no-default-browser-check', '--disable-features=msEdgeFirstRunExperience,msEdgeSignin,msEdgeSync', `--app=${expected}`],
+        (target) => new URL(target.url).href === expected,
+        prepareSite,
+        hash,
+        commit,
+      ));
+    }
+  }
+  assertUniquePngs(all);
+  const finalCommit = await gitCommit(repo);
+  if (finalCommit !== commit) {
+    throw new Error(`repository commit changed during capture (${commit} -> ${finalCommit}); discard this mixed-provenance run and retry`);
+  }
+  const metadata = {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    commit,
+    captureRoot,
+    freshness,
+    safety: {
+      systemChangingActions: 0,
+      completedConfirmations: 0,
+      packageCommands: 0,
+      visibleDesktopInteractions: 0,
+    },
+    captures: all,
+  };
+  await mkdir(captureRoot, { recursive: true });
+  await writeFile(join(captureRoot, 'metadata.json'), JSON.stringify(metadata, null, 2) + '\n');
+  process.stdout.write(`wrote ${all.length} capture(s) and metadata for ${commit}\n`);
+}
+
+main().catch((error) => {
+  process.stderr.write(`smoke capture failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+  process.exitCode = 1;
+});

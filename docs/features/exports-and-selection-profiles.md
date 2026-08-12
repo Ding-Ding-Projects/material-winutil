@@ -1,41 +1,36 @@
-# Exports and selection profiles
+# Exports, archives, and editor handoff
 
-The current build provides a broad row-identifier export and local selection profiles. These are useful bounded tools, not yet a complete export-everything or archival system.
+The desktop application exports structured records from the active view through one bounded main-process contract. The scope is explicit as all rows, the current filtered view, or the current selection, with source and exported counts recorded in every manifest.
 
 ## Behavior
 
-The export dialog previews and saves the identifiers in the current view. It offers Markdown, text, JSON, JSON Lines, YAML, TOML, XML, CSV, TSV, HTML, SQL, TypeScript, Python, Go, Rust, Protobuf, and JSON Schema choices. The main process validates the view, format, payload type, and a two-megabyte payload bound before opening a native save dialog.
+Available formats are JSON, JSONL, YAML, TOML, XML, CSV, TSV, Markdown, HTML, SQL, TypeScript, JavaScript, Python, Go, Rust, JSON Schema, and Protobuf-compatible JSON. UTF-8 encoding and LF or CRLF line endings are stated in the manifest. Formats that cannot preserve a field are refused before saving.
 
-Selection profiles store a name, color, source view, and selected row identifiers. Users can apply a profile by replacement, addition, or subtraction, merge selected profiles, recolor them, and delete them. Profiles are stored in local browser storage associated with the application renderer.
+Every ordinary export states that personal-vocabulary data, source-file metadata, TOTP/authenticator secrets, credentials, verifier proofs, and encryption keys are omitted. Ordinary export cannot include those values. No secret-export shortcut is provided; any future secrets export requires its own destructive super-confirmation flow.
 
-## Configuration
+ZIP and 7z archive export are available when a trusted local `7z.exe` is installed. The 7z surface exposes method, compression level, dictionary and word sizes, solid/non-solid mode, solid-block size, thread count, split-volume size, AES-256 content encryption, and header encryption. When content encryption is on but header encryption is off, the UI warns that filenames remain visible. Password input is bounded, sent only to the local archive process over standard input, cleared from renderer state after the attempt, and never logged, stored, exported, or recorded in history.
 
-The preferred export format is part of validated preferences. Export filenames default to a sanitized view name in the Downloads directory. Profile names fall back to a generated view-based name when left blank.
+After a file is saved, the same surface offers a direct Visual Studio Code action. Detection covers stable, Insiders, PATH, and trusted portable layouts. If VS Code is unavailable, the action reports that honestly and returns the official download route rather than launching another editor.
 
-## Current boundary
-
-Exports contain a flat row-identifier view, not every displayed field or a re-importable full application state. Several source-code formats describe the row shape rather than embedding a complete data set. No ZIP or 7z exporter, encrypted archive path, external-editor handoff, schema-versioned import, or loss preview exists.
-
-A profile's **Export** menu currently opens the generic view export rather than serializing only that profile. Profile deletion is immediate, profile locks are unavailable, and profiles are not recorded in a Git-backed restore history.
+Selection profiles remain local renderer state and can replace, add, or subtract row selections. Profile export uses the same structured-export surface.
 
 ## Failure modes
 
-- Canceling the native save dialog returns an empty path and reports cancellation.
-- Oversized, invalid, or untrusted export requests are rejected by the main process.
-- Browser-storage failure leaves live profiles in memory but can prevent restart persistence without a dedicated error notice.
-- Formats that cannot faithfully represent all application state must not be treated as complete backups.
+- Oversized, cyclic, unsafe-key, non-finite, or non-JSON-shaped input fails closed.
+- Archive export refuses a missing or untrusted 7-Zip installation and cleans its temporary staging directory.
+- Existing target files are not silently overwritten by the plain-file path.
+- Cancelling the save dialog writes nothing.
 
 ## Security considerations
 
-The exporter uses a fixed view and format allowlist and does not accept a destination path from renderer input. Generated copy states that lock and authenticator secrets are omitted, although those secret features are not currently installed. Exported catalogue identifiers can still reveal a user's chosen software set and should be handled accordingly.
+The renderer supplies structured values rather than executable text or a destination path. The main process revalidates the view, format, scope, counts, size, archive options, and sensitive-field omissions before opening the native save dialog. Archive passwords are never included in command arguments or redacted logs.
 
 ## Verification
 
-Local contracts verify the format allowlist, view allowlist, payload bound, and safe save-dialog boundary. Complete round-trip imports, archive features, per-profile export, external-editor opening, and field-completeness checks remain unavailable.
+`npm run check` exercises structured formats, archive configuration and command construction, external-editor detection and launching, renderer contracts, and the main/preload boundary.
 
 ## Suggested articles
 
-- [Local history](local-history.md)
+- [Local Git-backed history](local-history.md)
 - [Notifications](notifications.md)
 - [Locks and authenticator boundary](locks-and-authenticator.md)
-

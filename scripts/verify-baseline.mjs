@@ -26,13 +26,18 @@ const renderer = await readFile(new URL('../src/renderer/renderer.ts', import.me
 const styles = await readFile(new URL('../src/renderer/styles.css', import.meta.url), 'utf8');
 assert.match(renderer, /function selectedPackageIds\(\): string\[\]/);
 assert.match(renderer, /\.map\(\(app\) => app\.id\)/);
-assert.doesNotMatch(renderer, /locked: true/);
+// Real, user-created locks are allowed.  Seeded locked demo tabs are not: they
+// make a fresh install look inaccessible before the user has created a lock.
+assert.doesNotMatch(renderer, /\{\s*id:\s*'t\d+'[^\n]+locked:\s*true/u);
 assert.doesNotMatch(renderer, /requestAnimationFrame\(drawQr\)/);
 assert.doesNotMatch(renderer, /lockWizardDialog|credential:\s*w\.|Math\.random\(\).*899999/);
 assert.match(renderer, /Element and tab locks are unavailable/);
 assert.match(renderer, /ISO customization is a documented preview/);
-assert.match(renderer, /bounded local event log/);
+assert.match(renderer, /Local Git-backed history is append-only/);
 assert.match(renderer, /\[app\.id\]\)/);
+assert.match(renderer, /bridge\(\)\.historyBrowse\(/);
+assert.match(main, /exportStructuredRecords/);
+assert.match(main, /openExportInVSCode/);
 assert.match(renderer, /bridge\(\)\.history\(\)/);
 assert.match(renderer, /role: 'switch'/);
 assert.match(renderer, /id: 'live-status'/);

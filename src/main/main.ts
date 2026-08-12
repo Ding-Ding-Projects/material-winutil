@@ -1,20 +1,27 @@
 import { app, autoUpdater, BrowserWindow, ipcMain, dialog, nativeTheme, session } from 'electron';
-import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { execFile, spawn } from 'node:child_process';
+import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import squirrelStartup from 'electron-squirrel-startup';
 import type {
   AuthenticatorBeginRequest, AuthenticatorCodes, AuthenticatorEntry, AuthenticatorRegistration,
-  CommandResult, ExportFormat, HistoryEntry, NarrationClientResult, NarrationEvent, NarrationRuntimeState,
-  PersonalVocabularyState, PersonalVocabularyUploadResult, Preferences, RunKind, UpdateStatus, WinutilCatalog,
+  CommandResult, ExportFormat, HistoryBrowseResult, HistoryEntry, HistoryQuery, NarrationClientResult, NarrationEvent, NarrationRuntimeState,
+  PersonalVocabularyState, PersonalVocabularyUploadResult, Preferences, RunKind, SchoolModeChangeResult,
+  SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateStatus, WinutilCatalog,
 } from '../shared/types';
 import { resolvePackageRequest, validateCatalog, wingetArgs } from './package-policy';
 import { AuthenticatorService } from './authenticator-service';
 import { PersonalVocabularyStore } from './personal-vocabulary-store';
 import { PERSONAL_VOCABULARY_LIMITS } from '../shared/personal-vocabulary';
 import { IpcNarrationTransport, NarratorRuntime } from './narrator-runtime';
+import { SettingsSurfaceService } from './settings-surface-service';
+import { deleteCredential, readCredential, writeCredential } from './credential-vault';
+import { exportStructuredRecords } from '../shared/export-formats';
+import { buildSevenZipCommand, createArchiveListFile, createArchiveManifest } from '../shared/archive-export';
+import { detectExternalEditors, openExportInVSCode } from './external-editor';
+import { LocalHistory, LOCAL_HISTORY_ACTIONS, type JsonValue, type LocalHistoryAction } from './local-history';
 
 const ROOT = path.join(__dirname, '..', '..');
 const CONFIG_DIR = path.join(__dirname, '..', 'config');
@@ -30,6 +37,12 @@ let packageMutationActive = false;
 let historyWriteQueue: Promise<void> = Promise.resolve();
 let authenticatorService: AuthenticatorService | null = null;
 let personalVocabularyStore: PersonalVocabularyStore | null = null;
+let settingsSurfaceService: SettingsSurfaceService | null = null;
+let localHistoryService: LocalHistory | null = null;
+let lastExportPath = '';
+let historyUnlockedUntil = 0;
+const HISTORY_CREDENTIAL_TARGET = 'history-manager-primary';
+const HISTORY_CREDENTIAL_ACCOUNT = 'local-user';
 const narrationTransport = new IpcNarrationTransport(() => {
   if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return undefined;
   return win.webContents;
@@ -42,9 +55,10 @@ const MAX_TEXT_PAYLOAD = 2 * 1024 * 1024;
 const MAX_HISTORY_FIELD = 4096;
 const MAX_HISTORY_BYTES = 2 * 1024 * 1024;
 const MAX_HISTORY_ENTRIES = 500;
+const SCHOOL_MODE_PASSWORD_MAX_CODE_POINTS = 256;
 const EXPORT_EXTENSIONS: Record<ExportFormat, string> = {
-  md: 'md', txt: 'txt', json: 'json', jsonl: 'jsonl', yaml: 'yaml', toml: 'toml', xml: 'xml',
-  csv: 'csv', tsv: 'tsv', html: 'html', sql: 'sql', ts: 'ts', py: 'py', go: 'go', rs: 'rs',
+  md: 'md', json: 'json', jsonl: 'jsonl', yaml: 'yaml', toml: 'toml', xml: 'xml',
+  csv: 'csv', tsv: 'tsv', html: 'html', sql: 'sql', ts: 'ts', js: 'js', py: 'py', go: 'go', rs: 'rs',
   proto: 'proto', 'schema.json': 'schema.json',
 };
 const EXPORT_VIEWS = new Set([
@@ -136,6 +150,56 @@ function createWindow(): void {
   });
   void win.loadFile(RENDERER_FILE);
   win.on('closed', () => { win = null; });
+}
+
+function defaultSchoolPreferences(preferences?: Preferences): import('../shared/school-mode').SchoolModePreferences {
+  return {
+    language: preferences?.language ?? 'English',
+    englishFunnyLevel: preferences?.enFunny ?? 3,
+    cantoneseFunnyLevel: preferences?.yueFunny ?? 4,
+    personalVocabularyEnabled: true,
+    dimSumEnabled: true,
+  };
+}
+
+function effectiveNarratorPreferences(preferences: Preferences): Preferences {
+  const school = settingsSurfaceService?.snapshot().schoolMode;
+  return school?.status === 'ready' && school.effective.enabled
+    ? { ...preferences, language: 'English', narrator: 'English', enFunny: 1 }
+    : preferences;
+}
+
+function sharedAppDataDirectory(): string {
+  const local = process.env.LOCALAPPDATA;
+  const base = local && path.win32.isAbsolute(local) && !/[\u0000-\u001f"]/u.test(local)
+    ? path.win32.normalize(local)
+    : app.getPath('appData');
+  return path.join(base, 'DingDingProjects', 'shared-settings');
+}
+
+function settingsSurface(): SettingsSurfaceService {
+  if (!settingsSurfaceService) throw new Error('The settings surface is unavailable.');
+  return settingsSurfaceService;
+}
+
+function validatePasswordInput(password: unknown, optional = false): string | undefined {
+  if (optional && password === undefined) return undefined;
+  if (typeof password !== 'string' || password.length === 0 || Array.from(password).length > SCHOOL_MODE_PASSWORD_MAX_CODE_POINTS
+    || /[\u0000-\u001f\u007f]/u.test(password)) throw new Error('The School mode password did not pass validation.');
+  return password;
+}
+
+function broadcastSettingsSurface(state: SettingsSurfaceState): void {
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
+  win.setTitle(state.displayName.displayName);
+  win.webContents.send('settings-surface:state', state);
+  if (state.schoolMode.status === 'ready' && state.schoolMode.effective.enabled && currentNarratorPreferences) {
+    void narratorRuntime.stop();
+    narrationTransport.stop();
+    narratorRuntime.configure({ ...currentNarratorPreferences, language: 'English', narrator: 'English', enFunny: 1 }, app.isAccessibilitySupportEnabled());
+  } else if (state.schoolMode.status === 'ready' && currentNarratorPreferences) {
+    narratorRuntime.configure(currentNarratorPreferences, app.isAccessibilitySupportEnabled());
+  }
 }
 
 /** Run a native command and always resolve with the real exit code, stdout and stderr. */
@@ -271,6 +335,143 @@ function unsupported(kind: RunKind): CommandResult {
   };
 }
 
+function localHistory(): LocalHistory {
+  if (!localHistoryService) localHistoryService = new LocalHistory({ appDataDirectory: USER_DIR() });
+  return localHistoryService;
+}
+
+function validateHistoryPassword(value: unknown): string {
+  if (typeof value !== 'string' || Array.from(value).length < 8 || Array.from(value).length > 256 || /[\x00-\x1f\x7f]/u.test(value)) {
+    throw new Error('History password must contain 8 to 256 characters.');
+  }
+  return value;
+}
+
+async function historyAccessState(): Promise<{ configured: boolean; unlocked: boolean }> {
+  const stored = await readCredential(HISTORY_CREDENTIAL_TARGET, HISTORY_CREDENTIAL_ACCOUNT);
+  const configured = stored !== null;
+  stored?.fill(0);
+  return { configured, unlocked: configured && historyUnlockedUntil > Date.now() };
+}
+
+function createHistoryVerifier(password: string): Buffer {
+  const salt = randomBytes(16);
+  const digest = scryptSync(password, salt, 32, { N: 16_384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+  try { return Buffer.from(JSON.stringify({ schemaVersion: 1, salt: salt.toString('base64'), digest: digest.toString('base64') }), 'utf8'); }
+  finally { salt.fill(0); digest.fill(0); }
+}
+
+function verifyHistoryPassword(password: string, verifier: Buffer): boolean {
+  let parsed: unknown;
+  try { parsed = JSON.parse(verifier.toString('utf8')) as unknown; } catch { return false; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+  const record = parsed as Record<string, unknown>;
+  if (record.schemaVersion !== 1 || typeof record.salt !== 'string' || typeof record.digest !== 'string') return false;
+  let salt: Buffer;
+  let expected: Buffer;
+  try {
+    salt = Buffer.from(record.salt, 'base64'); expected = Buffer.from(record.digest, 'base64');
+    if (salt.length !== 16 || expected.length !== 32 || salt.toString('base64') !== record.salt || expected.toString('base64') !== record.digest) return false;
+  } catch { return false; }
+  const actual = scryptSync(password, salt, 32, { N: 16_384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+  try { return timingSafeEqual(actual, expected); }
+  finally { salt.fill(0); expected.fill(0); actual.fill(0); }
+}
+
+async function requireHistoryAccess(): Promise<void> {
+  const access = await historyAccessState();
+  if (!access.configured) throw new Error('Configure a local history password before opening the history manager.');
+  if (!access.unlocked) throw new Error('Unlock local history before using this action.');
+}
+
+async function detectedEditors() {
+  const isFile = async (candidate: string): Promise<boolean> => {
+    try { return (await fs.stat(candidate)).isFile(); } catch { return false; }
+  };
+  const findOnPath = async (command: string): Promise<readonly string[]> => {
+    const result = await run(path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'where.exe'), [command]);
+    return result.ok ? result.stdout.split(/\r?\n/u).map((item) => item.trim()).filter(Boolean).slice(0, 16) : [];
+  };
+  return detectExternalEditors({
+    localAppData: process.env.LOCALAPPDATA,
+    programFiles: process.env.ProgramFiles,
+    programFilesX86: process.env['ProgramFiles(x86)'],
+    portableRoots: [], configuredEditors: [],
+  }, { isFile, findOnPath });
+}
+
+function exportBaseName(view: string): string {
+  return view.replace(/[^A-Za-z0-9_-]/gu, '-').slice(0, 80) || 'export';
+}
+
+async function saveStructuredExport(payload: StructuredExportRequest): Promise<StructuredExportSaveResult> {
+  if (!payload || typeof payload.view !== 'string' || !EXPORT_VIEWS.has(payload.view)) throw new Error('The export view is invalid.');
+  const output = exportStructuredRecords({
+    format: payload.format, records: payload.records, schema: { name: `material-winutil.${payload.view}`, version: 1 },
+    scope: payload.scope, lineEnding: payload.lineEnding,
+  });
+  const archive = payload.archive;
+  const extension = archive?.format ?? output.extension;
+  const choice = await dialog.showSaveDialog({
+    title: archive ? 'Export archive' : 'Export view',
+    defaultPath: path.join(app.getPath('downloads'), `${exportBaseName(payload.view)}.${extension}`),
+  });
+  if (choice.canceled || !choice.filePath) return { status: 'cancelled', warnings: [] };
+  if (await fs.stat(choice.filePath).then(() => true).catch(() => false)) {
+    throw new Error('The selected export path already exists. Choose a new filename so no data is overwritten or appended.');
+  }
+  const warnings: string[] = [];
+  if (!archive) {
+    await fs.writeFile(choice.filePath, output.text, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+  } else {
+    const encryption = archive.encryption ?? { enabled: false, encryptHeaders: false };
+    if (encryption.enabled && (!encryption.password || encryption.password.length < 8 || encryption.password.length > 512)) {
+      throw new Error('Archive password must contain 8 to 512 characters.');
+    }
+    const manifest = createArchiveManifest({ schemaVersion: 1, entries: [{ path: `${exportBaseName(payload.view)}.${output.extension}`, bytes: output.byteLength }], options: {
+      format: archive.format, compressionLevel: archive.compressionLevel,
+      ...(archive.format === '7z' ? {
+        method: archive.method, dictionarySizeMiB: archive.dictionarySizeMiB, wordSize: archive.wordSize,
+        solid: archive.solid, solidBlockSizeMiB: archive.solidBlockSizeMiB, threads: archive.threads,
+        splitVolumeSizeMiB: archive.splitVolumeSizeMiB,
+        encryption: { enabled: encryption.enabled, encryptHeaders: encryption.encryptHeaders },
+      } : {}),
+    }});
+    warnings.push(...manifest.warnings);
+    const sevenZipCandidates = [
+      path.join(process.env.ProgramFiles ?? '', '7-Zip', '7z.exe'),
+      path.join(process.env['ProgramFiles(x86)'] ?? '', '7-Zip', '7z.exe'),
+    ];
+    const sevenZip = (await Promise.all(sevenZipCandidates.map(async (candidate) => ({ candidate, ok: await fs.stat(candidate).then((stat) => stat.isFile()).catch(() => false) })))).find((item) => item.ok)?.candidate;
+    if (!sevenZip) throw new Error('7-Zip is not installed in a trusted application directory. The archive was not created.');
+    const staging = await fs.mkdtemp(path.join(app.getPath('temp'), 'material-winutil-export-'));
+    try {
+      const sourceFile = path.join(staging, manifest.entries[0].path);
+      const listFile = path.join(staging, 'entries.txt');
+      await fs.writeFile(sourceFile, output.text, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      await fs.writeFile(listFile, createArchiveListFile(manifest), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      const command = buildSevenZipCommand({ manifest, executable: { path: sevenZip, trusted: true }, sourceDirectory: staging, outputArchive: choice.filePath, listFile });
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn(command.executable, command.args, { cwd: command.cwd, shell: false, windowsHide: true, stdio: command.stdin.kind === 'secret' ? ['pipe', 'ignore', 'ignore'] : ['ignore', 'ignore', 'ignore'] });
+        child.once('error', () => reject(new Error('The archive tool could not start.')));
+        child.once('close', (code) => code === 0 ? resolve() : reject(new Error(`Archive creation failed with exit ${code ?? 'unknown'}.`)));
+        if (command.stdin.kind === 'secret') {
+          const secret = encryption.password ?? '';
+          child.stdin?.end(`${secret}\n${secret}\n`, 'utf8');
+        }
+      });
+    } finally {
+      await fs.rm(staging, { recursive: true, force: true });
+    }
+  }
+  lastExportPath = choice.filePath;
+  const editors = await detectedEditors();
+  return { status: 'saved', filePath: choice.filePath, manifest: output.manifest, warnings, vscode: {
+    available: editors.some((editor) => editor.kind.startsWith('vscode-')),
+    label: editors.find((editor) => editor.kind.startsWith('vscode-'))?.label,
+  } };
+}
+
 ipcMain.handle('catalog:load', async (event): Promise<WinutilCatalog> => {
   requireTrustedSender(event);
   return loadCatalog();
@@ -385,20 +586,15 @@ ipcMain.handle('deps:ensure', async (event): Promise<DepStatus[]> => {
   return inspectDependencies();
 });
 
-ipcMain.handle('view:export', async (_e, payload: { view: string; format: ExportFormat; body: string }): Promise<string> => {
-  if (!trustedSender(_e)) throw new Error('The export request did not originate from the application renderer.');
-  if (!payload || typeof payload.view !== 'string' || !EXPORT_VIEWS.has(payload.view)
-    || typeof payload.format !== 'string' || !(payload.format in EXPORT_EXTENSIONS)
-    || typeof payload.body !== 'string' || Buffer.byteLength(payload.body, 'utf8') > MAX_TEXT_PAYLOAD) throw new Error('The export payload is invalid or too large.');
-  const extension = EXPORT_EXTENSIONS[payload.format as ExportFormat];
-  const basename = payload.view.replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 80);
-  const res = await dialog.showSaveDialog({
-    title: 'Export view',
-    defaultPath: path.join(app.getPath('downloads'), `${basename}.${extension}`),
-  });
-  if (res.canceled || !res.filePath) return '';
-  await fs.writeFile(res.filePath, payload.body, 'utf8');
-  return res.filePath;
+ipcMain.handle('view:export', async (event, payload: StructuredExportRequest): Promise<StructuredExportSaveResult> => {
+  requireTrustedSender(event);
+  return saveStructuredExport(payload);
+});
+
+ipcMain.handle('view:export-open-vscode', async (event, filePath: string) => {
+  requireTrustedSender(event);
+  if (filePath !== lastExportPath || !path.isAbsolute(filePath)) throw new Error('Only the most recently saved export can be opened.');
+  return openExportInVSCode(filePath, await detectedEditors(), execFile);
 });
 
 ipcMain.handle('prefs:read', async (event): Promise<Partial<Preferences>> => {
@@ -407,7 +603,7 @@ ipcMain.handle('prefs:read', async (event): Promise<Partial<Preferences>> => {
     const preferences = projectPreferences(JSON.parse(await fs.readFile(PREFS_FILE(), 'utf8')) as unknown);
     if (preferences) {
       currentNarratorPreferences = preferences;
-      narratorRuntime.configure(preferences, app.isAccessibilitySupportEnabled());
+      narratorRuntime.configure(effectiveNarratorPreferences(preferences), app.isAccessibilitySupportEnabled());
     }
     return preferences ?? {};
   }
@@ -419,9 +615,47 @@ ipcMain.handle('prefs:write', async (_e, prefs: Preferences): Promise<void> => {
   const projected = projectPreferences(prefs);
   if (!projected) throw new Error('Preferences did not pass validation.');
   currentNarratorPreferences = projected;
-  narratorRuntime.configure(projected, app.isAccessibilitySupportEnabled());
+  narratorRuntime.configure(effectiveNarratorPreferences(projected), app.isAccessibilitySupportEnabled());
   await fs.mkdir(USER_DIR(), { recursive: true });
   await atomicWrite(PREFS_FILE(), JSON.stringify(projected, null, 2));
+  await settingsSurface().updatePreferences(defaultSchoolPreferences(projected));
+});
+
+ipcMain.handle('settings-surface:state', (event): SettingsSurfaceState => {
+  requireTrustedSender(event);
+  return settingsSurface().snapshot();
+});
+ipcMain.handle('display-name:rename', async (event, displayName: unknown): Promise<SettingsSurfaceState> => {
+  requireTrustedSender(event);
+  if (typeof displayName !== 'string') throw new Error('The display name did not pass validation.');
+  return settingsSurface().renameDisplayName(displayName);
+});
+ipcMain.handle('display-name:reset', async (event): Promise<SettingsSurfaceState> => {
+  requireTrustedSender(event);
+  return settingsSurface().resetDisplayName();
+});
+ipcMain.handle('dialog-emoji:set', async (event, enabled: unknown): Promise<SettingsSurfaceState> => {
+  requireTrustedSender(event);
+  if (typeof enabled !== 'boolean') throw new Error('The dialog emoji preference did not pass validation.');
+  return settingsSurface().setDialogEmojis(enabled);
+});
+ipcMain.handle('school-mode:rename', async (event, displayLabel: unknown): Promise<SettingsSurfaceState> => {
+  requireTrustedSender(event);
+  if (typeof displayLabel !== 'string') throw new Error('The School mode label did not pass validation.');
+  return settingsSurface().renameSchoolMode(displayLabel);
+});
+ipcMain.handle('school-mode:configure-password', async (event, password: unknown): Promise<SettingsSurfaceState> => {
+  requireTrustedSender(event);
+  return settingsSurface().configureSchoolModePassword(validatePasswordInput(password)!);
+});
+ipcMain.handle('school-mode:reset-credential', async (event): Promise<SettingsSurfaceState> => {
+  requireTrustedSender(event);
+  return settingsSurface().resetSchoolModeCredential();
+});
+ipcMain.handle('school-mode:set-enabled', async (event, enabled: unknown, password?: unknown): Promise<SchoolModeChangeResult> => {
+  requireTrustedSender(event);
+  if (typeof enabled !== 'boolean') throw new Error('The School mode state did not pass validation.');
+  return settingsSurface().setSchoolModeEnabled(enabled, validatePasswordInput(password, true));
 });
 
 ipcMain.handle('history:read', async (event): Promise<HistoryEntry[]> => {
@@ -445,7 +679,76 @@ ipcMain.handle('history:append', async (_e, entry: Omit<HistoryEntry, 'id' | 'at
     }
   });
   await historyWriteQueue;
+  await localHistory().recordRedactedSnapshot('updated', { action: full.action, detail: full.detail, recordedAt: full.at });
   return full;
+});
+
+ipcMain.handle('history:access', async (event) => { requireTrustedSender(event); return historyAccessState(); });
+ipcMain.handle('history:configure-credential', async (event, password: unknown) => {
+  requireTrustedSender(event);
+  const value = createHistoryVerifier(validateHistoryPassword(password));
+  try { await writeCredential(HISTORY_CREDENTIAL_TARGET, HISTORY_CREDENTIAL_ACCOUNT, value); }
+  finally { value.fill(0); }
+  historyUnlockedUntil = Date.now() + 15 * 60 * 1000;
+  return historyAccessState();
+});
+ipcMain.handle('history:unlock', async (event, password: unknown) => {
+  requireTrustedSender(event);
+  const supplied = Buffer.from(validateHistoryPassword(password), 'utf8');
+  const stored = await readCredential(HISTORY_CREDENTIAL_TARGET, HISTORY_CREDENTIAL_ACCOUNT);
+  try {
+    if (!stored || !verifyHistoryPassword(supplied.toString('utf8'), stored)) throw new Error('The history password did not match.');
+    historyUnlockedUntil = Date.now() + 15 * 60 * 1000;
+  } finally { supplied.fill(0); stored?.fill(0); }
+  return historyAccessState();
+});
+ipcMain.handle('history:lock', async (event) => { requireTrustedSender(event); historyUnlockedUntil = 0; return historyAccessState(); });
+
+function validatedHistoryQuery(query: HistoryQuery): HistoryQuery {
+  if (!query || typeof query !== 'object' || Array.isArray(query)) throw new Error('History query must be an object.');
+  if (query.actions?.some((action) => !LOCAL_HISTORY_ACTIONS.includes(action))) throw new Error('History action is unsupported.');
+  return query;
+}
+
+ipcMain.handle('history:browse', async (event, query: HistoryQuery): Promise<HistoryBrowseResult> => {
+  requireTrustedSender(event);
+  await requireHistoryAccess();
+  const requested = validatedHistoryQuery(query);
+  const all = await localHistory().search({ limit: 500 });
+  const entries = await localHistory().search({ ...requested, actions: requested.actions as LocalHistoryAction[] | undefined });
+  return { entries, actionCounts: LOCAL_HISTORY_ACTIONS.map((action) => ({ action, count: all.filter((entry) => entry.action === action).length })).filter((item) => item.count > 0) };
+});
+
+ipcMain.handle('history:diff', async (event, left: string, right: string) => {
+  requireTrustedSender(event);
+  await requireHistoryAccess();
+  const before = await localHistory().snapshot(left);
+  const after = await localHistory().snapshot(right);
+  const changes: Array<{ path: string; kind: string; before?: unknown; after?: unknown }> = [];
+  const walk = (a: unknown, b: unknown, at = '$'): void => {
+    if (JSON.stringify(a) === JSON.stringify(b)) return;
+    if (a && b && typeof a === 'object' && typeof b === 'object' && !Array.isArray(a) && !Array.isArray(b)) {
+      for (const key of [...new Set([...Object.keys(a), ...Object.keys(b)])].sort()) walk((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key], `${at}.${key}`);
+      return;
+    }
+    changes.push({ path: at, kind: a === undefined ? 'added' : b === undefined ? 'removed' : 'changed', ...(a === undefined ? {} : { before: a }), ...(b === undefined ? {} : { after: b }) });
+  };
+  walk(before, after);
+  return changes.slice(0, 1_000);
+});
+
+ipcMain.handle('history:restore', async (event, revision: string) => { requireTrustedSender(event); await requireHistoryAccess(); return localHistory().restore(revision); });
+ipcMain.handle('history:label', async (event, revision: string, label: string) => { requireTrustedSender(event); await requireHistoryAccess(); return localHistory().label(revision, label); });
+ipcMain.handle('history:prune', async (event, keep: number) => { requireTrustedSender(event); await requireHistoryAccess(); return localHistory().prune(keep); });
+ipcMain.handle('history:export', async (event, query: HistoryQuery): Promise<StructuredExportSaveResult> => {
+  requireTrustedSender(event);
+  await requireHistoryAccess();
+  const result = await localHistory().search({ ...validatedHistoryQuery(query), actions: query.actions as LocalHistoryAction[] | undefined });
+  return saveStructuredExport({ view: 'history', format: 'json', lineEnding: 'lf', records: result.map((entry) => ({ ...entry })), scope: {
+    kind: query.query || query.regex || query.actions?.length || query.from || query.to ? 'filtered-view' : 'all',
+    detail: 'Redacted history metadata only; snapshot contents, credentials, verifier proofs, and encryption keys are omitted.',
+    sourceCount: (await localHistory().search({ limit: 500 })).length, exportedCount: result.length,
+  } });
 });
 
 ipcMain.handle('update:status', (event): UpdateStatus => { requireTrustedSender(event); return updateStatus; });
@@ -533,16 +836,26 @@ ipcMain.on('narration:speech-result', (event, id: number, ok: boolean, error?: s
   narrationTransport.complete(id, ok, typeof error === 'string' ? error : undefined);
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
+  let persistedPreferences: Preferences | undefined;
+  try { persistedPreferences = projectPreferences(JSON.parse(await fs.readFile(PREFS_FILE(), 'utf8')) as unknown) ?? undefined; }
+  catch { persistedPreferences = undefined; }
+  settingsSurfaceService = new SettingsSurfaceService({
+    userDataDirectory: USER_DIR(), sharedAppDataDirectory: sharedAppDataDirectory(),
+    vault: { write: writeCredential, read: readCredential, delete: deleteCredential },
+  });
+  const initialSettings = await settingsSurfaceService.initialize(defaultSchoolPreferences(persistedPreferences));
   createWindow();
+  win?.setTitle(initialSettings.displayName.displayName);
+  settingsSurfaceService.startWatching(broadcastSettingsSurface);
   configureUpdater();
 });
 app.on('accessibility-support-changed', (_event, enabled) => {
-  if (currentNarratorPreferences) narratorRuntime.configure(currentNarratorPreferences, enabled);
+  if (currentNarratorPreferences) narratorRuntime.configure(effectiveNarratorPreferences(currentNarratorPreferences), enabled);
   win?.webContents.send('narration:state', narrationState());
 });
-app.on('before-quit', () => { narrationTransport.stop(); void narratorRuntime.stop(); });
+app.on('before-quit', () => { settingsSurfaceService?.close(); narrationTransport.stop(); void narratorRuntime.stop(); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

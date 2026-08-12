@@ -375,6 +375,8 @@ input[type="color"] { height: 44px; padding: 3px; }
   overscroll-behavior: contain; animation: surface-rise .18s ease; }
 .dialog.wide { max-width: 880px; }
 .dialog-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
+.dialog-emoji-decoration { width: 44px; min-width: 44px; height: 44px; display: grid; place-items: center;
+  border-radius: 50%; background: var(--md-sys-color-secondary-container); font-size: 22px; }
 .dialog-head > div { flex: 1; }
 .dialog-head h2 { margin: 0; font-size: 20px; font-weight: 400; }
 .dialog-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 18px; }

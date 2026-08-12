@@ -14,19 +14,31 @@ type TabDock = 'left' | 'right' | 'top' | 'bottom';
 type TabSearchKey = 'current' | 'groupNames' | 'master' | 'inGroup' | 'closeContaining' | 'closeNot';
 type DialogId =
   | 'palette' | 'regex' | 'tabs' | 'appearance' | 'lock' | 'auth'
-  | 'notifications' | 'export' | 'gate' | 'about' | 'profiles' | 'saveselection' | 'dimsum' | 'color' | null;
+  | 'notifications' | 'export' | 'gate' | 'about' | 'profiles' | 'saveselection' | 'dimsum' | 'color'
+  | 'school-unlock' | null;
 
 interface WinutilApp { id: string; name: string; cat: string; desc: string; winget: string; choco: string; link: string; foss: boolean; }
 interface WinutilTweak { id: string; name: string; cat: string; desc: string; panel?: string; type?: string; }
 interface Catalog { apps: WinutilApp[]; tweaks: WinutilTweak[]; features: WinutilTweak[]; presets: Record<string, string[]>; dns: Record<string, Record<string, string>>; }
 interface WorkspaceTab { id: string; view: ViewId; pinned: boolean; group: string | null; locked: boolean; }
 interface HistoryEntry { id: string; action: string; detail: string; at: string; }
+interface GitHistoryEntry { commit: string; action: string; recordedAt: string; revisionId: string; restoredFrom?: string; label?: string; }
+interface ExportSaveResult { status: 'saved' | 'cancelled'; filePath?: string; warnings: string[]; vscode?: { available: boolean; label?: string }; }
 interface NotificationEntry { id: string; title: string; detail: string; icon: string; read: boolean; }
 interface UpdateStatus { state: 'disabled' | 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'up-to-date' | 'error'; currentVersion: string; updateVersion: string; message: string; releaseUrl: string; }
 type TotpAlgorithm = 'SHA1' | 'SHA256' | 'SHA512';
 interface AuthenticatorEntry { id: string; label: string; account: string; issuer?: string; algorithm: TotpAlgorithm; digits: number; period: number; createdAt: string; }
 interface AuthenticatorRegistration { registrationId: string; entry: AuthenticatorEntry; manualSecret: string; uri: string; qrDataUrl: string; imported: boolean; expiresAt: string; }
 interface AuthenticatorCodes { id: string; current: string; next: string; secondsRemaining: number; period: number; digits: number; }
+type DialogEmojiCategory = 'information' | 'success' | 'warning' | 'error' | 'destructive' | 'security';
+interface SettingsSurfaceState {
+  displayName: { schemaVersion: 1; displayName: string };
+  dialogEmoji: { schemaVersion: 1; showEmojisInDialogsAndMessageBoxes: boolean };
+  dialogDecorations: Record<DialogEmojiCategory, string | null>;
+  schoolMode:
+    | { status: 'unavailable'; code: 'shared-store-unavailable'; cause: 'read-failed' | 'watch-failed'; eventGeneration: number; recordGeneration: number | null }
+    | { status: 'ready'; eventGeneration: number; recordGeneration: number; state: { enabled: boolean; displayLabel: string; credential: { method: 'none' | 'password' | 'totp'; credentialId: string | null; revision: number } }; effective: { enabled: boolean; displayLabel: string; language: LanguageMode; personalVocabularyEnabled: boolean; dimSumEnabled: boolean } };
+}
 type PersonalVocabularyState =
   | { state: 'empty'; entryCount: 0; mappings: Record<string, never> }
   | { state: 'invalid'; entryCount: 0; mappings: Record<string, never> }
@@ -54,11 +66,23 @@ interface Bridge {
   installed(): Promise<string[]>;
   ensureDeps(): Promise<Array<{ name: string; present: boolean; installed: boolean; detail: string }>>;
   onProgress(cb: (p: { id: string; index: number; total: number; state: string; detail: string }) => void): void;
-  openExternal(url: string): void;  exportView(p: { view: string; format: string; body: string }): Promise<string>;
+  openExternal(url: string): void;
+  exportView(p: { view: string; format: string; records: Array<Record<string, unknown>>; scope: { kind: 'all' | 'filtered-view' | 'selection'; detail: string; sourceCount: number; exportedCount: number }; lineEnding: 'lf' | 'crlf'; archive?: Record<string, unknown> }): Promise<ExportSaveResult>;
+  openExportInVSCode(filePath: string): Promise<{ ok: boolean; status: string; error?: string; vscodeDownloadUrl?: string }>;
   readPrefs(): Promise<Partial<Prefs>>;
   writePrefs(p: Prefs): Promise<void>;
   history(): Promise<HistoryEntry[]>;
   appendHistory(e: { action: string; detail: string }): Promise<HistoryEntry>;
+  historyBrowse(query: { query?: string; regex?: { source: string; flags: string }; actions?: string[]; from?: string; to?: string; limit?: number }): Promise<{ entries: GitHistoryEntry[]; actionCounts: Array<{ action: string; count: number }> }>;
+  historyAccess(): Promise<{ configured: boolean; unlocked: boolean }>;
+  historyConfigureCredential(password: string): Promise<{ configured: boolean; unlocked: boolean }>;
+  historyUnlock(password: string): Promise<{ configured: boolean; unlocked: boolean }>;
+  historyLock(): Promise<{ configured: boolean; unlocked: boolean }>;
+  historyDiff(left: string, right: string): Promise<Array<{ path: string; kind: string; before?: unknown; after?: unknown }>>;
+  historyRestore(revision: string): Promise<GitHistoryEntry>;
+  historyLabel(revision: string, label: string): Promise<GitHistoryEntry>;
+  historyPrune(keep: number): Promise<GitHistoryEntry>;
+  historyExport(query: Record<string, unknown>): Promise<ExportSaveResult>;
   updateStatus(): Promise<UpdateStatus>;
   checkForUpdates(): Promise<UpdateStatus>;
   restartToUpdate(): void;
@@ -79,6 +103,15 @@ interface Bridge {
   onNarrationCancel(cb: (request: { id: number }) => void): void;
   narrationSpeechResult(id: number, ok: boolean, error?: string): void;
   onNarrationState(cb: (state: { platformSpeechAvailable: boolean; screenReaderActive: boolean }) => void): void;
+  settingsSurfaceState(): Promise<SettingsSurfaceState>;
+  renameDisplayName(displayName: string): Promise<SettingsSurfaceState>;
+  resetDisplayName(): Promise<SettingsSurfaceState>;
+  setDialogEmojis(enabled: boolean): Promise<SettingsSurfaceState>;
+  renameSchoolMode(displayLabel: string): Promise<SettingsSurfaceState>;
+  configureSchoolModePassword(password: string): Promise<SettingsSurfaceState>;
+  resetSchoolModeCredential(): Promise<SettingsSurfaceState>;
+  setSchoolModeEnabled(enabled: boolean, password?: string): Promise<{ ok: boolean; code?: 'credential-rejected' | 'credential-unavailable' }>;
+  onSettingsSurfaceState(cb: (state: SettingsSurfaceState) => void): void;
 }
 
 /* ------------------------------------------------------------- constants -- */
@@ -328,9 +361,9 @@ const DIM_SUM = [
 ];
 
 const EXPORT_FORMATS: Array<[string, string]> = [
-  ['md', 'Markdown'], ['txt', 'Plain text'], ['json', 'JSON'], ['jsonl', 'JSONL'], ['yaml', 'YAML'],
+  ['md', 'Markdown'], ['json', 'JSON'], ['jsonl', 'JSONL'], ['yaml', 'YAML'],
   ['toml', 'TOML'], ['xml', 'XML'], ['csv', 'CSV'], ['tsv', 'TSV'], ['html', 'HTML'], ['sql', 'SQL'],
-  ['ts', 'TypeScript'], ['py', 'Python'], ['go', 'Go'], ['rs', 'Rust'], ['proto', 'Protobuf'],
+  ['ts', 'TypeScript'], ['js', 'JavaScript'], ['py', 'Python'], ['go', 'Go'], ['rs', 'Rust'], ['proto', 'Protobuf'],
   ['schema.json', 'JSON Schema'],
 ];
 
@@ -505,7 +538,13 @@ const state = {
   prefs: { ...DEFAULT_PREFS },
   runOutput: 'No command has run yet. Package actions use WinGet. Other system operations stay disabled until their verified WinUtil adapter is installed.',
   history: [] as HistoryEntry[],
+  gitHistory: [] as GitHistoryEntry[],
+  historyCounts: [] as Array<{ action: string; count: number }>,
   historyFilter: { from: '', to: '', action: 'all' },
+  historySelected: [] as string[],
+  historyMessage: '',
+  historyAccess: { configured: false, unlocked: false, password: '' },
+  exportDraft: { archive: 'none', lineEnding: 'lf', level: 'normal', method: 'LZMA2', dictionary: 64, word: 64, solid: true, solidBlock: 256, threads: 4, split: 0, encryption: false, encryptHeaders: true, password: '', savedPath: '' },
   notifications: [] as NotificationEntry[],
   update: { state: 'idle', currentVersion: '0.1.0', updateVersion: '', message: 'Automatic update checks are enabled.', releaseUrl: '' } as UpdateStatus,
   auth: {
@@ -520,6 +559,8 @@ const state = {
     status: 'empty' as 'empty' | 'loaded' | 'invalid', loading: false,
   },
   narration: { platformSpeechAvailable: true, screenReaderActive: false, activeSpeechId: 0 },
+  settingsSurface: null as SettingsSurfaceState | null,
+  settingsDraft: { displayName: '', schoolLabel: '', password: '', confirmPassword: '', error: '', busy: false },
   snack: '',
   isoLog: '[00:00:00] Waiting for an ISO. Select an official Microsoft image to begin.',
 };
@@ -652,7 +693,7 @@ function h(tag: string, attrs: Record<string, unknown> = {}, ...kids: Array<Node
  * Technical spans, commands, URLs, identifiers, paths, and form values keep
  * their exact source text. The main process has already validated mappings. */
 function personalText(input: string): string {
-  if (state.vocabulary.data.state !== 'loaded' || !input) return input;
+  if (schoolModeRestrictsPersonalization() || state.vocabulary.data.state !== 'loaded' || !input) return input;
   const mappings = state.vocabulary.data.mappings;
   const keys = Object.keys(mappings).sort((left, right) => right.length - left.length || (left < right ? -1 : left > right ? 1 : 0));
   let output = ''; let offset = 0;
@@ -685,10 +726,10 @@ const VOCABULARY_COPY: Record<LanguageMode, Record<VocabularyCopyKey, string>> =
 
 function vocabularyCopy(key: VocabularyCopyKey, count = 0): string {
   const interpolate = (value: string): string => personalText(value).replace('{count}', String(count));
-  if (state.prefs.language === 'Bilingual') {
+  if (effectiveLanguage() === 'Bilingual') {
     return `${interpolate(VOCABULARY_COPY.English[key])} · ${interpolate(VOCABULARY_COPY.Yue[key])}`;
   }
-  return interpolate(VOCABULARY_COPY[state.prefs.language][key]);
+  return interpolate(VOCABULARY_COPY[effectiveLanguage()][key]);
 }
 
 async function loadPersonalVocabulary(): Promise<void> {
@@ -787,7 +828,7 @@ function searchLine(key: string, placeholder: string, variant: 'field' | 'bar' =
     value: s.text, placeholder, 'aria-label': placeholder, spellcheck: 'false',
     oninput: (e: Event) => {
       s.text = (e.target as HTMLInputElement).value;
-      render();
+      if (key === 'history') void refreshGitHistory(); else render();
       const next = document.querySelector<HTMLInputElement>(`[data-search="${key}"] input`);
       if (next) { next.focus(); next.setSelectionRange(next.value.length, next.value.length); }
     },
@@ -795,7 +836,7 @@ function searchLine(key: string, placeholder: string, variant: 'field' | 'bar' =
   return h('div', { class: `searchline${variant === 'bar' ? ' bar' : ''}`, 'data-search': key },
     icon('search', 'lead'),
     input,
-    s.text ? h('button', { class: 'icon-btn small', title: 'Clear', onclick: () => { s.text = ''; render(); } }, icon('close')) : null,
+    s.text ? h('button', { class: 'icon-btn small', title: 'Clear', onclick: () => { s.text = ''; if (key === 'history') void refreshGitHistory(); else render(); } }, icon('close')) : null,
     h('button', {
       class: `regex-btn${s.regex ? ' on' : ''}`, title: `Regex builder for “${placeholder}”`,
       onclick: () => { state.regexDraft.target = key; state.regexDraft.pattern = s.text || state.regexDraft.pattern; openDialog('regex'); },
@@ -858,11 +899,22 @@ function bridge(): Bridge {
     ],
     onProgress: () => undefined,
     openExternal: () => snack('This app never opens a browser. Everything is documented in Docs.'),
-    exportView: async () => '',
+    exportView: async () => ({ status: 'cancelled', warnings: [] }),
+    openExportInVSCode: async () => ({ ok: false, status: 'not-installed', error: 'Visual Studio Code handoff is available only in the installed application.' }),
     readPrefs: async () => { try { return JSON.parse(localStorage.getItem('winutil.prefs') ?? '{}') as Partial<Prefs>; } catch { return {}; } },
     writePrefs: async (p) => localStorage.setItem('winutil.prefs', JSON.stringify(p)),
     history: async () => [],
     appendHistory: async (e) => ({ ...e, id: `h-${Date.now()}`, at: new Date().toISOString() }),
+    historyBrowse: async () => ({ entries: [], actionCounts: [] }),
+    historyAccess: async () => ({ configured: false, unlocked: false }),
+    historyConfigureCredential: async () => ({ configured: true, unlocked: true }),
+    historyUnlock: async () => ({ configured: true, unlocked: true }),
+    historyLock: async () => ({ configured: true, unlocked: false }),
+    historyDiff: async () => [],
+    historyRestore: async () => { throw new Error('Restore is available only in the installed application.'); },
+    historyLabel: async () => { throw new Error('Labels are available only in the installed application.'); },
+    historyPrune: async () => { throw new Error('Retention is available only in the installed application.'); },
+    historyExport: async () => ({ status: 'cancelled', warnings: [] }),
     updateStatus: async () => state.update,
     checkForUpdates: async () => ({ ...state.update, state: 'disabled', message: 'Update checks run only in an installed build.' }),
     restartToUpdate: () => undefined,
@@ -883,6 +935,23 @@ function bridge(): Bridge {
     onNarrationCancel: () => undefined,
     narrationSpeechResult: () => undefined,
     onNarrationState: () => undefined,
+    settingsSurfaceState: async () => state.settingsSurface ?? {
+      displayName: { schemaVersion: 1, displayName: 'Material System Utility' },
+      dialogEmoji: { schemaVersion: 1, showEmojisInDialogsAndMessageBoxes: true },
+      dialogDecorations: { information: 'ℹ️', success: '✅', warning: '⚠️', error: '❌', destructive: '🗑️', security: '🔒' },
+      schoolMode: { status: 'unavailable', code: 'shared-store-unavailable', cause: 'read-failed', eventGeneration: 0, recordGeneration: null },
+    },
+    renameDisplayName: async (displayName) => {
+      const current = await fake.settingsSurfaceState();
+      return { ...current, displayName: { schemaVersion: 1, displayName: displayName.trim() || 'Material System Utility' } };
+    },
+    resetDisplayName: async () => ({ ...(await fake.settingsSurfaceState()), displayName: { schemaVersion: 1, displayName: 'Material System Utility' } }),
+    setDialogEmojis: async (enabled) => ({ ...(await fake.settingsSurfaceState()), dialogEmoji: { schemaVersion: 1, showEmojisInDialogsAndMessageBoxes: enabled } }),
+    renameSchoolMode: async () => fake.settingsSurfaceState(),
+    configureSchoolModePassword: async () => fake.settingsSurfaceState(),
+    resetSchoolModeCredential: async () => fake.settingsSurfaceState(),
+    setSchoolModeEnabled: async () => ({ ok: false, code: 'credential-unavailable' }),
+    onSettingsSurfaceState: () => undefined,
   };
   w.winutil = fake;
   return fake;
@@ -977,11 +1046,38 @@ function applyPrefs(): void {
   try { localStorage.setItem('winutil.profiles', JSON.stringify(state.profiles)); } catch { /* profiles stay in memory */ }
 }
 
+function schoolModeReady(): SettingsSurfaceState['schoolMode'] & { status: 'ready' } | null {
+  const value = state.settingsSurface?.schoolMode;
+  return value?.status === 'ready' ? value : null;
+}
+
+function schoolModeEnabled(): boolean { return schoolModeReady()?.effective.enabled === true; }
+function schoolModeRestrictsPersonalization(): boolean {
+  return state.settingsSurface?.schoolMode.status !== 'ready' || schoolModeEnabled();
+}
+
+function acceptSettingsSurface(next: SettingsSurfaceState): void {
+  state.settingsSurface = next;
+  state.settingsDraft.displayName = next.displayName.displayName;
+  if (next.schoolMode.status === 'ready') {
+    state.settingsDraft.schoolLabel = next.schoolMode.state.displayLabel;
+  }
+  document.title = next.displayName.displayName;
+}
+
+function effectiveLanguage(): LanguageMode { return schoolModeRestrictsPersonalization() ? 'English' : state.prefs.language; }
+
+function settingsCopy(english: string, yue: string): string {
+  if (effectiveLanguage() === 'English') return english;
+  if (effectiveLanguage() === 'Yue') return yue;
+  return `${english} · ${yue}`;
+}
+
 function t(key: CopyKey, values: Record<string, string | number> = {}): string {
   const english = COPY_EN[key];
   const yue = COPY_YUE[key];
-  const source = state.prefs.language === 'English' ? english
-    : state.prefs.language === 'Yue' ? yue : `${english} · ${yue}`;
+  const source = effectiveLanguage() === 'English' ? english
+    : effectiveLanguage() === 'Yue' ? yue : `${english} · ${yue}`;
   return personalText(source).replace(/\{(\w+)\}/g, (_, name: string) => String(values[name] ?? `{${name}}`));
 }
 
@@ -989,8 +1085,8 @@ function viewTitle(view: ViewId): string { return t(VIEW_COPY[view].title); }
 function viewSearch(view: ViewId): string { return t(VIEW_COPY[view].search); }
 function categoryLabel(category: string): string {
   const yue = CATEGORY_YUE[category];
-  const source = !yue || state.prefs.language === 'English' ? category
-    : state.prefs.language === 'Yue' ? yue : `${category} · ${yue}`;
+  const source = !yue || effectiveLanguage() === 'English' ? category
+    : effectiveLanguage() === 'Yue' ? yue : `${category} · ${yue}`;
   return personalText(source);
 }
 
@@ -1050,7 +1146,7 @@ function appBar(): HTMLElement {
     }, icon('menu')),
     h('div', { class: 'brand', 'data-personalizable': 'true' },
       h('div', { class: 'brand-mark' }, 'W'),
-      h('div', { class: 'brand-name' }, 'Material System Utility')),
+      h('div', { class: 'brand-name' }, state.settingsSurface?.displayName.displayName ?? 'Material System Utility')),
     searchField(),
     h('div', { style: 'flex:1' }),
     h('button', { class: 'icon-btn', title: t('notificationCentre'), style: 'position:relative', onclick: () => openDialog('notifications') },
@@ -1321,7 +1417,7 @@ function statusLine(): string {
     case 'install': return t('installCount', { visible: visibleApps().length, total: state.catalog.apps.length, selected: state.selected.size });
     case 'tweaks': return `${tweakGroups(state.catalog.tweaks).reduce((n, g) => n + g.items.length, 0)} of ${state.catalog.tweaks.length} · ${state.selected.size} selected`;
     case 'config': return `${tweakGroups(state.catalog.features).reduce((n, g) => n + g.items.length, 0)} of ${state.catalog.features.length} · ${state.selected.size} selected`;
-    case 'history': return `${filteredHistory().length} of ${state.history.length} revisions`;
+    case 'history': return `${filteredHistory().length} Git-backed revisions`;
     default: return '';
   }
 }
@@ -1331,7 +1427,7 @@ function allIdsInView(): string[] {
     case 'install': return visibleApps().map((a) => a.id);
     case 'tweaks': return tweakGroups(state.catalog.tweaks).flatMap((g) => g.items.map((i) => i.id));
     case 'config': return tweakGroups(state.catalog.features).flatMap((g) => g.items.map((i) => i.id));
-    case 'history': return filteredHistory().map((e) => e.id);
+    case 'history': return filteredHistory().map((e) => e.commit);
     default: return [];
   }
 }
@@ -1659,44 +1755,95 @@ function isoPane(): HTMLElement {
     cards);
 }
 
-function filteredHistory(): HistoryEntry[] {
-  const match = makeMatcher(sq('history'));
-  const { from, to, action } = state.historyFilter;
-  return state.history.filter((e) => {
-    if (action !== 'all' && e.action !== action) return false;
-    if (from && e.at < from) return false;
-    if (to && e.at > `${to}T23:59:59Z`) return false;
-    return match(`${e.action} ${e.detail}`);
-  });
+function filteredHistory(): GitHistoryEntry[] { return state.gitHistory; }
+
+function historyQuery(): { query?: string; regex?: { source: string; flags: string }; actions?: string[]; from?: string; to?: string; limit: number } {
+  const search = sq('history');
+  return {
+    ...(search.text ? { query: search.regex ? undefined : search.text, regex: search.regex ? { source: search.text, flags: search.flags } : undefined } : {}),
+    ...(state.historyFilter.action === 'all' ? {} : { actions: [state.historyFilter.action] }),
+    ...(state.historyFilter.from ? { from: `${state.historyFilter.from}T00:00:00.000Z` } : {}),
+    ...(state.historyFilter.to ? { to: `${state.historyFilter.to}T23:59:59.999Z` } : {}),
+    limit: 500,
+  };
+}
+
+async function refreshGitHistory(): Promise<void> {
+  try {
+    const result = await bridge().historyBrowse(historyQuery());
+    state.gitHistory = result.entries;
+    state.historyCounts = result.actionCounts;
+    state.historyMessage = '';
+  } catch (error) { state.historyMessage = error instanceof Error ? error.message : 'Local Git history is unavailable.'; }
+  render();
+}
+
+async function refreshHistoryAccess(): Promise<void> {
+  try { state.historyAccess = { ...state.historyAccess, ...await bridge().historyAccess(), password: '' }; }
+  catch (error) { state.historyMessage = error instanceof Error ? error.message : 'History access is unavailable.'; }
+  render();
+}
+
+async function submitHistoryCredential(): Promise<void> {
+  const password = state.historyAccess.password;
+  try {
+    const access = state.historyAccess.configured
+      ? await bridge().historyUnlock(password)
+      : await bridge().historyConfigureCredential(password);
+    state.historyAccess = { ...access, password: '' };
+    await refreshGitHistory();
+  } catch (error) { state.historyAccess.password = ''; state.historyMessage = error instanceof Error ? error.message : 'History access failed.'; render(); }
 }
 
 function historyPane(): HTMLElement {
-  const actions = ['all', ...new Set(state.history.map((e) => e.action))];
+  if (!state.historyAccess.unlocked) {
+    return h('div', { class: 'pane padded' },
+      h('div', { class: 'card wide history-unlock' },
+        h('div', { class: 'card-head' }, h('div', {}, h('p', { class: 'eyebrow' }, 'Local credential route'), h('h2', {}, state.historyAccess.configured ? 'Unlock Git-backed history' : 'Configure Git-backed history'))),
+        h('p', {}, state.historyAccess.configured
+          ? 'Enter the local history password. Successful access lasts 15 minutes or until you lock it again.'
+          : 'Create a local password before opening history. It is stored only in Windows Credential Manager and never enters Git, exports, logs, or renderer persistence.'),
+        h('label', { class: 'field' }, 'HISTORY PASSWORD', h('input', { type: 'password', value: state.historyAccess.password, autocomplete: state.historyAccess.configured ? 'current-password' : 'new-password', oninput: (event: Event) => { state.historyAccess.password = (event.target as HTMLInputElement).value; } })),
+        h('div', { class: 'dialog-actions' }, h('button', { class: 'btn filled', onclick: () => void submitHistoryCredential() }, state.historyAccess.configured ? 'Unlock history' : 'Configure and unlock')),
+        state.historyMessage ? h('p', { class: 'feedback error', role: 'alert' }, state.historyMessage) : null));
+  }
+  const actions = ['all', ...state.historyCounts.map((entry) => entry.action)];
   const filters = h('div', { class: 'grid2', style: 'padding:14px 16px 4px' },
     h('label', { class: 'field' }, 'FROM', h('input', {
       type: 'date', value: state.historyFilter.from,
-      onchange: (e: Event) => { state.historyFilter.from = (e.target as HTMLInputElement).value; render(); },
+      onchange: (e: Event) => { state.historyFilter.from = (e.target as HTMLInputElement).value; void refreshGitHistory(); },
     })),
     h('label', { class: 'field' }, 'TO', h('input', {
       type: 'date', value: state.historyFilter.to,
-      onchange: (e: Event) => { state.historyFilter.to = (e.target as HTMLInputElement).value; render(); },
+      onchange: (e: Event) => { state.historyFilter.to = (e.target as HTMLInputElement).value; void refreshGitHistory(); },
     })),
-    selectField('Action', actions, state.historyFilter.action, (v) => { state.historyFilter.action = v; render(); }));
+    selectField('Action', actions, state.historyFilter.action, (v) => { state.historyFilter.action = v; void refreshGitHistory(); }));
   const list = h('div', { class: 'rowlist' });
   const found = filteredHistory();
   if (!found.length) list.appendChild(emptyState('No local revision matches the current text, date, and action filters.'));
   for (const e of found) {
     list.appendChild(rowNode({
-      id: e.id, primary: e.action, snippet: e.detail, meta: relTime(e.at), lead: 'commit',
-      onOpen: () => openDetail(e.action, e.id, `${e.detail}\n\nRecorded ${new Date(e.at).toLocaleString()}\nAction   ${e.action}\nRevision ${e.id}`),
-      actions: [],
+      id: e.commit, primary: e.label ? `${e.action} · ${e.label}` : e.action,
+      snippet: `${e.revisionId}${e.restoredFrom ? ` · restored from ${e.restoredFrom.slice(0, 12)}` : ''}`,
+      meta: relTime(e.recordedAt), lead: 'commit',
+      onOpen: () => openDetail(e.action, e.commit, `Recorded ${new Date(e.recordedAt).toLocaleString()}\nAction   ${e.action}\nCommit   ${e.commit}\nRecord   ${e.revisionId}`),
+      actions: [
+        ['Label revision', 'Add a bounded local label', () => { const value = window.prompt('Revision label'); if (value) void bridge().historyLabel(e.commit, value).then(() => refreshGitHistory()).catch((error) => snack(String(error))); }],
+        ['Restore revision', 'Append the snapshot as a new revision', () => { void bridge().historyRestore(e.commit).then(() => refreshGitHistory()).catch((error) => snack(String(error))); }],
+        ['Diff revision', 'Compare with the previously selected revision', () => { const previous = state.historySelected.at(-1); if (!previous) { state.historySelected = [e.commit]; snack('Selected the first revision. Choose another revision to diff.'); } else void bridge().historyDiff(previous, e.commit).then((changes) => openDetail('Redacted revision diff', e.commit, JSON.stringify(changes, null, 2))).catch((error) => snack(String(error))); }],
+      ],
     }));
   }
   return h('div', { class: 'pane' },
-    h('div', { class: 'pane-head' }, searchLine('history', 'Search history actions and details')),
+    h('div', { class: 'pane-head' }, searchLine('history', 'Search Git-backed revision metadata')),
     filters, list,
-    h('div', { style: 'padding:12px 20px' }, h('p', { style: 'font-size:12.5px;color:var(--md-sys-color-on-surface-variant)' },
-      'This is a bounded local event log. Snapshot, diff, and restore are unavailable until the isolated Git-backed history adapter is implemented and verified.')));
+    h('div', { class: 'dialog-actions history-actions' },
+      h('button', { class: 'btn outlined', onclick: () => void refreshGitHistory() }, 'Refresh'),
+      h('button', { class: 'btn tonal', onclick: () => void bridge().historyExport(historyQuery()).then((result) => snack(result.status === 'saved' ? 'Redacted history export saved.' : 'Export cancelled.')) }, 'Export filtered metadata'),
+      h('button', { class: 'btn text', onclick: () => void bridge().historyPrune(100).then(() => refreshGitHistory()) }, 'Record retention: keep 100'),
+      h('button', { class: 'btn text', onclick: () => void bridge().historyLock().then((access) => { state.historyAccess = { ...access, password: '' }; state.gitHistory = []; render(); }) }, 'Lock history')),
+    h('div', { style: 'padding:12px 20px' }, h('p', { class: state.historyMessage ? 'feedback error' : 'feedback', role: 'status' },
+      state.historyMessage || 'Local Git-backed history is append-only. Browse, date/action filtering, redacted diff, restore-as-new-revision, labels, retention decisions, and redacted export are available. Snapshot contents and credentials are omitted from exports.')));
 }
 
 function settingsPane(): HTMLElement {
@@ -1704,6 +1851,92 @@ function settingsPane(): HTMLElement {
   const match = makeMatcher(sq('settings'));
   const show = (label: string): boolean => match(label);
   const cards = h('div', { class: 'cards' });
+
+  const surface = state.settingsSurface;
+  const school = schoolModeReady();
+  if (show(`Application display name rename reset title about notifications ${surface?.displayName.displayName ?? ''}`)) {
+    const displayInput = h('input', {
+      value: state.settingsDraft.displayName, maxlength: '80', autocomplete: 'off',
+      'aria-label': settingsCopy('Application display name', '應用程式顯示名稱'),
+      oninput: (event: Event) => { state.settingsDraft.displayName = (event.target as HTMLInputElement).value; },
+    });
+    cards.appendChild(card(settingsCopy('Application display name', '應用程式顯示名稱'), '', [
+      h('p', {}, settingsCopy(
+        'Changes the title bar, About heading, and app-authored notifications. Package, data-directory, and update identities stay unchanged.',
+        '會改標題列、關於標題同應用程式通知；套件、資料目錄同更新識別保持不變。')),
+      h('label', { class: 'field' }, settingsCopy('DISPLAY NAME', '顯示名稱'), displayInput),
+      h('div', { class: 'btnrow' },
+        h('button', { class: 'btn filled', onclick: async () => {
+          state.settingsDraft.busy = true; state.settingsDraft.error = ''; render();
+          try { acceptSettingsSurface(await bridge().renameDisplayName(state.settingsDraft.displayName)); snack(settingsCopy('Display name saved.', '顯示名稱已儲存。')); }
+          catch { state.settingsDraft.error = settingsCopy('Enter a valid single-line display name.', '請輸入有效嘅單行顯示名稱。'); }
+          finally { state.settingsDraft.busy = false; render(); }
+        } }, settingsCopy('Save name', '儲存名稱')),
+        h('button', { class: 'btn outlined', onclick: async () => { acceptSettingsSurface(await bridge().resetDisplayName()); render(); } }, settingsCopy('Reset name', '重設名稱'))),
+      state.settingsDraft.error ? h('p', { class: 'feedback bad', role: 'alert' }, state.settingsDraft.error) : null,
+    ], 'wide'));
+  }
+
+  if (surface && !schoolModeRestrictsPersonalization() && show('Show emojis in dialogs and message boxes decorative semantic accessible')) {
+    cards.appendChild(card(settingsCopy('Dialog and message-box emoji', '對話框同訊息框 Emoji'), '', [
+      h('p', {}, settingsCopy(
+        'Optional emoji are separate presentation-only marks. Buttons, field labels, control text, and accessible names never include them.',
+        'Emoji 只係獨立裝飾；按鈕、欄位標籤、控制文字同無障礙名稱永遠唔會包含佢哋。')),
+      switchField(settingsCopy('Show emojis in dialogs and message boxes', '喺對話框同訊息框顯示 Emoji'),
+        surface.dialogEmoji.showEmojisInDialogsAndMessageBoxes,
+        () => { void bridge().setDialogEmojis(!surface.dialogEmoji.showEmojisInDialogsAndMessageBoxes).then((next) => { acceptSettingsSurface(next); render(); }); }),
+    ], 'wide'));
+  }
+
+  if (show(`${school?.state.displayLabel ?? 'School mode'} shared live English credential password rename`)) {
+    const unavailable = !school;
+    const label = school?.state.displayLabel ?? settingsCopy('Shared mode unavailable', '共享模式暫時不可用');
+    const labelInput = h('input', {
+      value: state.settingsDraft.schoolLabel, maxlength: '80', disabled: unavailable,
+      'aria-label': settingsCopy('Shared mode display label', '共享模式顯示名稱'),
+      oninput: (event: Event) => { state.settingsDraft.schoolLabel = (event.target as HTMLInputElement).value; },
+    });
+    const passwordInput = h('input', {
+      type: 'password', value: state.settingsDraft.password, autocomplete: 'new-password', maxlength: '256', disabled: unavailable,
+      'aria-label': settingsCopy('New local unlock password', '新本機解鎖密碼'),
+      oninput: (event: Event) => { state.settingsDraft.password = (event.target as HTMLInputElement).value; },
+    });
+    const confirmInput = h('input', {
+      type: 'password', value: state.settingsDraft.confirmPassword, autocomplete: 'new-password', maxlength: '256', disabled: unavailable,
+      'aria-label': settingsCopy('Confirm local unlock password', '確認本機解鎖密碼'),
+      oninput: (event: Event) => { state.settingsDraft.confirmPassword = (event.target as HTMLInputElement).value; },
+    });
+    cards.appendChild(card(label, '', [
+      h('p', {}, unavailable
+        ? settingsCopy('The shared local record could not be read or watched. Its state is unavailable rather than assumed off.', '共享本機紀錄讀取或監察失敗；依家顯示不可用，唔會當佢係關閉。')
+        : settingsCopy('This is a user-experience lock, not a security boundary. When enabled, the app is English-only and removes Cantonese, bilingual, funny-level, personal-vocabulary, dialog-emoji, and dim-sum surfaces.', '呢個係使用體驗鎖，唔係安全邊界。啟用時只用英文，並移除粵語、雙語、搞笑級別、個人詞彙、對話 Emoji 同點心畫面。')),
+      switchField(label, school?.effective.enabled ?? false, () => {
+        if (!school) return;
+        if (school.effective.enabled) openDialog('school-unlock');
+        else void bridge().setSchoolModeEnabled(true).then((result) => {
+          if (result.ok) void bridge().settingsSurfaceState().then((next) => { acceptSettingsSurface(next); render(); });
+          else { state.settingsDraft.error = settingsCopy('Set a local unlock password before enabling this mode.', '啟用呢個模式之前，請先設定本機解鎖密碼。'); render(); }
+        });
+      }),
+      h('div', { class: 'grid2' },
+        h('label', { class: 'field' }, settingsCopy('MODE NAME', '模式名稱'), labelInput),
+        h('div', { class: 'field' }, h('span', {}, settingsCopy('CREDENTIAL', '憑證')), h('span', { class: 'feedback' }, school?.state.credential.method === 'password' ? settingsCopy('Local password configured', '已設定本機密碼') : settingsCopy('No password configured', '未設定密碼'))),
+        h('label', { class: 'field' }, settingsCopy('NEW PASSWORD', '新密碼'), passwordInput),
+        h('label', { class: 'field' }, settingsCopy('CONFIRM PASSWORD', '確認密碼'), confirmInput)),
+      h('div', { class: 'btnrow' },
+        h('button', { class: 'btn tonal', disabled: unavailable, onclick: async () => { acceptSettingsSurface(await bridge().renameSchoolMode(state.settingsDraft.schoolLabel)); render(); } }, settingsCopy('Save mode name', '儲存模式名稱')),
+        h('button', { class: 'btn filled', disabled: unavailable, onclick: async () => {
+          if (!state.settingsDraft.password || state.settingsDraft.password !== state.settingsDraft.confirmPassword) {
+            state.settingsDraft.error = settingsCopy('Passwords must match.', '兩次密碼必須相同。'); render(); return;
+          }
+          try { acceptSettingsSurface(await bridge().configureSchoolModePassword(state.settingsDraft.password)); state.settingsDraft.password = ''; state.settingsDraft.confirmPassword = ''; state.settingsDraft.error = ''; snack(settingsCopy('Local unlock password saved.', '本機解鎖密碼已儲存。')); }
+          catch { state.settingsDraft.error = settingsCopy('The password could not be stored in the operating-system credential vault.', '密碼未能儲存到作業系統憑證庫。'); }
+          render();
+        } }, settingsCopy('Set password', '設定密碼')),
+        h('button', { class: 'btn outlined', disabled: unavailable || school?.state.credential.method === 'none', onclick: async () => { acceptSettingsSurface(await bridge().resetSchoolModeCredential()); render(); } }, settingsCopy('Reset credential', '重設憑證'))),
+      state.settingsDraft.error ? h('p', { class: 'feedback bad', role: 'alert' }, state.settingsDraft.error) : null,
+    ], 'wide'));
+  }
 
   const lang = h('div', { class: 'grid2' },
     selectField(narratorText('displayLanguage'), ['English', 'Yue', 'Bilingual'], p.language, (v) => { p.language = v as LanguageMode; render(); }),
@@ -1717,13 +1950,13 @@ function settingsPane(): HTMLElement {
     h('p', { class: 'feedback', role: 'status' }, state.narration.screenReaderActive ? narratorText('screenReader')
       : !state.narration.platformSpeechAvailable ? narratorText('unavailable')
         : p.narratorEnabled ? narratorText('active') : narratorText('off')));
-  if (show(`${NARRATOR_COPY.English.section} ${NARRATOR_COPY.Yue.section}`)) cards.appendChild(card(narratorText('section'), '', [lang], 'wide'));
+  if (!schoolModeRestrictsPersonalization() && show(`${NARRATOR_COPY.English.section} ${NARRATOR_COPY.Yue.section}`)) cards.appendChild(card(narratorText('section'), '', [lang], 'wide'));
 
   const vocabulary = state.vocabulary;
   const vocabularyStatus = vocabulary.loading ? vocabularyCopy('loading')
     : vocabulary.status === 'invalid' ? vocabularyCopy('invalid')
       : vocabulary.data.state === 'loaded' ? vocabularyCopy('loaded', vocabulary.data.entryCount) : vocabularyCopy('empty');
-  if (show(`Personal vocabulary ${vocabularyStatus} local JSON replace clear reset privacy`)) {
+  if (!schoolModeRestrictsPersonalization() && show(`Personal vocabulary ${vocabularyStatus} local JSON replace clear reset privacy`)) {
     const vocabularyStatusId = 'personal-vocabulary-status';
     const upload = h('input', {
       type: 'file', accept: 'application/json,.json', 'data-vocabulary-upload': 'true',
@@ -1910,6 +2143,16 @@ function rangeField(label: string, min: number, max: number, step: number, value
     }));
 }
 
+function numberField(label: string, min: number, max: number, value: number, onChange: (v: number) => void): HTMLElement {
+  return h('label', { class: 'field' }, label.toUpperCase(), h('input', {
+    type: 'number', min: String(min), max: String(max), step: '1', value: String(value),
+    oninput: (event: Event) => {
+      const next = Number((event.target as HTMLInputElement).value);
+      if (Number.isInteger(next) && next >= min && next <= max) onChange(next);
+    },
+  }));
+}
+
 function colorField(label: string, value: string, onChange: (v: string) => void): HTMLElement {
   return h('label', { class: 'field' }, label.toUpperCase(),
     h('input', { type: 'color', value, oninput: (e: Event) => onChange((e.target as HTMLInputElement).value) }));
@@ -1952,6 +2195,7 @@ function toggleSelect(id: string): void {
 
 /** One in ten chance, once the selection passes ten rows. Purely for fun. */
 function maybeDimSum(): void {
+  if (schoolModeRestrictsPersonalization()) return;
   if (state.selected.size <= 10) return;
   if (state.dimSumSeen > Date.now() - 60000) return;
   if (Math.random() >= 0.1) return;
@@ -2245,6 +2489,7 @@ function dialogLayer(): HTMLElement {
       case 'saveselection': return saveSelectionDialog();
       case 'dimsum': return dimSumDialog();
       case 'color': return colorDialog();
+      case 'school-unlock': return schoolUnlockDialog();
       default: return h('div');
     }
   })();
@@ -2264,12 +2509,42 @@ function dialogLayer(): HTMLElement {
 
 function dialogShell(eyebrow: string, title: string, kids: Array<Node | null>, actions: Array<Node | null>, wide = false): HTMLElement {
   const titleId = `dialog-title-${String(state.dialog ?? 'surface')}`;
+  const category: DialogEmojiCategory = state.dialog === 'gate' ? 'destructive'
+    : state.dialog === 'lock' || state.dialog === 'auth' || state.dialog === 'school-unlock' ? 'security'
+      : state.dialog === 'notifications' ? 'information'
+        : state.dialog === 'dimsum' ? 'success' : 'information';
+  const decoration = state.settingsSurface?.dialogDecorations[category] ?? null;
   return h('div', { class: `dialog${wide ? ' wide' : ''}`, role: 'dialog', tabindex: '-1', 'aria-modal': 'true', 'aria-labelledby': titleId },
     h('div', { class: 'dialog-head' },
+      decoration ? h('span', { class: 'dialog-emoji-decoration', role: 'presentation', 'aria-hidden': 'true' }, decoration) : null,
       h('div', {}, h('p', { class: 'eyebrow' }, eyebrow), h('h2', { id: titleId }, title)),
       h('button', { class: 'icon-btn', 'aria-label': 'Close dialog', onclick: closeDialog }, icon('close'))),
     ...kids.filter(Boolean) as Node[],
     h('div', { class: 'dialog-actions' }, ...actions.filter(Boolean) as Node[]));
+}
+
+function schoolUnlockDialog(): HTMLElement {
+  const school = schoolModeReady();
+  const label = school?.state.displayLabel ?? 'School mode';
+  const password = h('input', {
+    type: 'password', autocomplete: 'current-password', maxlength: '256',
+    'aria-label': `Password for ${label}`,
+    oninput: (event: Event) => { state.settingsDraft.password = (event.target as HTMLInputElement).value; },
+  });
+  return dialogShell('Local unlock', `Turn off ${label}`, [
+    h('p', {}, 'Enter the local password to restore the stored language, funny-level, personal-vocabulary, dialog-emoji, and dim-sum preferences.'),
+    h('p', {}, 'This is a user-experience lock, not a security boundary. Resetting the credential from the settings surface removes this speed bump.'),
+    h('label', { class: 'field' }, 'PASSWORD', password),
+    state.settingsDraft.error ? h('p', { class: 'feedback bad', role: 'alert' }, state.settingsDraft.error) : null,
+  ], [
+    h('button', { class: 'btn outlined', onclick: closeDialog }, 'Cancel'),
+    h('button', { class: 'btn filled', onclick: async () => {
+      const result = await bridge().setSchoolModeEnabled(false, state.settingsDraft.password);
+      state.settingsDraft.password = '';
+      if (!result.ok) { state.settingsDraft.error = result.code === 'credential-rejected' ? 'The password did not match.' : 'The credential vault is unavailable.'; render(); return; }
+      state.settingsDraft.error = ''; acceptSettingsSurface(await bridge().settingsSurfaceState()); closeDialog(); render();
+    } }, 'Unlock and turn off'),
+  ]);
 }
 
 function dialogSearchLine(placeholder: string, onInput?: () => void): HTMLElement {
@@ -2293,15 +2568,17 @@ function paletteDialog(): HTMLElement {
       .map((n) => ({ label: `Go to ${n.label}`, sub: 'Navigation', icon: n.icon, act: () => { closeDialog(); go(n.id); } })),
     { label: 'Toggle theme', sub: `Currently ${state.prefs.theme}`, icon: 'contrast', act: () => { state.prefs.theme = state.prefs.theme === 'dark' ? 'light' : 'dark'; closeDialog(); } },
     { label: 'Toggle density', sub: `Currently ${state.prefs.density}`, icon: 'density_medium', act: () => { state.prefs.density = state.prefs.density === 'compact' ? 'comfortable' : 'compact'; closeDialog(); } },
-    { label: 'Cycle language mode', sub: `Currently ${state.prefs.language}`, icon: 'translate', act: () => { const o: LanguageMode[] = ['English', 'Yue', 'Bilingual']; state.prefs.language = o[(o.indexOf(state.prefs.language) + 1) % 3]; closeDialog(); } },
+    ...(schoolModeRestrictsPersonalization() ? [] : [{ label: 'Cycle language mode', sub: `Currently ${state.prefs.language}`, icon: 'translate', act: () => { const o: LanguageMode[] = ['English', 'Yue', 'Bilingual']; state.prefs.language = o[(o.indexOf(state.prefs.language) + 1) % 3]; closeDialog(); } }]),
+    { label: 'Manage application display name', sub: state.settingsSurface?.displayName.displayName ?? 'Material System Utility', icon: 'edit', act: () => { closeDialog(); go('settings'); state.searches.settings = { text: 'Application display name', regex: false, flags: 'iu' }; render(); } },
+    { label: schoolModeReady()?.state.displayLabel ?? 'Shared mode status', sub: schoolModeReady() ? (schoolModeEnabled() ? 'Enabled' : 'Disabled') : 'Shared record unavailable', icon: 'security', act: () => { closeDialog(); go('settings'); state.searches.settings = { text: schoolModeReady()?.state.displayLabel ?? 'shared mode', regex: false, flags: 'iu' }; render(); } },
     { label: 'Open the regex builder', sub: 'Search tool', icon: 'data_object', act: () => { state.regexDraft.target = 'main'; openDialog('regex'); } },
     { label: 'Open the tab manager', sub: 'Groups, pins and safe closing', icon: 'tab_group', act: () => openDialog('tabs') },
     { label: 'Edit appearance of the app root', sub: 'Per-element appearance', icon: 'palette', act: () => openAppearance('app-root', 'Application root') },
     { label: 'Open the authenticator', sub: 'Vault-backed local RFC 6238 codes', icon: 'pin', act: () => openDialog('auth') },
-    { label: 'Manage personal vocabulary', sub: 'Local JSON upload, replace, status, and clear controls', icon: 'translate', act: () => {
+    ...(!schoolModeRestrictsPersonalization() ? [{ label: 'Manage personal vocabulary', sub: 'Local JSON upload, replace, status, and clear controls', icon: 'translate', act: () => {
       closeDialog(); go('settings'); state.searches.settings = { text: 'Personal vocabulary', regex: false, flags: 'iu' };
       render(); window.setTimeout(() => document.querySelector<HTMLInputElement>('[data-vocabulary-upload="true"]')?.focus(), 0);
-    } },
+    } }] : []),
     { label: 'Export this view', sub: '17 formats', icon: 'download', act: () => openDialog('export') },
     { label: 'Mark already-installed packages', sub: 'Queries winget', icon: 'fact_check', act: () => { closeDialog(); void loadInstalled(); } },
     { label: 'Apply the Standard tweak preset', sub: 'Balanced defaults for most users', icon: 'verified', act: () => { closeDialog(); go('tweaks'); applyPreset('Standard'); } },
@@ -2576,7 +2853,7 @@ function searchableRows(): Array<[string, string]> {
     case 'install': return visibleApps().map((a) => [a.id, `${a.name} ${a.desc} ${a.winget} ${a.choco} ${a.cat}`]);
     case 'tweaks': return tweakGroups(state.catalog.tweaks).flatMap((g) => g.items.map((i) => [i.id, `${i.name} ${i.desc} ${i.cat} ${i.id}`] as [string, string]));
     case 'config': return tweakGroups(state.catalog.features).flatMap((g) => g.items.map((i) => [i.id, `${i.name} ${i.desc} ${i.cat} ${i.id}`] as [string, string]));
-    case 'history': return filteredHistory().map((e) => [e.id, `${e.action} ${e.detail}`]);
+    case 'history': return filteredHistory().map((e) => [e.commit, `${e.action} ${e.label ?? ''} ${e.revisionId}`]);
     case 'docs': return SHIPPED_DOC_PAGES.map((p) => [p.id, `${p.title} ${p.section} ${p.body}`]);
     default: return [];
   }
@@ -2800,7 +3077,7 @@ const AUTH_COPY = {
 function authText(key: keyof typeof AUTH_COPY.English): string {
   const en = AUTH_COPY.English[key];
   const yue = AUTH_COPY.Yue[key];
-  return state.prefs.language === 'English' ? en : state.prefs.language === 'Yue' ? yue : `${en} · ${yue}`;
+  return effectiveLanguage() === 'English' ? en : effectiveLanguage() === 'Yue' ? yue : `${en} · ${yue}`;
 }
 
 const NARRATOR_COPY = {
@@ -2836,7 +3113,7 @@ function narratorText(key: keyof typeof NARRATOR_COPY.English, values: Record<st
   const fill = (source: string): string => Object.entries(values).reduce((result, [name, value]) => result.replaceAll(`{${name}}`, String(value)), source);
   const en = fill(NARRATOR_COPY.English[key]);
   const yue = fill(NARRATOR_COPY.Yue[key]);
-  return state.prefs.language === 'English' ? en : state.prefs.language === 'Yue' ? yue : `${en} · ${yue}`;
+  return effectiveLanguage() === 'English' ? en : effectiveLanguage() === 'Yue' ? yue : `${en} · ${yue}`;
 }
 
 function authErrorText(error: unknown): string {
@@ -3130,7 +3407,8 @@ function notificationsDialog(): HTMLElement {
     snack(`${msg} · ${targets.length} notification(s).`);
     render();
   };
-  return dialogShell('Reviewable local notices', 'Notification centre', [
+  const displayName = state.settingsSurface?.displayName.displayName ?? 'Material System Utility';
+  return dialogShell(`Reviewable local notices · ${displayName}`, `${displayName} notification centre`, [
     searchLine('notifications', 'Search notifications'),
     h('div', { class: 'bulkbar' },
       h('button', {
@@ -3201,20 +3479,70 @@ function buildExport(format: string): string {
   }
 }
 
+function exportRecords(): Array<Record<string, unknown>> {
+  const selected = allIdsInView().filter((id) => state.selected.has(id));
+  const ids = selected.length ? selected : allIdsInView();
+  if (state.view === 'install') return ids.map((id) => {
+    const item = state.catalog.apps.find((entry) => entry.id === id);
+    return item ? { id: item.id, name: item.name, category: item.cat, description: item.desc, packageId: item.winget, sourceUrl: item.link, openSource: item.foss } : { id };
+  });
+  if (state.view === 'tweaks' || state.view === 'config') {
+    const source = state.view === 'tweaks' ? state.catalog.tweaks : state.catalog.features;
+    return ids.map((id) => { const item = source.find((entry) => entry.id === id); return item ? { id: item.id, name: item.name, category: item.cat, description: item.desc, panel: item.panel ?? '', type: item.type ?? '' } : { id }; });
+  }
+  if (state.view === 'history') return state.gitHistory.map((entry) => ({ ...entry }));
+  if (state.view === 'settings') return [{ theme: state.prefs.theme, density: state.prefs.density, language: state.prefs.language, accent: state.prefs.accent, font: state.prefs.font, scale: state.prefs.scale, weight: state.prefs.weight, radius: state.prefs.radius, reducedMotion: state.prefs.reducedMotion }];
+  return ids.map((id) => ({ id, view: state.view }));
+}
+
+function exportCoreFormat(value: string): string {
+  return ({ md: 'markdown', ts: 'typescript', js: 'javascript', py: 'python', rs: 'rust', proto: 'protobuf', 'schema.json': 'json-schema' } as Record<string, string>)[value] ?? value;
+}
+
 function exportDialog(): HTMLElement {
   const format = state.prefs.exportFormat;
+  const draft = state.exportDraft;
+  const records = exportRecords();
+  const selectedCount = allIdsInView().filter((id) => state.selected.has(id)).length;
+  const scope = selectedCount ? 'selection' : (state.search.text || (state.view === 'history' && (state.historyFilter.action !== 'all' || state.historyFilter.from || state.historyFilter.to))) ? 'filtered-view' : 'all';
+  const preview = `${records.length} structured record(s) · ${scope}\nUTF-8 ${draft.lineEnding.toUpperCase()} · private vocabulary and TOTP/authenticator secrets are always omitted.\n${draft.archive === 'none' ? 'A plain file will be saved.' : `${draft.archive.toUpperCase()} archive · ${draft.level} compression.`}`;
   return dialogShell('Multi-format export', `Export ${VIEW_META[state.view].title}`, [
     h('div', { class: 'grid2' },
       selectField('Format', EXPORT_FORMATS.map(([v]) => v), format, (v) => { state.prefs.exportFormat = v; render(); }),
-      h('label', { class: 'field' }, 'ROWS', h('input', { value: String(allIdsInView().length), readonly: 'readonly' }))),
+      selectField('Line ending', ['lf', 'crlf'], draft.lineEnding, (v) => { draft.lineEnding = v; render(); }),
+      selectField('Archive', ['none', 'zip', '7z'], draft.archive, (v) => { draft.archive = v; render(); }),
+      draft.archive === 'none' ? null : selectField('Compression level', ['store', 'fastest', 'fast', 'normal', 'maximum', 'ultra'], draft.level, (v) => { draft.level = v; render(); })),
+    draft.archive === '7z' ? h('div', { class: 'grid2 archive-options' },
+      selectField('Method', ['LZMA2', 'LZMA', 'PPMd', 'BZip2', 'Deflate'], draft.method, (v) => { draft.method = v; render(); }),
+      numberField('Dictionary MiB', 1, 4_096, draft.dictionary, (v) => { draft.dictionary = v; }),
+      numberField('Word size', 5, 273, draft.word, (v) => { draft.word = v; }),
+      numberField('Solid block MiB', 1, 65_536, draft.solidBlock, (v) => { draft.solidBlock = v; }),
+      numberField('Threads', 1, 128, draft.threads, (v) => { draft.threads = v; }),
+      numberField('Split volume MiB (0 off)', 0, 1_048_576, draft.split, (v) => { draft.split = v; }),
+      switchField('Solid archive', draft.solid, () => { draft.solid = !draft.solid; render(); }),
+      switchField('AES-256 content encryption', draft.encryption, () => { draft.encryption = !draft.encryption; render(); }),
+      draft.encryption ? switchField('Encrypt headers (hide filenames)', draft.encryptHeaders, () => { draft.encryptHeaders = !draft.encryptHeaders; render(); }) : null,
+      draft.encryption ? h('label', { class: 'field' }, 'ARCHIVE PASSWORD', h('input', { type: 'password', value: draft.password, autocomplete: 'new-password', 'aria-describedby': 'archive-password-note', oninput: (event: Event) => { draft.password = (event.target as HTMLInputElement).value; } })) : null,
+    ) : null,
+    draft.archive === '7z' && draft.encryption && !draft.encryptHeaders
+      ? h('div', { class: 'notice warn', role: 'alert' }, icon('warning'), h('span', {}, 'Contents use AES-256, but filenames remain visible because header encryption is off.')) : null,
+    draft.encryption ? h('p', { id: 'archive-password-note', class: 'feedback' }, 'The password is passed directly to the local archive process, never stored, logged, exported, or added to history. Ordinary exports cannot contain secrets; a separate super-confirmed secret-export flow is not provided here.') : null,
     h('div', { style: 'height:12px' }),
-    h('pre', { class: 'block' }, buildExport(format)),
+    h('pre', { class: 'block' }, preview),
+    draft.savedPath ? h('div', { class: 'notice success', role: 'status' }, icon('check_circle'), h('span', {}, `Saved ${draft.savedPath}`)) : null,
   ], [
     h('button', { class: 'btn text', onclick: closeDialog }, 'Cancel'),
-    h('button', { class: 'btn tonal', onclick: () => { void navigator.clipboard?.writeText(buildExport(format)); snack('Export copied to the clipboard.'); } }, 'Copy'),
+    draft.savedPath ? h('button', { class: 'btn tonal', onclick: () => void bridge().openExportInVSCode(draft.savedPath).then((result) => snack(result.ok ? 'Opened the export in Visual Studio Code.' : result.error ?? 'Visual Studio Code is unavailable.')) }, 'Open in VS Code') : null,
     h('button', {
       class: 'btn filled',
-      onclick: () => { void bridge().exportView({ view: state.view, format, body: buildExport(format) }).then((p) => snack(p ? `Written to ${p}` : 'Export cancelled.')); closeDialog(); },
+      disabled: draft.archive === '7z' && draft.encryption && draft.password.length < 8,
+      onclick: () => { void bridge().exportView({
+        view: state.view, format: exportCoreFormat(format), records,
+        scope: { kind: scope, detail: `${scope} from ${VIEW_META[state.view].title}; source ${allIdsInView().length}, exported ${records.length}`, sourceCount: allIdsInView().length, exportedCount: records.length },
+        lineEnding: draft.lineEnding as 'lf' | 'crlf',
+        ...(draft.archive === 'none' ? {} : { archive: { format: draft.archive, compressionLevel: draft.level,
+          ...(draft.archive === '7z' ? { method: draft.method, dictionarySizeMiB: draft.dictionary, wordSize: draft.word, solid: draft.solid, solidBlockSizeMiB: draft.solidBlock, threads: draft.threads, ...(draft.split ? { splitVolumeSizeMiB: draft.split } : {}), encryption: { enabled: draft.encryption, encryptHeaders: draft.encryptHeaders, ...(draft.encryption ? { password: draft.password } : {}) } } : {}) } }),
+      }).then((result) => { draft.password = ''; if (result.status === 'saved' && result.filePath) { draft.savedPath = result.filePath; snack(`Written to ${result.filePath}${result.warnings.length ? ` · ${result.warnings.join(' ')}` : ''}`); render(); } else snack('Export cancelled.'); }).catch((error) => { draft.password = ''; snack(error instanceof Error ? error.message : 'Export failed.'); }); },
     }, 'Save file'),
   ], true);
 }
@@ -3524,7 +3852,8 @@ function gateDialog(): HTMLElement {
 }
 
 function aboutDialog(): HTMLElement {
-  return dialogShell('Pure Electron · TypeScript · Material 3', 'About Material System Utility', [
+  const displayName = state.settingsSurface?.displayName.displayName ?? 'Material System Utility';
+  return dialogShell('Pure Electron · TypeScript · Material 3', `About ${displayName}`, [
     h('p', {}, 'A Material Design 3 desktop interface for the open-source WinUtil catalogue. Package actions use exact WinGet identifiers; higher-risk operations remain unavailable until their verified adapter is installed.'),
     h('div', { class: 'listbox', style: 'margin-top:14px' },
       h('div', { class: 'row' }, h('span', { class: 'primary' }, 'Applications'), h('span', { class: 'snippet' }, `${state.catalog.apps.length} from config/applications.json`)),
@@ -3555,6 +3884,16 @@ function bindShortcuts(): void {
 async function boot(): Promise<void> {
   const saved = await bridge().readPrefs();
   state.prefs = { ...DEFAULT_PREFS, ...saved };
+  try { acceptSettingsSurface(await bridge().settingsSurfaceState()); }
+  catch {
+    state.settingsSurface = {
+      displayName: { schemaVersion: 1, displayName: 'Material System Utility' },
+      dialogEmoji: { schemaVersion: 1, showEmojisInDialogsAndMessageBoxes: true },
+      dialogDecorations: { information: null, success: null, warning: null, error: null, destructive: null, security: null },
+      schoolMode: { status: 'unavailable', code: 'shared-store-unavailable', cause: 'read-failed', eventGeneration: 0, recordGeneration: null },
+    };
+  }
+  bridge().onSettingsSurfaceState((next) => { acceptSettingsSurface(next); render(); });
   bindPlatformNarration();
   try { state.narration = { ...state.narration, ...await bridge().narrationState() }; } catch { state.narration.platformSpeechAvailable = false; }
   await loadPersonalVocabulary();
@@ -3579,6 +3918,8 @@ async function boot(): Promise<void> {
   }
   try { state.update = await bridge().updateStatus(); } catch { /* development/browser preview */ }
   try { state.history = (await bridge().history()).reverse(); } catch { state.history = []; }
+  await refreshHistoryAccess();
+  if (state.historyAccess.unlocked) await refreshGitHistory();
   render();
   narrateFact('startup', NARRATOR_COPY.English.startup, NARRATOR_COPY.Yue.startup);
 }

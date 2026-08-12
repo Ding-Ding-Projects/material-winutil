@@ -30,6 +30,7 @@ interface SnapshotDocument {
     recordedAt: string;
     revisionId: string;
     restoredFrom?: string;
+    label?: string;
   };
   snapshot: JsonValue;
 }
@@ -40,6 +41,7 @@ export interface LocalHistoryEntry {
   recordedAt: string;
   revisionId: string;
   restoredFrom?: string;
+  label?: string;
 }
 
 export interface LocalHistorySearch {
@@ -47,6 +49,8 @@ export interface LocalHistorySearch {
   from?: Date | string;
   to?: Date | string;
   limit?: number;
+  query?: string;
+  regex?: { source: string; flags: string };
 }
 
 export interface LocalHistoryOptions {
@@ -190,6 +194,14 @@ export class LocalHistory {
       if (actions && [...actions].some((action) => !LOCAL_HISTORY_ACTIONS.includes(action))) {
         throw new Error('actions contains an unsupported action');
       }
+      const query = search.query?.trim().toLocaleLowerCase('en-US') ?? '';
+      if (query.length > 1_024) throw new Error('query exceeds 1024 characters');
+      let regex: RegExp | undefined;
+      if (search.regex !== undefined) {
+        if (search.regex.source.length > 512 || /\([^)]*[+*][^)]*\)[+*{]/u.test(search.regex.source)) throw new Error('regex pattern is too large or unsafe');
+        if (!/^(?:[dgimsuvy]{0,8})$/u.test(search.regex.flags) || new Set(search.regex.flags).size !== search.regex.flags.length) throw new Error('regex flags are invalid');
+        regex = new RegExp(search.regex.source, search.regex.flags);
+      }
 
       const commits = (await this.git(['log', '--format=%H', `--max-count=${MAX_HISTORY_RESULTS}`]))
         .split(/\r?\n/).filter(Boolean);
@@ -200,10 +212,44 @@ export class LocalHistory {
         if (actions && !actions.has(document.metadata.action)) continue;
         if (from !== undefined && recordedAt < from) continue;
         if (to !== undefined && recordedAt > to) continue;
-        entries.push({ commit, ...document.metadata });
+        const entry = { commit, ...document.metadata };
+        const searchable = `${entry.action} ${entry.recordedAt} ${entry.revisionId} ${entry.restoredFrom ?? ''} ${entry.label ?? ''}`;
+        if (query && !searchable.toLocaleLowerCase('en-US').includes(query)) continue;
+        if (regex && !regex.test(searchable)) continue;
+        entries.push(entry);
         if (entries.length === limit) break;
       }
       return entries;
+    });
+  }
+
+  async snapshot(revision: string): Promise<JsonValue> {
+    return this.enqueue(async () => {
+      await this.initializeUnlocked();
+      const fullRevision = await this.resolveRevision(revision);
+      return parseSnapshotDocument(await this.git(['show', `${fullRevision}:${SNAPSHOT_FILE}`])).snapshot;
+    });
+  }
+
+  async label(revision: string, label: string): Promise<LocalHistoryEntry> {
+    return this.enqueue(async () => {
+      await this.initializeUnlocked();
+      const fullRevision = await this.resolveRevision(revision);
+      const cleanLabel = label.trim();
+      if (!cleanLabel || cleanLabel.length > 120 || /[\x00-\x1f\x7f]/u.test(cleanLabel)) throw new Error('Label must be a bounded single-line value');
+      const document = parseSnapshotDocument(await this.git(['show', `${fullRevision}:${SNAPSHOT_FILE}`]));
+      return this.commitSnapshot('updated', document.snapshot, undefined, cleanLabel);
+    });
+  }
+
+  async prune(keep: number): Promise<LocalHistoryEntry> {
+    return this.enqueue(async () => {
+      await this.initializeUnlocked();
+      if (!Number.isInteger(keep) || keep < 10 || keep > MAX_HISTORY_RESULTS) throw new Error('keep must be between 10 and 500');
+      const snapshot = await this.hasCommits()
+        ? parseSnapshotDocument(await readFile(path.join(this.repositoryDirectory, SNAPSHOT_FILE), 'utf8')).snapshot
+        : {};
+      return this.commitSnapshot('settings-changed', snapshot, undefined, `Retention: keep ${keep}`);
     });
   }
 
@@ -226,13 +272,14 @@ export class LocalHistory {
     await this.assertNoRemote();
   }
 
-  private async commitSnapshot(action: LocalHistoryAction, snapshot: JsonValue, restoredFrom?: string): Promise<LocalHistoryEntry> {
+  private async commitSnapshot(action: LocalHistoryAction, snapshot: JsonValue, restoredFrom?: string, label?: string): Promise<LocalHistoryEntry> {
     await this.assertNoRemote();
     const metadata: SnapshotDocument['metadata'] = {
       action,
       recordedAt: new Date().toISOString(),
       revisionId: randomUUID(),
       ...(restoredFrom ? { restoredFrom } : {}),
+      ...(label ? { label } : {}),
     };
     const document: SnapshotDocument = { schemaVersion: 1, metadata, snapshot };
     await this.atomicWrite(JSON.stringify(document, null, 2) + '\n');
@@ -242,6 +289,13 @@ export class LocalHistory {
     await this.git(['-c', 'commit.gpgSign=false', '-c', 'core.hooksPath=.disabled-hooks', 'commit', '--quiet', '-m', `Local history: ${action}`]);
     const commit = (await this.git(['rev-parse', 'HEAD'])).trim();
     return { commit, ...metadata };
+  }
+
+  private async resolveRevision(revision: string): Promise<string> {
+    if (!/^[0-9a-f]{7,40}$/i.test(revision)) throw new Error('Revision must be a Git commit identifier');
+    const fullRevision = (await this.git(['rev-parse', '--verify', `${revision}^{commit}`])).trim();
+    if (await this.gitExitCode(['merge-base', '--is-ancestor', fullRevision, 'HEAD']) !== 0) throw new Error('Revision is not part of local history');
+    return fullRevision;
   }
 
   private async atomicWrite(contents: string): Promise<void> {

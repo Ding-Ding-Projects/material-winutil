@@ -29,6 +29,9 @@
     { label: 'Dock tabs on the right', hint: 'Navigation', run: () => setPreference('dock', 'right') },
     { label: 'Open the capability regex builder', hint: 'Search', run: () => { activatePage('capabilities'); toggleBuilder('capability'); } },
     { label: 'Open the settings regex builder', hint: 'Search', run: () => { activatePage('settings'); toggleBuilder('settings'); } }
+    ,{ label: 'Read desktop display-name settings', hint: 'Desktop settings', run: () => { activatePage('settings'); document.getElementById('settings-search').value = 'display name'; filterSettings(); } }
+    ,{ label: 'Read desktop dialog-emoji settings', hint: 'Desktop settings', run: () => { activatePage('settings'); document.getElementById('settings-search').value = 'dialog emoji'; filterSettings(); } }
+    ,{ label: 'Read shared School mode settings', hint: 'Desktop settings', run: () => { activatePage('settings'); document.getElementById('settings-search').value = 'School mode'; filterSettings(); } }
   ];
 
   function loadPreferences() {

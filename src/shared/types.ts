@@ -1,4 +1,10 @@
 import type { PersonalVocabularyErrorCode } from './personal-vocabulary';
+import type { DialogEmojiCategory, DialogEmojiPreferences } from './dialog-emoji';
+import type { DisplayNameState } from './display-name';
+import type { SchoolModeSnapshot, SchoolModeState } from './school-mode';
+import type { ArchiveCompressionLevel, SevenZipMethod } from './archive-export';
+import type { ExportFormat as StructuredExportFormat, ExportLineEnding, ExportManifest, ExportRecord } from './export-formats';
+import type { LocalHistoryAction, LocalHistoryEntry } from '../main/local-history';
 
 /**
  * Shared contracts between the Electron main process, the preload bridge and the renderer.
@@ -146,6 +152,17 @@ export interface NarrationRuntimeState {
   screenReaderActive: boolean;
 }
 
+export interface SettingsSurfaceState {
+  displayName: DisplayNameState;
+  dialogEmoji: DialogEmojiPreferences;
+  dialogDecorations: Readonly<Record<DialogEmojiCategory, string | null>>;
+  schoolMode: SchoolModeSnapshot;
+}
+
+export type SchoolModeChangeResult =
+  | { ok: true; state: SchoolModeState }
+  | { ok: false; code: 'credential-rejected' | 'credential-unavailable'; state: SchoolModeState };
+
 export type NarrationClientResult =
   | { status: 'spoken'; languages: readonly ('English' | 'Yue')[] }
   | { status: 'suppressed'; reason: string }
@@ -153,8 +170,52 @@ export type NarrationClientResult =
   | { status: 'failed'; error: string };
 
 export type ExportFormat =
-  | 'md' | 'txt' | 'json' | 'jsonl' | 'yaml' | 'toml' | 'xml' | 'csv' | 'tsv'
-  | 'html' | 'sql' | 'ts' | 'py' | 'go' | 'rs' | 'proto' | 'schema.json';
+  | 'md' | 'json' | 'jsonl' | 'yaml' | 'toml' | 'xml' | 'csv' | 'tsv'
+  | 'html' | 'sql' | 'ts' | 'js' | 'py' | 'go' | 'rs' | 'proto' | 'schema.json';
+
+export interface StructuredExportRequest {
+  view: string;
+  format: StructuredExportFormat;
+  records: ExportRecord[];
+  scope: { kind: 'all' | 'filtered-view' | 'selection'; detail: string; sourceCount: number; exportedCount: number };
+  lineEnding: ExportLineEnding;
+  archive?: {
+    format: 'zip' | '7z';
+    compressionLevel: ArchiveCompressionLevel;
+    method?: SevenZipMethod;
+    dictionarySizeMiB?: number;
+    wordSize?: number;
+    solid?: boolean;
+    solidBlockSizeMiB?: number;
+    threads?: number;
+    splitVolumeSizeMiB?: number;
+    encryption?: { enabled: boolean; encryptHeaders: boolean; password?: string };
+  };
+}
+
+export interface StructuredExportSaveResult {
+  status: 'saved' | 'cancelled';
+  filePath?: string;
+  manifest?: ExportManifest;
+  warnings: string[];
+  vscode?: { available: boolean; label?: string };
+}
+
+export interface HistoryQuery {
+  query?: string;
+  regex?: { source: string; flags: string };
+  actions?: LocalHistoryAction[];
+  from?: string;
+  to?: string;
+  limit?: number;
+}
+
+export interface HistoryBrowseResult {
+  entries: LocalHistoryEntry[];
+  actionCounts: Array<{ action: LocalHistoryAction; count: number }>;
+}
+
+export interface HistoryAccessState { configured: boolean; unlocked: boolean }
 
 export interface CommandResult {
   ok: boolean;
@@ -237,11 +298,22 @@ export interface Bridge {
   onProgress(cb: (p: { id: string; index: number; total: number; state: string; detail: string }) => void): void;
   /** Retained for typing only — the app never opens a browser. */
   openExternal(url: string): void;
-  exportView(payload: { view: string; format: ExportFormat; body: string }): Promise<string>;
+  exportView(payload: StructuredExportRequest): Promise<StructuredExportSaveResult>;
+  openExportInVSCode(filePath: string): Promise<{ ok: boolean; status: string; error?: string; vscodeDownloadUrl?: string }>;
   readPrefs(): Promise<Partial<Preferences>>;
   writePrefs(prefs: Preferences): Promise<void>;
   history(): Promise<HistoryEntry[]>;
   appendHistory(entry: Omit<HistoryEntry, 'id' | 'at'>): Promise<HistoryEntry>;
+  historyAccess(): Promise<HistoryAccessState>;
+  historyConfigureCredential(password: string): Promise<HistoryAccessState>;
+  historyUnlock(password: string): Promise<HistoryAccessState>;
+  historyLock(): Promise<HistoryAccessState>;
+  historyBrowse(query: HistoryQuery): Promise<HistoryBrowseResult>;
+  historyDiff(left: string, right: string): Promise<Array<{ path: string; kind: string; before?: unknown; after?: unknown }>>;
+  historyRestore(revision: string): Promise<LocalHistoryEntry>;
+  historyLabel(revision: string, label: string): Promise<LocalHistoryEntry>;
+  historyPrune(keep: number): Promise<LocalHistoryEntry>;
+  historyExport(query: HistoryQuery): Promise<StructuredExportSaveResult>;
   updateStatus(): Promise<UpdateStatus>;
   checkForUpdates(): Promise<UpdateStatus>;
   restartToUpdate(): void;
@@ -262,6 +334,15 @@ export interface Bridge {
   onNarrationCancel(cb: (request: NarrationSpeechCancel) => void): void;
   narrationSpeechResult(id: number, ok: boolean, error?: string): void;
   onNarrationState(cb: (state: NarrationRuntimeState) => void): void;
+  settingsSurfaceState(): Promise<SettingsSurfaceState>;
+  renameDisplayName(displayName: string): Promise<SettingsSurfaceState>;
+  resetDisplayName(): Promise<SettingsSurfaceState>;
+  setDialogEmojis(enabled: boolean): Promise<SettingsSurfaceState>;
+  renameSchoolMode(displayLabel: string): Promise<SettingsSurfaceState>;
+  configureSchoolModePassword(password: string): Promise<SettingsSurfaceState>;
+  resetSchoolModeCredential(): Promise<SettingsSurfaceState>;
+  setSchoolModeEnabled(enabled: boolean, password?: string): Promise<SchoolModeChangeResult>;
+  onSettingsSurfaceState(cb: (state: SettingsSurfaceState) => void): void;
 }
 
 declare global {

@@ -1,35 +1,36 @@
-# Local history
+# Local Git-backed history
 
-The current History destination is a bounded local event log, not a Git-backed version-control system.
+The History destination reads an isolated Git repository inside the application-data directory. Each recorded mutation appends a commit with a redacted JSON snapshot; no remote is configured, hooks and signing are disabled, and restores append a new revision instead of rewriting earlier commits.
 
 ## Behavior
 
-Actions recorded by the renderer appear as timestamped entries with an action, detail, and generated identifier. The History destination supports local text search, from/to date inputs, an action filter derived from existing entries, and a detail view.
+The desktop surface provides plain-text or bounded-regex search, typed date-range filters, action filters derived from history, browse details, redacted diffs, restore-as-new-revision, bounded labels, retention-decision revisions, and filtered redacted export. Every dropdown has its own local filter and adjacent anchored regex builder.
 
-The main process stores valid entries as JSON Lines in the application's user-data directory. Reads retain at most the newest 500 valid entries from a bounded two-megabyte tail. When the file grows beyond twice that bound, it is compacted to the retained entries.
+The legacy JSON Lines event log remains only as a compatibility activity feed while existing call sites migrate. It is not presented as the version-history authority. The History destination and its management actions read the isolated Git repository.
 
 ## Configuration
 
-The file location follows Electron's stable application user-data directory. It is not stored inside a user's project and is never pushed automatically. There is currently no retention editor, label editor, snapshot repository, diff engine, restore operation, or history-access credential.
+The repository lives under the stable application-data identity, never in a user project. History search is bounded to 500 results. Labels contain at most 120 single-line characters. Retention decisions accept a bounded keep count and are themselves appended to history.
 
 ## Failure modes
 
-- A missing history file produces an empty list.
-- Malformed or oversized lines are skipped without hiding later valid entries.
-- A failed persistent append is currently caught by the renderer after the in-memory entry has been added. The interface does not yet provide a durable-write failure notification, so the live row must not be treated as proof that the file was updated.
-- There is no restore path; selecting an entry opens its details only.
+- A Git executable or application-data write failure is surfaced without claiming the revision was recorded.
+- A repository with a configured remote is refused.
+- Invalid commit identifiers, commits outside local-history ancestry, unsafe regex patterns, invalid date ranges, or sensitive snapshot fields fail closed.
+- Restore and retention never rewrite append-only history.
 
 ## Security considerations
 
-Input fields are bounded and projected before storage. Files are created with user-only mode where the platform honors it, and compaction uses an atomic temporary-file replacement. The log is not encrypted and must not contain credentials or TOTP secrets. It is an audit aid, not a security boundary.
+Secret material is not stored in Git. Passwords, PINs, TOTP secrets or codes, QR payloads, private vocabulary, access tokens, verifier proofs, and encryption keys are rejected from snapshots. Redacted exports omit snapshot contents and every credential/key category.
+
+History operations cross the same validated, trusted-renderer IPC boundary as other privileged desktop actions. The credential-proof core remains independent so the renderer never receives vault material.
 
 ## Verification
 
-Contract checks exercise bounded input, append serialization, malformed-line tolerance, and projected reads. Git-backed snapshots, diffs, append-only restore commits, encrypted secret history, and password-protected management remain unavailable and unverified.
+`npm run check` exercises isolated-repository creation, restore, search, sensitive-field rejection, redacted history contracts, renderer behavior, and IPC validation.
 
 ## Suggested articles
 
+- [Exports, archives, and editor handoff](exports-and-selection-profiles.md)
 - [Notifications](notifications.md)
-- [Exports and selection profiles](exports-and-selection-profiles.md)
 - [Locks and authenticator boundary](locks-and-authenticator.md)
-

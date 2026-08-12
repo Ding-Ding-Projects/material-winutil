@@ -4,7 +4,7 @@ The desktop application provides a searchable command palette opened with `Ctrl+
 
 ## Behavior
 
-The palette can navigate to the primary destinations, toggle theme and density, cycle language, open the regex builder, open the tab manager, open the application-root appearance editor, open the unavailable authenticator explanation, export the current view, detect installed packages, and apply the Standard tweak preset as a selection.
+The palette can navigate to the primary destinations, toggle theme and density, cycle language, open the regex builder, open the tab manager, open the application-root appearance editor, open the built-in authenticator, export the current view, detect installed packages, and apply the Standard tweak preset as a selection.
 
 Its search is local, keyboard-focusable, and has an adjacent regex-builder route. Empty results produce an explicit no-match state.
 
@@ -16,7 +16,7 @@ The command list is compiled into the renderer. There is no plugin command regis
 
 The palette does not enumerate every setting, offline article, appearance property, menu action, profile, notification, or row. Results are action buttons rather than inline rich setting controls. Selecting a navigation result opens the destination, but there is no general teleport-and-highlight mechanism for an exact nested control.
 
-The unavailable authenticator result opens an honest boundary explanation and does not activate authentication.
+The authenticator result opens the production local authenticator. Lock commands remain separate unavailable actions.
 
 ## Failure modes
 
@@ -38,4 +38,3 @@ Static contracts verify the `Ctrl+Shift+F` handler and principal entries, and sm
 - [Offline documentation browser](offline-documentation.md)
 - [Workspace and search](workspace-and-search.md)
 - [Appearance controls](appearance-controls.md)
-

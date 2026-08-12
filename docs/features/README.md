@@ -9,6 +9,7 @@ This index documents the current Material System Utility baseline. A feature is 
 - [Build and installer](build-and-installer.md) — one-click runnable builds and unsigned Squirrel.Windows installer builds.
 - [Release boundary](release-boundary.md) — the authoritative split between available, catalogue-only, in-development, and unavailable behavior.
 - [Command palette](command-palette.md) — the available fixed command list, local search, shortcut, and current completeness boundary.
+- [Locks and authenticator boundary](locks-and-authenticator.md) — a working local RFC 6238 authenticator; password and OTP locks and support-ticket recovery remain unavailable.
 
 ## Available with bounded limitations
 
@@ -26,10 +27,6 @@ This index documents the current Material System Utility baseline. A feature is 
 
 - [Tweaks and configuration catalogue](tweaks-and-configuration.md) — searchable records and selection presets; execution and undo fail closed.
 - [ISO customization preview](iso-preview.md) — explanatory steps and a local preview log; no image selection, mounting, servicing, or output.
-
-## Unavailable
-
-- [Locks and authenticator boundary](locks-and-authenticator.md) — password and OTP locks, support-ticket recovery, QR pairing, vault storage, and authenticator codes are not installed.
 
 The application also deliberately refuses tweak execution and undo, optional-feature application and undo, Windows Update policy profiles, AppX removal, and ISO servicing. Shared School mode, scheduling, personal-vocabulary loading, production narration, app renaming, complete appearance, complete export and archive handling, external-editor handoff, and Git-backed restore history are not available.
 

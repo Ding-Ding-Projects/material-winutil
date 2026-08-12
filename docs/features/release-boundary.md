@@ -11,6 +11,7 @@ This article is the truth table for the current Material System Utility baseline
 - Sequential package progress and real result output.
 - Plain-text and regex search surfaces currently wired by the desktop shell.
 - Basic tabs, groups, pinning, safe close previews, and a persisted appearance subset.
+- A local RFC 6238 authenticator with generated or URI-imported registration, QR pairing, Windows Credential Manager storage, current and next codes, and redacted local Git history.
 - One-click runnable builds and unsigned Squirrel.Windows installer builds.
 
 ## Catalogue-only or read-only
@@ -36,7 +37,7 @@ release immutable and do not authenticate a software publisher.
 - Optional-feature application and undo.
 - AppX removal and update-policy profiles.
 - ISO mounting, servicing, and output creation.
-- Password or OTP locks, support-ticket recovery, and a built-in authenticator.
+- Password or OTP locks and support-ticket recovery.
 - Shared School mode, app renaming, personal-vocabulary upload, and scheduled/external settings.
 - Production TTS narration.
 - Complete per-element appearance editing and color-space translation.

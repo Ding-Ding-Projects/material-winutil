@@ -9,7 +9,7 @@
     { "id": "updates-idle", "file": "app-updates-idle-dark-en-1440x940.png", "view": "updates", "theme": "dark", "language": "English" },
     { "id": "iso-readonly", "file": "app-win11-creator-readonly-dark-en-1440x940.png", "view": "iso", "theme": "dark", "language": "English" },
     { "id": "history-empty", "file": "app-history-empty-dark-en-1440x940.png", "view": "history", "theme": "dark", "language": "English", "prepare": "state.history=[]" },
-    { "id": "docs-bundle-19-index", "file": "app-docs-bundle-19-index-dark-en-1440x940.png", "view": "docs", "theme": "dark", "language": "English" },
+    { "id": "docs-bundle-21-index", "file": "app-docs-bundle-21-index-dark-en-1440x940.png", "view": "docs", "theme": "dark", "language": "English" },
     { "id": "docs-bundle-article-release-boundary", "file": "app-docs-bundle-article-release-boundary-dark-en-1440x940.png", "view": "docs", "theme": "dark", "language": "English", "prepare": "openOfflineArticle('docs/features/release-boundary.md')" },
     { "id": "settings-dark", "file": "app-settings-dark-comfortable-en-1440x940.png", "view": "settings", "theme": "dark", "language": "English" },
     { "id": "dim-sum-startup-card", "file": "app-dim-sum-startup-card-dark-en-1440x940.png", "view": "install", "theme": "dark", "language": "English", "prepare": "state.dimSumStartup={descriptor:{autoDismissMs:6500,motion:'standard',dish:{names:{English:'Classic Har Gow',Yue:'蝦餃'}},copy:{title:'A dim sum moment',message:'A small dish for the start of your day.'},image:{alt:'Photo of Classic Har Gow · 蝦餃'}},imageDataUrl:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='};render()" },

@@ -42,5 +42,7 @@ This roadmap separates shipped behavior from future work. Dates are intentionall
 - [ ] Finish the changelog viewer and command-palette coverage inventory.
 - [x] Finish the offline in-app documentation browser.
 - [x] Ship the non-blocking public-catalog dim-sum startup surprise with cache integrity checks and protected-startup suppression.
+- [ ] Wire the validated local app-logo core into settings, the command palette, persistence, and packaged rendering without changing installed identity.
+- [ ] Build bundled offline conversion adapters and their accessible picker/queue surface; keep every unavailable catalog entry disabled until package proof exists.
 
 Items remain unchecked until their actual runtime behavior, documentation, tests, artifacts, and release evidence exist.

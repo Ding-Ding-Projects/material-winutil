@@ -84,6 +84,6 @@ test('production IPC, preload, and renderer preserve the bounded settings surfac
   assert.doesNotMatch(preload, /node:fs|readCredential|writeCredential|deleteCredential/u);
   assert.match(renderer, /dialog-emoji-decoration[^\n]*role: 'presentation'[^\n]*'aria-hidden': 'true'/u);
   assert.match(renderer, /function schoolModeRestrictsPersonalization/u);
-  assert.match(renderer, /if \(schoolModeRestrictsPersonalization\(\)\) return;/u);
+  assert.match(renderer, /state\.dimSumStartup \|\| schoolModeRestrictsPersonalization\(\)/u);
   assert.match(renderer, /About \$\{displayName\}/u);
 });

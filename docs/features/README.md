@@ -13,6 +13,11 @@ This index documents the current Material System Utility baseline. A feature is 
 - [Offline documentation browser](offline-documentation.md) — every feature article bundled at build time, verified by manifest and SHA-256, safely rendered from an AST, internally linked, and independently searchable by title and body.
 - [Dim sum startup surprise](dim-sum-boundary.md) — a non-blocking once-per-launch public-catalog photo card with protected-state suppression and bounded application-data caching.
 
+## Core-only foundations awaiting user-interface wiring
+
+- [App-logo customization core](app-logo-customization.md) — bounded local PNG validation, preset/transform/output/persistence primitives; settings and packaged rendering are still pending.
+- [Local file-converter core](file-converter.md) — a truthful unbundled adapter catalog and persistent paged queue; no conversion adapter or user-facing picker is enabled yet.
+
 ## Available with bounded limitations
 
 - [Application updates](application-updates.md) — installed Squirrel event wiring and visible controls; the complete installed replacement and rollback cycle is not yet proven.

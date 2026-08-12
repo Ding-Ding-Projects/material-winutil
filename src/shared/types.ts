@@ -207,6 +207,7 @@ export interface Bridge {
   onUpdateStatus(cb: (status: UpdateStatus) => void): void;
   authenticatorBegin(request: AuthenticatorBeginRequest): Promise<AuthenticatorRegistration>;
   authenticatorConfirm(registrationId: string, code: string): Promise<AuthenticatorEntry>;
+  authenticatorCancel(registrationId: string): Promise<boolean>;
   authenticatorList(): Promise<AuthenticatorEntry[]>;
   authenticatorCodes(id: string): Promise<AuthenticatorCodes>;
   authenticatorRemove(id: string): Promise<boolean>;

@@ -441,6 +441,10 @@ ipcMain.handle('authenticator:confirm', async (event, registrationId: string, co
   requireTrustedSender(event);
   return authenticator().confirm(registrationId, code);
 });
+ipcMain.handle('authenticator:cancel', async (event, registrationId: string): Promise<boolean> => {
+  requireTrustedSender(event);
+  return authenticator().cancel(registrationId);
+});
 ipcMain.handle('authenticator:list', async (event): Promise<AuthenticatorEntry[]> => {
   requireTrustedSender(event);
   return authenticator().list();

@@ -23,6 +23,8 @@ interface PendingRegistration {
   entry: AuthenticatorEntry;
   secret: Buffer;
   imported: boolean;
+  failedAttempts: number;
+  nextAttemptAt: number;
   timer: NodeJS.Timeout;
 }
 
@@ -46,6 +48,7 @@ export interface AuthenticatorServiceOptions {
 const METADATA_FILE = 'authenticator-metadata.json';
 const MAX_ENTRIES = 256;
 const MAX_PENDING = 16;
+const MAX_CONFIRM_ATTEMPTS = 5;
 const PENDING_LIFETIME_MS = 5 * 60 * 1000;
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ALGORITHMS = new Set<TotpAlgorithm>(['SHA1', 'SHA256', 'SHA512']);
@@ -103,6 +106,21 @@ function vaultTarget(id: string): string {
   return `totp-${id}`;
 }
 
+function requireExactKeys(value: object, expected: readonly string[]): void {
+  const actual = Object.keys(value).sort().join(',');
+  if (actual !== [...expected].sort().join(',')) throw new Error('Authenticator registration request has unexpected fields.');
+}
+
+function validPngDataUrl(value: string): boolean {
+  if (!value.startsWith('data:image/png;base64,') || value.length > 256_000) return false;
+  try {
+    const bytes = Buffer.from(value.slice('data:image/png;base64,'.length), 'base64');
+    return bytes.length >= 24 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  } catch {
+    return false;
+  }
+}
+
 function redactedSnapshot(entries: readonly AuthenticatorEntry[], changedId: string): JsonValue {
   return {
     schemaVersion: 1,
@@ -126,6 +144,7 @@ export class AuthenticatorService {
   private readonly dependencies: AuthenticatorDependencies;
   private readonly pendingLifetimeMs: number;
   private readonly pending = new Map<string, PendingRegistration>();
+  private readonly cancelRequested = new Set<string>();
   private operation: Promise<unknown> = Promise.resolve();
 
   constructor(options: AuthenticatorServiceOptions) {
@@ -165,6 +184,7 @@ export class AuthenticatorService {
 
       if (!request || typeof request !== 'object') throw new Error('Authenticator registration request is invalid.');
       if (request.mode === 'import') {
+        requireExactKeys(request, ['mode', 'uri']);
         if (typeof request.uri !== 'string' || request.uri.length > 4096) throw new Error('The otpauth URI is invalid.');
         try {
           const parsed = parseTotpUri(request.uri);
@@ -174,12 +194,14 @@ export class AuthenticatorService {
           algorithm = parsed.algorithm;
           digits = parsed.digits;
           period = parsed.period;
-          secret = Buffer.from(parsed.secret);
+          try { secret = Buffer.from(parsed.secret); } finally { parsed.secret.fill(0); }
           imported = true;
         } catch {
           throw new Error('The otpauth URI is invalid.');
         }
       } else if (request.mode === 'generate') {
+        const optionalKeys = ['algorithm', 'digits', 'issuer', 'label', 'period'].filter((key) => Object.hasOwn(request, key));
+        requireExactKeys(request, ['mode', 'account', ...optionalKeys]);
         account = boundedText(request.account, 'account', 128)!;
         issuer = boundedText(request.issuer, 'issuer', 128, true);
         label = boundedText(request.label ?? (issuer ? `${issuer}:${account}` : account), 'label', 256)!;
@@ -207,7 +229,7 @@ export class AuthenticatorService {
         secret.fill(0);
         throw new Error('The authenticator QR code could not be rendered locally.');
       }
-      if (!qrDataUrl.startsWith('data:image/png;base64,') || qrDataUrl.length > 256_000) {
+      if (!validPngDataUrl(qrDataUrl)) {
         secret.fill(0);
         throw new Error('The authenticator QR code renderer returned invalid output.');
       }
@@ -220,7 +242,7 @@ export class AuthenticatorService {
         }
       }, this.pendingLifetimeMs);
       timer.unref();
-      this.pending.set(registrationId, { entry, secret, imported, expiresAt, timer });
+      this.pending.set(registrationId, { entry, secret, imported, expiresAt, failedAttempts: 0, nextAttemptAt: 0, timer });
       return { registrationId, entry, manualSecret, uri, qrDataUrl, imported, expiresAt: new Date(expiresAt).toISOString() };
     });
   }
@@ -233,11 +255,23 @@ export class AuthenticatorService {
       }
       const pending = this.pending.get(registrationId);
       if (!pending) throw new Error('Authenticator registration expired or was not found.');
+      const now = this.dependencies.now();
+      if (now < pending.nextAttemptAt) throw new Error('Wait briefly before trying another confirmation code.');
       const matched = verifyTotp(code, pending.secret, {
-        timestampMs: this.dependencies.now(), algorithm: pending.entry.algorithm,
+        timestampMs: now, algorithm: pending.entry.algorithm,
         digits: pending.entry.digits, period: pending.entry.period, window: 1,
       });
-      if (matched === null) throw new Error('The confirmation code did not match.');
+      if (matched === null) {
+        pending.failedAttempts += 1;
+        if (pending.failedAttempts >= MAX_CONFIRM_ATTEMPTS) {
+          clearTimeout(pending.timer);
+          pending.secret.fill(0);
+          this.pending.delete(registrationId);
+          throw new Error('Too many confirmation attempts; start registration again.');
+        }
+        pending.nextAttemptAt = now + Math.min(5_000, pending.failedAttempts * 1_000);
+        throw new Error('The confirmation code did not match.');
+      }
       clearTimeout(pending.timer);
       this.pending.delete(registrationId);
 
@@ -246,23 +280,54 @@ export class AuthenticatorService {
       const target = vaultTarget(pending.entry.id);
       let vaultWritten = false;
       try {
+        const refuseCancelled = (): void => {
+          if (this.cancelRequested.has(registrationId)) throw new Error('Authenticator registration was cancelled.');
+        };
+        refuseCancelled();
         document = await this.readMetadata();
+        refuseCancelled();
         if (document.entries.length >= MAX_ENTRIES) throw new Error('The authenticator entry limit has been reached.');
         if (document.entries.some((entry) => entry.id === pending.entry.id)) throw new Error('Authenticator metadata contains a duplicate entry.');
         next = [...document.entries, pending.entry];
         await this.dependencies.writeCredential(target, pending.entry.id, pending.secret);
         vaultWritten = true;
+        refuseCancelled();
         await this.writeMetadata(next);
+        refuseCancelled();
         await this.dependencies.recordHistory(pending.imported ? 'imported' : 'created', redactedSnapshot(next, pending.entry.id));
+        refuseCancelled();
       } catch (error) {
-        if (vaultWritten) await this.dependencies.deleteCredential(target, pending.entry.id).catch(() => false);
-        if (document && next) await this.writeMetadata(document.entries).catch(() => undefined);
+        const rollbackFailures: string[] = [];
+        if (vaultWritten) {
+          try { if (!await this.dependencies.deleteCredential(target, pending.entry.id)) rollbackFailures.push('credential'); }
+          catch { rollbackFailures.push('credential'); }
+        }
+        if (document && next) {
+          try { await this.writeMetadata(document.entries); }
+          catch { rollbackFailures.push('metadata'); }
+        }
         if (error instanceof Error && (error.message.includes('entry limit') || error.message.includes('duplicate entry'))) throw error;
+        if (rollbackFailures.length) throw new Error(`The authenticator entry could not be saved or rolled back automatically (${rollbackFailures.join(' and ')} recovery failed).`);
         throw new Error('The authenticator entry could not be saved safely.');
       } finally {
+        this.cancelRequested.delete(registrationId);
         pending.secret.fill(0);
       }
       return pending.entry;
+    });
+  }
+
+  async cancel(registrationId: string): Promise<boolean> {
+    if (typeof registrationId !== 'string' || !ID_PATTERN.test(registrationId)) throw new Error('Authenticator registration identifier is invalid.');
+    this.cancelRequested.add(registrationId);
+    return this.enqueue(async () => {
+      const pending = this.pending.get(registrationId);
+      if (!pending) { this.cancelRequested.delete(registrationId); return false; }
+      clearTimeout(pending.timer);
+      pending.secret.fill(0);
+      this.pending.delete(registrationId);
+      this.cancelRequested.delete(registrationId);
+      return true;
     });
   }
 
@@ -312,8 +377,14 @@ export class AuthenticatorService {
         await this.dependencies.recordHistory('deleted', redactedSnapshot(next, id));
         return true;
       } catch {
-        if (deleted) await this.dependencies.writeCredential(target, id, secret).catch(() => undefined);
-        await this.writeMetadata(document.entries).catch(() => undefined);
+        const rollbackFailures: string[] = [];
+        if (deleted) {
+          try { await this.dependencies.writeCredential(target, id, secret); }
+          catch { rollbackFailures.push('credential'); }
+        }
+        try { await this.writeMetadata(document.entries); }
+        catch { rollbackFailures.push('metadata'); }
+        if (rollbackFailures.length) throw new Error(`The authenticator entry could not be removed or rolled back automatically (${rollbackFailures.join(' and ')} recovery failed).`);
         throw new Error('The authenticator entry could not be removed safely.');
       } finally {
         secret.fill(0);

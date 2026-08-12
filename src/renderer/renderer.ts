@@ -23,6 +23,10 @@ interface WorkspaceTab { id: string; view: ViewId; pinned: boolean; group: strin
 interface HistoryEntry { id: string; action: string; detail: string; at: string; }
 interface NotificationEntry { id: string; title: string; detail: string; icon: string; read: boolean; }
 interface UpdateStatus { state: 'disabled' | 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'up-to-date' | 'error'; currentVersion: string; updateVersion: string; message: string; releaseUrl: string; }
+type TotpAlgorithm = 'SHA1' | 'SHA256' | 'SHA512';
+interface AuthenticatorEntry { id: string; label: string; account: string; issuer?: string; algorithm: TotpAlgorithm; digits: number; period: number; createdAt: string; }
+interface AuthenticatorRegistration { registrationId: string; entry: AuthenticatorEntry; manualSecret: string; uri: string; qrDataUrl: string; imported: boolean; expiresAt: string; }
+interface AuthenticatorCodes { id: string; current: string; next: string; secondsRemaining: number; period: number; digits: number; }
 interface Prefs {
   theme: ThemeMode; density: Density; language: LanguageMode;
   narrator: 'English' | 'Yue' | 'Both'; narratorEnabled: boolean;
@@ -48,6 +52,12 @@ interface Bridge {
   checkForUpdates(): Promise<UpdateStatus>;
   restartToUpdate(): void;
   onUpdateStatus(cb: (status: UpdateStatus) => void): void;
+  authenticatorBegin(request: { mode: 'generate'; account: string; issuer?: string; label?: string; algorithm?: TotpAlgorithm; digits?: number; period?: number } | { mode: 'import'; uri: string }): Promise<AuthenticatorRegistration>;
+  authenticatorConfirm(registrationId: string, code: string): Promise<AuthenticatorEntry>;
+  authenticatorCancel(registrationId: string): Promise<boolean>;
+  authenticatorList(): Promise<AuthenticatorEntry[]>;
+  authenticatorCodes(id: string): Promise<AuthenticatorCodes>;
+  authenticatorRemove(id: string): Promise<boolean>;
 }
 
 /* ------------------------------------------------------------- constants -- */
@@ -476,6 +486,13 @@ const state = {
   historyFilter: { from: '', to: '', action: 'all' },
   notifications: [] as NotificationEntry[],
   update: { state: 'idle', currentVersion: '0.1.0', updateVersion: '', message: 'Automatic update checks are enabled.', releaseUrl: '' } as UpdateStatus,
+  auth: {
+    phase: 'list' as 'list' | 'generate' | 'import' | 'confirm', loading: false, error: '', status: '',
+    entries: [] as AuthenticatorEntry[], selectedId: '', codes: null as AuthenticatorCodes | null,
+    registration: null as AuthenticatorRegistration | null, revealSecret: false,
+    fixtureMode: false,
+    draft: { issuer: 'Material System Utility', account: '', label: '', algorithm: 'SHA1' as TotpAlgorithm, digits: 6, period: 30, uri: '', code: '' },
+  },
   snack: '',
   isoLog: '[00:00:00] Waiting for an ISO. Select an official Microsoft image to begin.',
 };
@@ -483,6 +500,11 @@ const state = {
 const WORKSPACE_STORAGE_KEY = 'material-system-utility.workspace.v1';
 const VALID_VIEWS = new Set<ViewId>(['install', 'tweaks', 'config', 'updates', 'iso', 'history', 'docs', 'settings']);
 let workspaceReady = false;
+let authenticatorRefreshTimer = 0;
+let authenticatorRefreshBusy = false;
+let authenticatorExpiryTimer = 0;
+let authenticatorOperationGeneration = 0;
+let dialogReturnFocus: HTMLElement | null = null;
 
 interface StoredWorkspace {
   schemaVersion: 1;
@@ -719,6 +741,12 @@ function bridge(): Bridge {
     checkForUpdates: async () => ({ ...state.update, state: 'disabled', message: 'Update checks run only in an installed build.' }),
     restartToUpdate: () => undefined,
     onUpdateStatus: () => undefined,
+    authenticatorBegin: async () => { throw new Error('Authenticator registration is available only in the installed application.'); },
+    authenticatorConfirm: async () => { throw new Error('Authenticator confirmation is available only in the installed application.'); },
+    authenticatorCancel: async () => false,
+    authenticatorList: async () => [],
+    authenticatorCodes: async () => { throw new Error('Authenticator codes are available only in the installed application.'); },
+    authenticatorRemove: async () => false,
   };
   w.winutil = fake;
   return fake;
@@ -1556,22 +1584,23 @@ const emptyState = (msg: string): HTMLElement => h('div', { class: 'empty' }, ic
  *  own anchored regex builder — no menu is exempt for being short. */
 function selectField(label: string, options: string[], value: string, onChange: (v: string) => void): HTMLElement {
   const key = `select:${label}`;
-  return h('div', { class: 'field' }, label.toUpperCase(),
-    h('button', {
-      class: 'select-button',
+  const button = h('button', {
+      class: 'select-button', 'aria-label': `${label}: ${value}`, 'aria-haspopup': 'listbox', 'aria-expanded': 'false',
       onclick: (e: MouseEvent) => {
         e.stopPropagation();
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        openMenu(rect.left, rect.bottom + 4, key, options, (v) => { onChange(v); }, Math.max(rect.width, 240), value);
+        button.setAttribute('aria-expanded', 'true');
+        openMenu(rect.left, rect.bottom + 4, key, options, (v) => { onChange(v); }, Math.max(rect.width, 240), value, () => button.setAttribute('aria-expanded', 'false'));
       },
-    }, h('span', {}, value), icon('arrow_drop_down')));
+    }, h('span', {}, value), icon('arrow_drop_down'));
+  return h('div', { class: 'field' }, label.toUpperCase(), button);
 }
 
-function openMenu(x: number, y: number, key: string, options: string[], pick: (v: string) => void, width = 260, selected = ''): void {
+function openMenu(x: number, y: number, key: string, options: string[], pick: (v: string) => void, width = 260, selected = '', onClose?: () => void): void {
   document.querySelector('.menu')?.remove();
   const s = sq(key);
   const menu = h('div', { class: 'menu', style: `left:${Math.min(x, window.innerWidth - width - 12)}px;top:${Math.min(y, window.innerHeight - 320)}px;min-width:${width}px` });
-  const close = (): void => { menu.remove(); document.removeEventListener('click', close); };
+  const close = (): void => { menu.remove(); document.removeEventListener('click', close); onClose?.(); };
   const paint = (): void => {
     const match = makeMatcher(s);
     const listWrap = menu.querySelector('.menu-list');
@@ -1900,14 +1929,25 @@ function previewTabClose(inverse: boolean): void {
 /* --------------------------------------------------------------- dialogs -- */
 
 function openDialog(id: DialogId, arg = ''): void {
+  dialogReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   state.dialog = id;
   state.dialogArg = arg;
   state.dialogSearch.text = '';
   render();
-  window.setTimeout(() => $<HTMLInputElement>('.dialog input')?.focus(), 20);
+  if (id === 'auth') void loadAuthenticatorEntries();
+  window.setTimeout(() => {
+    const firstInput = $<HTMLInputElement>('.dialog input');
+    const dialog = $<HTMLElement>('.dialog');
+    (firstInput ?? dialog)?.focus();
+  }, 20);
 }
 
-const closeDialog = (): void => { state.dialog = null; render(); };
+const closeDialog = (): void => {
+  if (state.dialog === 'auth') { stopAuthenticatorRefresh(); invalidateAuthenticatorRegistration(); }
+  state.dialog = null;
+  render();
+  window.setTimeout(() => dialogReturnFocus?.focus(), 0);
+};
 
 function openAppearance(id: string, label: string): void {
   state.appearanceTarget = { id, label };
@@ -1943,14 +1983,26 @@ function dialogLayer(): HTMLElement {
       default: return h('div');
     }
   })();
-  return h('div', { class: 'scrim', onclick: (e: MouseEvent) => { if (e.target === e.currentTarget) closeDialog(); } }, body);
+  return h('div', {
+    class: 'scrim',
+    onclick: (e: MouseEvent) => { if (e.target === e.currentTarget) closeDialog(); },
+    onkeydown: (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      const focusable = [...body.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])')];
+      if (!focusable.length) return;
+      const first = focusable[0]; const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    },
+  }, body);
 }
 
 function dialogShell(eyebrow: string, title: string, kids: Array<Node | null>, actions: Array<Node | null>, wide = false): HTMLElement {
-  return h('div', { class: `dialog${wide ? ' wide' : ''}` },
+  const titleId = `dialog-title-${String(state.dialog ?? 'surface')}`;
+  return h('div', { class: `dialog${wide ? ' wide' : ''}`, role: 'dialog', tabindex: '-1', 'aria-modal': 'true', 'aria-labelledby': titleId },
     h('div', { class: 'dialog-head' },
-      h('div', {}, h('p', { class: 'eyebrow' }, eyebrow), h('h2', {}, title)),
-      h('button', { class: 'icon-btn', onclick: closeDialog }, icon('close'))),
+      h('div', {}, h('p', { class: 'eyebrow' }, eyebrow), h('h2', { id: titleId }, title)),
+      h('button', { class: 'icon-btn', 'aria-label': 'Close dialog', onclick: closeDialog }, icon('close'))),
     ...kids.filter(Boolean) as Node[],
     h('div', { class: 'dialog-actions' }, ...actions.filter(Boolean) as Node[]));
 }
@@ -1980,7 +2032,7 @@ function paletteDialog(): HTMLElement {
     { label: 'Open the regex builder', sub: 'Search tool', icon: 'data_object', act: () => { state.regexDraft.target = 'main'; openDialog('regex'); } },
     { label: 'Open the tab manager', sub: 'Groups, pins and safe closing', icon: 'tab_group', act: () => openDialog('tabs') },
     { label: 'Edit appearance of the app root', sub: 'Per-element appearance', icon: 'palette', act: () => openAppearance('app-root', 'Application root') },
-    { label: 'Open the authenticator', sub: 'Unavailable until the vault-backed RFC 6238 implementation is installed', icon: 'pin', act: () => openDialog('auth') },
+    { label: 'Open the authenticator', sub: 'Vault-backed local RFC 6238 codes', icon: 'pin', act: () => openDialog('auth') },
     { label: 'Export this view', sub: '17 formats', icon: 'download', act: () => openDialog('export') },
     { label: 'Mark already-installed packages', sub: 'Queries winget', icon: 'fact_check', act: () => { closeDialog(); void loadInstalled(); } },
     { label: 'Apply the Standard tweak preset', sub: 'Balanced defaults for most users', icon: 'verified', act: () => { closeDialog(); go('tweaks'); applyPreset('Standard'); } },
@@ -2425,10 +2477,338 @@ function openLockWizard(id: string, label: string, mode: 'set' | 'unlock' = 'set
   openDialog('lock');
 }
 
+const AUTH_COPY = {
+  English: {
+    eyebrow: 'Local RFC 6238 codes', title: 'Authenticator', search: 'Search issuer, account, or label',
+    empty: 'No authenticator entries yet. Generate a local secret or import an otpauth URI to begin.',
+    generate: 'Generate registration', import: 'Import otpauth URI', refresh: 'Refresh codes', close: 'Close',
+    loading: 'Loading authenticator entries…', current: 'Current code', next: 'Next code', seconds: 'seconds remaining',
+    copy: 'Copy', remove: 'Remove entry', reveal: 'Reveal manual secret', hide: 'Hide manual secret',
+    registration: 'Pair this registration', confirm: 'Confirm pairing', back: 'Back to entries',
+    localGenerate: 'The secret and QR are created locally. Nothing is sent to a server.',
+    localImport: 'The URI is parsed locally. Its parameters are preserved and it is never logged.',
+    issuer: 'Issuer', account: 'Account', displayLabel: 'Display label', algorithm: 'Algorithm', digits: 'Digits', period: 'Period (seconds)', uri: 'otpauth URI',
+    working: 'Working…', preparing: 'Preparing the registration locally…', prepared: 'Registration prepared. Confirm one current code before it is saved.',
+    accountRequired: 'Enter the account name before generating a registration.', uriRequired: 'Enter a valid otpauth://totp/ URI.',
+    pairHint: 'Scan the QR with another authenticator, or explicitly reveal and copy the manual base32 secret. Confirm one current code before this entry becomes active.',
+    noIssuer: 'No issuer', manualSecret: 'manual secret', pairedCode: 'Current code from the paired authenticator',
+    expires: 'Registration expires', expiryNote: 'The secret disappears after successful confirmation.', expired: 'Registration expired. Start again to create a fresh QR and secret.',
+    cancelRegistration: 'Cancel registration', checking: 'Checking…', invalidCode: 'Enter the 6–8 digit code shown by the paired authenticator.',
+    localVault: 'Codes are generated locally from secrets stored in the operating-system credential vault. Ordinary exports omit every secret.',
+    entriesLoaded: 'authenticator entries loaded', noMatch: 'No authenticator entry matches this search.', entries: 'Authenticator entries', codesFor: 'Codes for',
+    loadingCode: 'Loading code…', unavailableCode: 'Code unavailable', afterPeriod: 'After this period', waitingCode: 'Waiting for current code',
+    copiedManual: 'Manual secret copied for this one-time registration.', copiedCurrent: 'Current code copied.', copiedNext: 'Next code copied.', clipboardRefused: 'Clipboard access was refused.',
+    paired: 'is paired. The one-time secret is no longer displayed.', removed: 'Removed', removeFailed: 'The authenticator entry was not removed.', operationFailed: 'Authenticator operation failed',
+    invalidMatch: 'The confirmation code did not match.', waitRetry: 'Wait briefly before trying another confirmation code.', tooManyAttempts: 'Too many confirmation attempts; start registration again.', vaultUnavailable: 'The operating-system credential vault is unavailable.',
+  },
+  Yue: {
+    eyebrow: '本機 RFC 6238 驗證碼', title: '驗證器', search: '搜尋發行者、帳戶或者標籤',
+    empty: '未有驗證器項目。可以喺本機產生密鑰，或者匯入 otpauth URI。',
+    generate: '產生配對資料', import: '匯入 otpauth URI', refresh: '重新整理驗證碼', close: '關閉',
+    loading: '載入緊驗證器項目…', current: '目前驗證碼', next: '下一個驗證碼', seconds: '秒後更新',
+    copy: '複製', remove: '移除項目', reveal: '顯示手動密鑰', hide: '收起手動密鑰',
+    registration: '配對呢個項目', confirm: '確認配對', back: '返去項目列表',
+    localGenerate: '密鑰同 QR 只會喺本機產生，唔會傳去伺服器。',
+    localImport: 'URI 只會喺本機解析；所有參數都會保留，亦唔會寫入記錄。',
+    issuer: '發行者', account: '帳戶', displayLabel: '顯示標籤', algorithm: '演算法', digits: '位數', period: '週期（秒）', uri: 'otpauth URI',
+    working: '處理緊…', preparing: '喺本機準備緊配對資料…', prepared: '配對資料準備好；儲存之前請輸入一個目前驗證碼確認。',
+    accountRequired: '產生配對資料之前，請先輸入帳戶名稱。', uriRequired: '請輸入有效嘅 otpauth://totp/ URI。',
+    pairHint: '請用另一個驗證器掃描 QR，或者明確顯示並複製手動 Base32 密鑰。項目啟用之前，要輸入一個目前驗證碼確認。',
+    noIssuer: '冇發行者', manualSecret: '手動密鑰', pairedCode: '已配對驗證器顯示嘅目前驗證碼',
+    expires: '配對資料到期時間', expiryNote: '成功確認之後，密鑰就唔會再顯示。', expired: '配對資料已到期。請重新開始，建立新 QR 同密鑰。',
+    cancelRegistration: '取消配對', checking: '核對緊…', invalidCode: '請輸入已配對驗證器顯示嘅 6 至 8 位數驗證碼。',
+    localVault: '驗證碼由作業系統認證資料庫內嘅密鑰喺本機產生。一般匯出會略過所有密鑰。',
+    entriesLoaded: '個驗證器項目已載入', noMatch: '冇驗證器項目符合呢個搜尋。', entries: '驗證器項目', codesFor: '驗證碼：',
+    loadingCode: '載入緊驗證碼…', unavailableCode: '驗證碼暫時不可用', afterPeriod: '呢個週期之後', waitingCode: '等緊目前驗證碼',
+    copiedManual: '今次配對用嘅手動密鑰已複製。', copiedCurrent: '目前驗證碼已複製。', copiedNext: '下一個驗證碼已複製。', clipboardRefused: '剪貼簿存取被拒絕。',
+    paired: '已配對；一次性密鑰唔會再顯示。', removed: '已移除', removeFailed: '驗證器項目未能移除。', operationFailed: '驗證器操作失敗',
+    invalidMatch: '確認驗證碼唔吻合。', waitRetry: '請等一陣先再試另一個確認驗證碼。', tooManyAttempts: '確認次數太多；請重新開始配對。', vaultUnavailable: '作業系統認證資料庫暫時不可用。',
+  },
+} as const;
+
+function authText(key: keyof typeof AUTH_COPY.English): string {
+  const en = AUTH_COPY.English[key];
+  const yue = AUTH_COPY.Yue[key];
+  return state.prefs.language === 'English' ? en : state.prefs.language === 'Yue' ? yue : `${en} · ${yue}`;
+}
+
+function authErrorText(error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error);
+  if (/did not match/i.test(detail)) return authText('invalidMatch');
+  if (/wait briefly/i.test(detail)) return authText('waitRetry');
+  if (/too many confirmation/i.test(detail)) return authText('tooManyAttempts');
+  if (/credential.*unavailable|credential vault/i.test(detail)) return authText('vaultUnavailable');
+  if (/expired|not found/i.test(detail)) return authText('expired');
+  return state.prefs.language === 'English' ? `${authText('operationFailed')}: ${detail}` : authText('operationFailed');
+}
+
+function stopAuthenticatorRefresh(): void {
+  if (authenticatorRefreshTimer) window.clearTimeout(authenticatorRefreshTimer);
+  authenticatorRefreshTimer = 0;
+  authenticatorRefreshBusy = false;
+}
+
+function stopAuthenticatorExpiry(): void {
+  if (authenticatorExpiryTimer) window.clearTimeout(authenticatorExpiryTimer);
+  authenticatorExpiryTimer = 0;
+}
+
+function renderAuthenticatorFocus(selector = '.dialog input, .dialog button'): void {
+  render();
+  window.setTimeout(() => document.querySelector<HTMLElement>(selector)?.focus(), 0);
+}
+
+function purgePendingAuthenticatorRegistration(): void {
+  state.auth.registration = null; state.auth.revealSecret = false; state.auth.phase = 'list';
+  state.auth.draft.uri = ''; state.auth.draft.code = '';
+}
+
+function invalidateAuthenticatorRegistration(): void {
+  authenticatorOperationGeneration += 1;
+  stopAuthenticatorExpiry();
+  const registrationId = state.auth.registration?.registrationId;
+  state.auth.loading = false;
+  purgePendingAuthenticatorRegistration();
+  if (registrationId) void bridge().authenticatorCancel(registrationId).catch(() => undefined);
+}
+
+function scheduleAuthenticatorExpiry(registration: AuthenticatorRegistration, generation: number): void {
+  stopAuthenticatorExpiry();
+  const remaining = Math.max(0, Date.parse(registration.expiresAt) - Date.now());
+  authenticatorExpiryTimer = window.setTimeout(() => {
+    if (generation !== authenticatorOperationGeneration || state.auth.registration?.registrationId !== registration.registrationId) return;
+    invalidateAuthenticatorRegistration();
+    state.auth.error = authText('expired');
+    state.auth.status = authText('expired');
+    if (state.dialog === 'auth') renderAuthenticatorFocus('[data-search="auth-entries"] input, .auth-create-actions button');
+  }, remaining);
+}
+
+function scheduleAuthenticatorRefresh(delay = 1000): void {
+  stopAuthenticatorRefresh();
+  if (state.dialog !== 'auth' || !state.auth.selectedId) return;
+  authenticatorRefreshTimer = window.setTimeout(() => void refreshAuthenticatorCodes(), delay);
+}
+
+function updateAuthenticatorCodeDom(): void {
+  const codes = state.auth.codes;
+  const grouped = (value: string): string => value.replace(/(\d{3,4})(?=\d)/g, '$1 ');
+  const current = document.querySelector<HTMLElement>('[data-auth-code="current"]');
+  const next = document.querySelector<HTMLElement>('[data-auth-code="next"]');
+  const countdown = document.querySelector<HTMLElement>('[data-auth-countdown]');
+  if (current) current.textContent = codes ? grouped(codes.current) : '—';
+  if (next) next.textContent = codes ? grouped(codes.next) : '—';
+  if (countdown) countdown.textContent = codes ? `${codes.secondsRemaining} ${authText('seconds')}` : 'Code unavailable';
+  document.querySelectorAll<HTMLButtonElement>('[data-auth-copy]').forEach((button) => { button.disabled = !codes; });
+}
+
+function updateAuthenticatorFeedbackDom(): void {
+  const feedback = document.querySelector<HTMLElement>('[data-auth-feedback]');
+  if (!feedback) return;
+  feedback.textContent = state.auth.error;
+  feedback.hidden = !state.auth.error;
+}
+
+async function loadAuthenticatorEntries(): Promise<void> {
+  if (state.auth.loading) return;
+  state.auth.loading = true; state.auth.error = ''; state.auth.status = authText('loading'); render();
+  try {
+    const entries = await bridge().authenticatorList();
+    if (state.auth.fixtureMode) return;
+    state.auth.entries = entries;
+    if (state.auth.selectedId && !state.auth.entries.some((entry) => entry.id === state.auth.selectedId)) {
+      state.auth.selectedId = ''; state.auth.codes = null;
+    }
+    state.auth.status = `${state.auth.entries.length} ${authText('entriesLoaded')}.`;
+  } catch (error) {
+    state.auth.error = authErrorText(error);
+  } finally {
+    state.auth.loading = false; renderAuthenticatorFocus('[data-search="auth-entries"] input, .auth-create-actions button');
+  }
+  if (state.auth.selectedId) void refreshAuthenticatorCodes();
+}
+
+async function refreshAuthenticatorCodes(): Promise<void> {
+  if (authenticatorRefreshBusy || state.dialog !== 'auth' || !state.auth.selectedId) return;
+  const requestedId = state.auth.selectedId;
+  authenticatorRefreshBusy = true;
+  try {
+    const codes = await bridge().authenticatorCodes(requestedId);
+    if (state.auth.fixtureMode || state.auth.selectedId !== requestedId) return;
+    state.auth.codes = codes;
+    state.auth.error = '';
+  } catch (error) {
+    state.auth.codes = null;
+    state.auth.error = authErrorText(error);
+  } finally {
+    authenticatorRefreshBusy = false;
+    if (state.dialog === 'auth' && state.auth.phase === 'list') {
+      updateAuthenticatorCodeDom();
+      updateAuthenticatorFeedbackDom();
+    }
+    scheduleAuthenticatorRefresh();
+  }
+}
+
+function resetAuthenticatorRegistration(): void {
+  invalidateAuthenticatorRegistration(); state.auth.error = '';
+  renderAuthenticatorFocus('[data-search="auth-entries"] input, .auth-create-actions button');
+}
+
+async function beginAuthenticatorRegistration(mode: 'generate' | 'import'): Promise<void> {
+  if (state.auth.loading) return;
+  const d = state.auth.draft;
+  if (mode === 'generate' && !d.account.trim()) { state.auth.error = authText('accountRequired'); render(); return; }
+  if (mode === 'import' && !d.uri.trim().toLowerCase().startsWith('otpauth://totp/')) { state.auth.error = authText('uriRequired'); render(); return; }
+  const generation = ++authenticatorOperationGeneration;
+  state.auth.loading = true; state.auth.error = ''; state.auth.status = authText('preparing'); render();
+  try {
+    const registration = await bridge().authenticatorBegin(mode === 'generate'
+      ? { mode, account: d.account.trim(), issuer: d.issuer.trim() || undefined, label: d.label.trim() || undefined, algorithm: d.algorithm, digits: d.digits, period: d.period }
+      : { mode, uri: d.uri.trim() });
+    if (generation !== authenticatorOperationGeneration || state.dialog !== 'auth') {
+      void bridge().authenticatorCancel(registration.registrationId).catch(() => undefined);
+      return;
+    }
+    state.auth.registration = registration;
+    scheduleAuthenticatorExpiry(registration, generation);
+    d.uri = '';
+    state.auth.phase = 'confirm'; state.auth.revealSecret = false;
+    state.auth.status = authText('prepared');
+  } catch (error) {
+    if (generation === authenticatorOperationGeneration) state.auth.error = authErrorText(error);
+  } finally {
+    if (generation === authenticatorOperationGeneration) {
+      state.auth.loading = false;
+      if (state.dialog === 'auth') renderAuthenticatorFocus(state.auth.phase === 'confirm' ? '#auth-confirm-code' : '#auth-account, .dialog textarea');
+    }
+  }
+}
+
+async function confirmAuthenticatorRegistration(): Promise<void> {
+  const registration = state.auth.registration;
+  const code = state.auth.draft.code.replace(/[\s-]/g, '');
+  if (!registration || Date.now() >= Date.parse(registration.expiresAt)) { invalidateAuthenticatorRegistration(); state.auth.error = authText('expired'); render(); return; }
+  if (!/^\d{6,8}$/u.test(code)) { state.auth.error = authText('invalidCode'); render(); return; }
+  const generation = authenticatorOperationGeneration;
+  state.auth.loading = true; state.auth.error = ''; render();
+  try {
+    const entry = await bridge().authenticatorConfirm(registration.registrationId, code);
+    if (generation !== authenticatorOperationGeneration || state.dialog !== 'auth') return;
+    state.auth.entries = [...state.auth.entries.filter((candidate) => candidate.id !== entry.id), entry];
+    state.auth.selectedId = entry.id; state.auth.registration = null; state.auth.revealSecret = false;
+    stopAuthenticatorExpiry();
+    state.auth.draft.code = ''; state.auth.draft.uri = ''; state.auth.phase = 'list'; state.auth.status = `“${entry.label}” ${authText('paired')}`;
+    await refreshAuthenticatorCodes();
+  } catch (error) {
+    if (generation === authenticatorOperationGeneration) state.auth.error = authErrorText(error);
+  } finally {
+    if (generation === authenticatorOperationGeneration) {
+      state.auth.loading = false;
+      if (state.dialog === 'auth') renderAuthenticatorFocus(state.auth.phase === 'list' ? '.auth-entry.selected, [data-search="auth-entries"] input' : '#auth-confirm-code');
+    }
+  }
+}
+
+function copyAuthenticatorValue(value: string, message: string): void {
+  void navigator.clipboard?.writeText(value).then(() => snack(message)).catch(() => { state.auth.error = authText('clipboardRefused'); render(); });
+}
+
+function removeAuthenticatorEntry(entry: AuthenticatorEntry): void {
+  gate(`Remove authenticator entry “${entry.label}”`, undefined, undefined, () => {
+    void (async () => {
+      try {
+        const removed = await bridge().authenticatorRemove(entry.id);
+        if (!removed) throw new Error(authText('removeFailed'));
+        state.auth.entries = state.auth.entries.filter((candidate) => candidate.id !== entry.id);
+        if (state.auth.selectedId === entry.id) { state.auth.selectedId = ''; state.auth.codes = null; stopAuthenticatorRefresh(); }
+        state.auth.status = `${authText('removed')} “${entry.label}”.`; openDialog('auth');
+      } catch (error) { state.auth.error = authErrorText(error); openDialog('auth'); }
+    })();
+  });
+}
+
 function authDialog(): HTMLElement {
-  return dialogShell('Not installed in this build', 'Authenticator', [
-    emptyState('The authenticator is unavailable until a standards-compliant QR encoder, RFC 6238 implementation, and operating-system vault adapter have passed local verification.'),
-  ], [h('button', { class: 'btn filled', onclick: closeDialog }, 'Close')]);
+  const a = state.auth;
+  if (a.phase === 'generate' || a.phase === 'import') {
+    const generate = a.phase === 'generate';
+    return dialogShell(authText('eyebrow'), generate ? authText('generate') : authText('import'), [
+      h('p', { class: 'auth-hint' }, authText(generate ? 'localGenerate' : 'localImport')),
+      generate ? h('div', { class: 'grid2 auth-form' },
+        h('label', { class: 'field' }, authText('issuer').toUpperCase(), h('input', { id: 'auth-issuer', value: a.draft.issuer, maxlength: '128', oninput: (e: Event) => { a.draft.issuer = (e.target as HTMLInputElement).value; } })),
+        h('label', { class: 'field' }, authText('account').toUpperCase(), h('input', { id: 'auth-account', value: a.draft.account, maxlength: '256', required: 'true', autocomplete: 'off', oninput: (e: Event) => { a.draft.account = (e.target as HTMLInputElement).value; } })),
+        h('label', { class: 'field' }, authText('displayLabel').toUpperCase(), h('input', { id: 'auth-label', value: a.draft.label, maxlength: '256', oninput: (e: Event) => { a.draft.label = (e.target as HTMLInputElement).value; } })),
+        selectField(authText('algorithm'), ['SHA1', 'SHA256', 'SHA512'], a.draft.algorithm, (value) => { a.draft.algorithm = value as TotpAlgorithm; }),
+        selectField(authText('digits'), ['6', '7', '8'], String(a.draft.digits), (value) => { a.draft.digits = Number(value); }),
+        h('label', { class: 'field' }, authText('period').toUpperCase(), h('input', { type: 'number', min: '5', max: '300', value: String(a.draft.period), oninput: (e: Event) => { a.draft.period = Number((e.target as HTMLInputElement).value); } })))
+        : h('label', { class: 'field' }, authText('uri').toUpperCase(), h('textarea', { class: 'mono', rows: '5', maxlength: '4096', value: a.draft.uri, autocomplete: 'off', spellcheck: 'false', oninput: (e: Event) => { a.draft.uri = (e.target as HTMLTextAreaElement).value; } }, a.draft.uri)),
+      a.error ? h('div', { class: 'feedback bad', role: 'alert' }, a.error) : null,
+    ], [
+      h('button', { class: 'btn text', onclick: resetAuthenticatorRegistration }, authText('back')),
+      h('button', { class: 'btn filled', disabled: a.loading, onclick: () => void beginAuthenticatorRegistration(a.phase as 'generate' | 'import') }, a.loading ? authText('working') : authText('registration')),
+    ], true);
+  }
+
+  if (a.phase === 'confirm' && a.registration) {
+    const registration = a.registration;
+    const grouped = registration.manualSecret.replace(/(.{4})/g, '$1 ').trim();
+    return dialogShell(authText('eyebrow'), authText('registration'), [
+      h('p', { class: 'auth-hint' }, authText('pairHint')),
+      h('div', { class: 'auth-registration' },
+        h('img', { class: 'auth-qr', src: registration.qrDataUrl, alt: `QR code for ${registration.entry.label}, account ${registration.entry.account}` }),
+        h('div', { class: 'auth-registration-details' },
+          h('h3', {}, registration.entry.label),
+          h('p', {}, `${registration.entry.issuer || authText('noIssuer')} · ${registration.entry.account}`),
+          h('dl', { class: 'auth-params' },
+            h('div', {}, h('dt', {}, authText('algorithm')), h('dd', {}, registration.entry.algorithm)),
+            h('div', {}, h('dt', {}, authText('digits')), h('dd', {}, String(registration.entry.digits))),
+            h('div', {}, h('dt', {}, authText('period')), h('dd', {}, `${registration.entry.period} ${authText('seconds')}`))),
+          h('button', { class: 'btn outlined', 'data-auth-reveal': 'true', 'aria-expanded': a.revealSecret ? 'true' : 'false', onclick: () => { a.revealSecret = !a.revealSecret; renderAuthenticatorFocus('[data-auth-reveal]'); } }, a.revealSecret ? authText('hide') : authText('reveal')),
+          a.revealSecret ? h('div', { class: 'auth-secret' },
+            h('code', {}, grouped),
+            h('button', { class: 'btn tonal', onclick: () => copyAuthenticatorValue(registration.manualSecret, authText('copiedManual')) }, `${authText('copy')} ${authText('manualSecret')}`)) : null)),
+      h('label', { class: 'field auth-confirm' }, authText('pairedCode').toUpperCase(), h('input', {
+        id: 'auth-confirm-code', inputmode: 'numeric', pattern: '[0-9]*', maxlength: '9', autocomplete: 'one-time-code', value: a.draft.code,
+        oninput: (e: Event) => { a.draft.code = (e.target as HTMLInputElement).value; },
+      })),
+      a.error ? h('div', { class: 'feedback bad', role: 'alert' }, a.error) : null,
+      h('p', { class: 'auth-expiry' }, `${authText('expires')} ${new Date(registration.expiresAt).toLocaleTimeString()}. ${authText('expiryNote')}`),
+    ], [
+      h('button', { class: 'btn text', onclick: resetAuthenticatorRegistration }, authText('cancelRegistration')),
+      h('button', { class: 'btn filled', disabled: a.loading, onclick: () => void confirmAuthenticatorRegistration() }, a.loading ? authText('checking') : authText('confirm')),
+    ], true);
+  }
+
+  const match = makeMatcher(sq('auth-entries'));
+  const entries = a.entries.filter((entry) => match(`${entry.label} ${entry.account} ${entry.issuer ?? ''}`));
+  const selected = a.entries.find((entry) => entry.id === a.selectedId);
+  const code = (value: string): string => value.replace(/(\d{3,4})(?=\d)/g, '$1 ');
+  return dialogShell(authText('eyebrow'), authText('title'), [
+    h('p', { class: 'auth-hint' }, authText('localVault')),
+    h('div', { class: 'btnrow auth-create-actions' },
+      h('button', { class: 'btn filled', onclick: () => { a.phase = 'generate'; a.error = ''; renderAuthenticatorFocus('#auth-issuer'); } }, icon('add'), authText('generate')),
+      h('button', { class: 'btn outlined', onclick: () => { a.phase = 'import'; a.error = ''; renderAuthenticatorFocus('.dialog textarea'); } }, icon('download'), authText('import'))),
+    searchLine('auth-entries', authText('search')),
+    a.loading ? h('div', { class: 'auth-state', role: 'status' }, authText('loading')) : null,
+    h('div', { class: 'feedback bad', role: 'alert', 'data-auth-feedback': 'true', hidden: !a.error }, a.error),
+    !a.loading && !entries.length ? h('div', { class: 'auth-state' }, emptyState(sq('auth-entries').text ? authText('noMatch') : authText('empty'))) : null,
+    entries.length ? h('div', { class: 'listbox auth-entry-list', 'aria-label': authText('entries') }, ...entries.map((entry) =>
+      h('button', {
+        class: `auth-entry${entry.id === a.selectedId ? ' selected' : ''}`, 'aria-pressed': entry.id === a.selectedId ? 'true' : 'false',
+        onclick: () => { a.selectedId = entry.id; a.codes = null; renderAuthenticatorFocus('.auth-entry.selected'); void refreshAuthenticatorCodes(); },
+      }, h('span', { class: 'lead' }, icon('pin')), h('span', { class: 'auth-entry-text' }, h('b', {}, entry.label), h('small', {}, `${entry.issuer || authText('noIssuer')} · ${entry.account}`)), h('span', { class: 'auth-entry-meta' }, `${entry.algorithm} · ${entry.digits}/${entry.period}`)))) : null,
+    selected ? h('section', { class: 'auth-codes', 'aria-label': `${authText('codesFor')} ${selected.label}` },
+      h('div', { class: 'auth-code-card current' }, h('span', {}, authText('current')), h('strong', { 'data-auth-code': 'current' }, a.codes ? code(a.codes.current) : '—'),
+        h('small', { 'data-auth-countdown': 'true' }, a.codes ? `${a.codes.secondsRemaining} ${authText('seconds')}` : authText('loadingCode')),
+        h('button', { class: 'btn tonal', 'data-auth-copy': 'current', disabled: !a.codes, onclick: () => a.codes && copyAuthenticatorValue(a.codes.current, authText('copiedCurrent')) }, `${authText('copy')} ${authText('current')}`)),
+      h('div', { class: 'auth-code-card' }, h('span', {}, authText('next')), h('strong', { 'data-auth-code': 'next' }, a.codes ? code(a.codes.next) : '—'),
+        h('small', {}, a.codes ? `${authText('afterPeriod')} · ${a.codes.period} ${authText('seconds')}` : authText('waitingCode')),
+        h('button', { class: 'btn outlined', 'data-auth-copy': 'next', disabled: !a.codes, onclick: () => a.codes && copyAuthenticatorValue(a.codes.next, authText('copiedNext')) }, `${authText('copy')} ${authText('next')}`)),
+      h('div', { class: 'auth-entry-actions' },
+        h('button', { class: 'btn text', onclick: () => void refreshAuthenticatorCodes() }, icon('refresh'), authText('refresh')),
+        h('button', { class: 'btn danger', onclick: () => removeAuthenticatorEntry(selected) }, icon('delete'), authText('remove')))) : null,
+    a.status ? h('p', { class: 'auth-status', role: 'status', 'aria-live': 'polite' }, a.status) : null,
+  ], [h('button', { class: 'btn filled', onclick: closeDialog }, authText('close'))], true);
 }
 
 function notificationsDialog(): HTMLElement {

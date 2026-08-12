@@ -360,8 +360,9 @@ input[type="color"] { height: 44px; padding: 3px; }
 
 /* -------------------------------------------------------------- dialogs -- */
 .scrim { position: fixed; inset: 0; background: var(--md-sys-color-scrim); display: grid; place-items: start center;
-  padding: 60px 20px 40px; z-index: 60; backdrop-filter: blur(2px); }
-.dialog { width: 100%; max-width: 640px; max-height: 82vh; overflow: auto;
+  padding: clamp(8px, 6vh, 60px) 20px clamp(8px, 4vh, 40px); overflow: auto;
+  z-index: 60; backdrop-filter: blur(2px); }
+.dialog { width: 100%; max-width: 640px; max-height: calc(100dvh - clamp(16px, 10vh, 100px)); overflow: auto;
   background-color: var(--md-sys-color-surface-container-high); opacity: 1; isolation: isolate;
   border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--shape-xl); padding: 24px;
   box-shadow: 0 10px 28px 8px rgba(0,0,0,.30), 0 2px 8px rgba(0,0,0,.34);
@@ -480,6 +481,54 @@ input[type="range"].gradient::-webkit-slider-thumb { -webkit-appearance: none; a
   background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container);
 }
 
+/* Authenticator: secrets are revealed only inside the bounded registration card. */
+.auth-hint, .auth-status, .auth-expiry { margin: 0 0 14px; color: var(--md-sys-color-on-surface-variant); line-height: 1.55; }
+.auth-status { padding: 10px 12px; border-radius: 12px; background: var(--md-sys-color-surface-container-lowest); }
+.auth-create-actions { margin-bottom: 14px; }
+.auth-state { min-height: 96px; display: grid; place-items: center; margin-bottom: 14px; }
+.auth-entry-list { margin-bottom: 14px; }
+.auth-entry { min-height: 56px; width: 100%; padding: 8px 12px; display: grid;
+  grid-template-columns: 28px minmax(0,1fr) auto; align-items: center; gap: 10px; text-align: left;
+  border-bottom: 1px solid var(--md-sys-color-outline-variant); color: var(--md-sys-color-on-surface); }
+.auth-entry:last-child { border-bottom: 0; }
+.auth-entry:hover { background: var(--md-state-hover); }
+.auth-entry.selected { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.auth-entry-text { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.auth-entry-text b, .auth-entry-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.auth-entry-text small, .auth-entry-meta { color: var(--md-sys-color-on-surface-variant); }
+.auth-entry.selected .auth-entry-text small, .auth-entry.selected .auth-entry-meta { color: inherit; }
+.auth-entry-meta { font-family: "Roboto Mono", monospace; font-size: 11px; }
+.auth-registration { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0,1fr); gap: 20px;
+  padding: 18px; margin-bottom: 14px; border-radius: var(--shape-l); background: var(--md-sys-color-surface-container-lowest); }
+.auth-qr { display: block; width: 100%; max-width: 240px; aspect-ratio: 1; object-fit: contain; background: #fff;
+  border: 12px solid #fff; border-radius: 12px; justify-self: center; }
+.auth-registration-details { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; min-width: 0; }
+.auth-registration-details h3, .auth-registration-details p { margin: 0; overflow-wrap: anywhere; }
+.auth-params { width: 100%; margin: 0; display: grid; gap: 6px; }
+.auth-params div { display: flex; justify-content: space-between; gap: 12px; }
+.auth-params dt { color: var(--md-sys-color-on-surface-variant); }
+.auth-params dd { margin: 0; font-family: "Roboto Mono", monospace; }
+.auth-secret { width: 100%; display: flex; flex-direction: column; gap: 8px; padding: 12px;
+  border-radius: 12px; background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
+.auth-secret code { font-family: "Roboto Mono", monospace; font-size: 15px; line-height: 1.6; overflow-wrap: anywhere; user-select: all; }
+.auth-confirm { max-width: 360px; }
+.auth-codes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+.auth-code-card { padding: 16px; border-radius: var(--shape-l); background: var(--md-sys-color-surface-container-lowest);
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; }
+.auth-code-card.current { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.auth-code-card strong { font-family: "Roboto Mono", monospace; font-size: clamp(24px, 5vw, 40px); letter-spacing: .08em;
+  line-height: 1.15; overflow-wrap: anywhere; user-select: all; }
+.auth-code-card small { min-height: 1.4em; color: inherit; }
+.auth-entry-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+
+@media (max-width: 600px) {
+  .auth-registration, .auth-codes { grid-template-columns: minmax(0,1fr); }
+  .auth-qr { max-width: 210px; }
+  .auth-entry { grid-template-columns: 28px minmax(0,1fr); }
+  .auth-entry-meta { grid-column: 2; }
+  .auth-code-card strong { font-size: clamp(22px, 9vw, 34px); }
+}
+
 .snack { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 95;
   display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-radius: 14px;
   background: var(--md-sys-color-surface-container-highest); box-shadow: var(--md-elevation-3);
@@ -572,7 +621,8 @@ input[type="range"].gradient::-webkit-slider-thumb { -webkit-appearance: none; a
   .btn { max-width: 100%; white-space: normal; text-align: center; justify-content: center; }
   .tabrow { max-width: 100%; overflow-x: auto; }
   .menu { min-width: 0; width: min(320px, calc(100vw - 16px)); max-width: calc(100vw - 16px); }
-  .dialog { width: calc(100vw - 16px); max-width: calc(100vw - 16px); padding: 18px; }
+  .scrim { padding: 8px; }
+  .dialog { width: calc(100vw - 16px); max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); padding: 18px; }
   .menu button, .menu-search, .chip, .seg, .step { min-height: 44px; }
 }
 

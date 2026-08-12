@@ -26,6 +26,7 @@ const bridge: Bridge = {
   onUpdateStatus: (cb) => { ipcRenderer.on('update:status', (_e, status) => cb(status)); },
   authenticatorBegin: (request) => ipcRenderer.invoke('authenticator:begin', request),
   authenticatorConfirm: (registrationId, code) => ipcRenderer.invoke('authenticator:confirm', registrationId, code),
+  authenticatorCancel: (registrationId) => ipcRenderer.invoke('authenticator:cancel', registrationId),
   authenticatorList: () => ipcRenderer.invoke('authenticator:list'),
   authenticatorCodes: (id) => ipcRenderer.invoke('authenticator:codes', id),
   authenticatorRemove: (id) => ipcRenderer.invoke('authenticator:remove', id),

@@ -30,6 +30,8 @@ Failure is fail-closed: invalid inventories, unofficial sources, incomplete pagi
 
 ![The real v0.1.10501 packaged local Ollama manager in a controlled missing-service state, with bilingual recovery copy and no fabricated models](../screenshots/smoke/app/app-ollama-status-missing-bilingual-1440x940.png)
 
+![The real v0.1.10701 packaged local Ollama manager showing controlled RAM, disk, advisory GPU, and unknown accelerator evidence](../screenshots/smoke/app/app-ollama-hardware-evidence-dark-en-1440x940.png)
+
 ## Suggested articles
 
 - [Workspace and search](workspace-and-search.md)

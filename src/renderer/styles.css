@@ -201,7 +201,9 @@ code, pre, kbd, .mono { font-family: ui-monospace, Consolas, monospace; }
   background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
 .wtab .pin { font-size: 13px; color: var(--md-sys-color-primary); }
 
-.content.tab-dock-left, .content.tab-dock-right { grid-template-columns: minmax(180px, 238px) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+.content.tab-dock-left, .content.tab-dock-right { grid-template-rows: auto minmax(0, 1fr); }
+.content.tab-dock-left { grid-template-columns: minmax(180px, 238px) minmax(0, 1fr); }
+.content.tab-dock-right { grid-template-columns: minmax(0, 1fr) minmax(180px, 238px); }
 .content.tab-dock-left .tabstrip, .content.tab-dock-right .tabstrip { grid-row: 1 / span 2; flex-direction: column; overflow-x: hidden; overflow-y: auto; border-bottom: 0; }
 .content.tab-dock-left .tabstrip { grid-column: 1; border-right: 1px solid var(--md-sys-color-outline-variant); }
 .content.tab-dock-right .tabstrip { grid-column: 2; border-left: 1px solid var(--md-sys-color-outline-variant); }
@@ -342,7 +344,7 @@ pre.block { margin: 0; padding: 14px; border-radius: 12px; background: var(--md-
 input[type="range"] { accent-color: var(--md-sys-color-primary); }
 input[type="color"] { height: 44px; padding: 3px; }
 
-.switch { width: 52px; height: 32px; border-radius: 16px; border: 2px solid var(--md-sys-color-outline);
+.switch { width: 60px; height: 44px; border-radius: 22px; border: 2px solid var(--md-sys-color-outline);
   background: var(--md-sys-color-surface-container-highest); display: flex; align-items: center; padding: 2px; flex: none; }
 .switch i { width: 16px; height: 16px; border-radius: 50%; background: var(--md-sys-color-outline);
   margin-left: 4px; transition: margin .15s, width .15s, height .15s, background .15s; }
@@ -359,8 +361,11 @@ input[type="color"] { height: 44px; padding: 3px; }
 /* -------------------------------------------------------------- dialogs -- */
 .scrim { position: fixed; inset: 0; background: var(--md-sys-color-scrim); display: grid; place-items: start center;
   padding: 60px 20px 40px; z-index: 60; backdrop-filter: blur(2px); }
-.dialog { width: 100%; max-width: 640px; max-height: 82vh; overflow: auto; background: var(--md-sys-color-surface-container-high);
-  border-radius: var(--shape-xl); padding: 24px; box-shadow: var(--md-elevation-3); animation: rise .18s ease; }
+.dialog { width: 100%; max-width: 640px; max-height: 82vh; overflow: auto;
+  background-color: var(--md-sys-color-surface-container-high); opacity: 1; isolation: isolate;
+  border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--shape-xl); padding: 24px;
+  box-shadow: 0 10px 28px 8px rgba(0,0,0,.30), 0 2px 8px rgba(0,0,0,.34);
+  overscroll-behavior: contain; animation: surface-rise .18s ease; }
 .dialog.wide { max-width: 880px; }
 .dialog-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
 .dialog-head > div { flex: 1; }
@@ -375,12 +380,14 @@ input[type="color"] { height: 44px; padding: 3px; }
 .feedback mark { background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); border-radius: 3px; }
 
 .menu { position: fixed; z-index: 90; min-width: 240px; max-width: 320px; padding: 8px; border-radius: 14px;
-  background: var(--md-sys-color-surface-container-high); box-shadow: var(--md-elevation-3); }
-.menu button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 40px; padding: 6px 12px;
+  background-color: var(--md-sys-color-surface-container-high); opacity: 1; isolation: isolate;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  box-shadow: 0 8px 24px 6px rgba(0,0,0,.32), 0 2px 6px rgba(0,0,0,.36); overscroll-behavior: contain; }
+.menu button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 6px 12px;
   border-radius: 10px; font-size: 13.5px; line-height: 1.35; text-align: left; }
 .menu button > .mi { flex: 0 0 20px; width: 20px; text-align: center; }
 .menu button > span:not(.mi) { flex: 1 1 auto; min-width: 0; }
-.menu-search { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 6px 0 12px; margin-bottom: 6px;
+.menu-search { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 6px 0 12px; margin-bottom: 6px;
   border-radius: 20px; background: var(--md-sys-color-surface-container-lowest); }
 .menu-search input { flex: 1; min-width: 0; background: none; border: 0; outline: none; font-size: 13px; }
 .menu-search .lead { font-size: 18px; color: var(--md-sys-color-on-surface-variant); }
@@ -465,6 +472,14 @@ input[type="range"].gradient::-webkit-slider-thumb { -webkit-appearance: none; a
 .menu .mi { font-size: 18px; color: var(--md-sys-color-on-surface-variant); }
 .menu hr { border: 0; border-top: 1px solid var(--md-sys-color-outline-variant); margin: 6px 4px; }
 
+.dialog .listbox[aria-label="Filtered workspace tabs"] .row.selected {
+  background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container);
+  box-shadow: inset 4px 0 0 var(--md-sys-color-error);
+}
+.dialog:has(.listbox[aria-label="Filtered workspace tabs"]):has(.dialog-actions .btn.filled:not(:disabled)) .feedback {
+  background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container);
+}
+
 .snack { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 95;
   display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-radius: 14px;
   background: var(--md-sys-color-surface-container-highest); box-shadow: var(--md-elevation-3);
@@ -488,6 +503,7 @@ input[type="range"].gradient::-webkit-slider-thumb { -webkit-appearance: none; a
 .empty .mi { font-size: 44px; opacity: .5; }
 
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes surface-rise { from { transform: translateY(10px); } to { transform: none; } }
 
 /* Keep the compact shell last so its declarations win over the component rules
    above. The shell must fit the supported 360px viewport without relying on
@@ -506,21 +522,37 @@ input[type="range"].gradient::-webkit-slider-thumb { -webkit-appearance: none; a
   .appbar .searchbar .regex-btn { width: 44px; height: 44px; padding: 0; border-radius: 22px; }
   .win-controls { margin-left: 0; gap: 0; flex: none; }
   .win-controls button { width: 40px; }
-  .body { grid-template-columns: 64px minmax(0, 1fr); }
-  .siderail { display: none; }
-  .drawer { padding-inline: 4px; overflow-x: hidden; }
-  .drawer .fab-extended { padding: 0; justify-content: center; margin-inline: 0; }
-  .drawer .fab-extended span:not(.mi), .drawer .nav-item b, .drawer .nav-count,
-  .drawer .drawer-heading, .drawer > .searchline { display: none; }
-  .drawer .nav-item { justify-content: center; padding: 0; }
+  /* The workspace tab strip is the one compact navigation surface at narrow
+     widths. Keeping the drawer beside it created two competing icon rails and
+     left too little room for settings fields at 360 CSS pixels / 200% scale. */
+  .body { grid-template-columns: minmax(0, 1fr); }
+  .body > .drawer, .siderail { display: none; }
+  .body.drawer-collapsed > .drawer {
+    display: flex; position: fixed; inset: 64px auto 0 0; z-index: 55;
+    width: min(268px, calc(100vw - 16px)); padding: 8px 8px 16px;
+    background: var(--md-sys-color-surface-container); border-right: 1px solid var(--md-sys-color-outline-variant);
+    box-shadow: var(--md-elevation-3);
+  }
+  .body.drawer-collapsed > .drawer .fab-extended { padding: 0 20px; justify-content: flex-start; }
+  .body.drawer-collapsed > .drawer .fab-extended span:not(.mi),
+  .body.drawer-collapsed > .drawer .nav-item b,
+  .body.drawer-collapsed > .drawer .nav-count,
+  .body.drawer-collapsed > .drawer .drawer-heading,
+  .body.drawer-collapsed > .drawer > .searchline { display: flex; }
+  .body.drawer-collapsed > .drawer .nav-item { justify-content: flex-start; padding: 0 24px 0 16px; }
   .content { margin-left: 0; }
-  .content.tab-dock-left, .content.tab-dock-right { grid-template-columns: 56px minmax(0, 1fr); }
+  .content.tab-dock-left { grid-template-columns: 88px minmax(0, 1fr); }
+  .content.tab-dock-right { grid-template-columns: minmax(0, 1fr) 88px; }
   .content.tab-dock-left .wtab, .content.tab-dock-right .wtab { padding: 0; justify-content: center; }
   .content.tab-dock-left .wtab b, .content.tab-dock-right .wtab b,
   .content.tab-dock-left .group-chip, .content.tab-dock-right .group-chip,
   .content.tab-dock-left .tab-close-mark, .content.tab-dock-right .tab-close-mark { display: none; }
+  .content.tab-dock-left .wtab.active b, .content.tab-dock-right .wtab.active b {
+    display: block; max-width: 52px; font-size: 11px; line-height: 1.15; white-space: normal; text-align: center;
+  }
+  .content.tab-dock-left .wtab.active, .content.tab-dock-right .wtab.active { flex-wrap: wrap; align-content: center; gap: 2px; }
   .toolbar { grid-template-columns: minmax(0, 1fr); overflow: hidden; }
-  .toolbar-left, .toolbar-right { width: 100%; overflow-x: auto; }
+  .toolbar-left, .toolbar-right { width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
   .toolbar-right { flex: 1 1 auto; }
   .row { gap: 8px; padding-inline: 8px; }
   .row .snippet, .row .meta, .row .chip-inline { display: none; }
@@ -528,7 +560,20 @@ input[type="range"].gradient::-webkit-slider-thumb { -webkit-appearance: none; a
   .row .row-actions .icon-btn:not(:last-child) { display: none; }
   .row .row-actions { margin-left: auto; flex: none; }
   .pane.padded, .reader { padding-inline: 12px; }
-  .dialog { width: calc(100vw - 16px); max-width: calc(100vw - 16px); }
+  .cards, .grid2, .tokenwrap { grid-template-columns: minmax(0, 1fr); min-width: 0; }
+  .card, .card.wide, .card.full, .field, .field-row, .inline-field, .select-button,
+  .switch-row, .lock-row, .dialog-head, .dialog-actions, .btnrow, .bulkbar { min-width: 0; max-width: 100%; }
+  .field-row { flex-wrap: wrap; }
+  .field-row > input, .field-row > select, .field-row > textarea,
+  .field-row > .field, .field-row > .select-button { flex: 1 1 160px; width: auto; min-width: 0; }
+  .field > input, .field > select, .field > textarea, .lock-input { width: 100%; max-width: 100%; min-width: 0; }
+  .switch-row { align-items: flex-start; }
+  .switch-row > span { min-width: 0; overflow-wrap: anywhere; }
+  .btn { max-width: 100%; white-space: normal; text-align: center; justify-content: center; }
+  .tabrow { max-width: 100%; overflow-x: auto; }
+  .menu { min-width: 0; width: min(320px, calc(100vw - 16px)); max-width: calc(100vw - 16px); }
+  .dialog { width: calc(100vw - 16px); max-width: calc(100vw - 16px); padding: 18px; }
+  .menu button, .menu-search, .chip, .seg, .step { min-height: 44px; }
 }
 
 @media print { .drawer, .siderail, .appbar, .tabstrip { display: none; } }

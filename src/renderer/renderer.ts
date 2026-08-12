@@ -848,7 +848,7 @@ const ICONS: Record<string, string> = {
   filter_alt: '▽', filter_alt_off: '▽×', flip_to_front: '⇄', folder_open: '▣',
   healing: '✚', history: '↺', history_toggle_off: '◷', inbox: '▤', indeterminate_check_box: '⊟',
   info: 'i', label: '◇', light_mode: '☀', dark_mode: '☾', lock: '▣', lock_open: '□',
-  mark_email_read: '✓', mark_email_unread: '•', menu: '☰', menu_book: '▤', menu_open: '☷',
+  mark_email_read: '✓', mark_email_unread: '✉', menu: '☰', menu_book: '▤', menu_open: '☷',
   more_vert: '⋮', notifications: '◉', open_in_full: '↗', open_in_new: '↗', palette: '◒',
   password: '•••', pin: '◎', play_arrow: '▶', push_pin: '⌖', recommend: '★', refresh: '↻',
   remove: '−', restart_alt: '↻', restaurant: '♨', restore: '↺', save: '▤', search: '⌕',
@@ -857,10 +857,11 @@ const ICONS: Record<string, string> = {
   tune: '≡', undo: '↶', upgrade: '↑', verified: '✓', warning: '⚠', description: '▧',
   cast_connected: '▣', expand_less: '⌃', expand_more: '⌄', folder: '▤', inventory_2: '▣',
   keep_off: '⌖×', play_circle: '▷', article: '▧',
+  security: '◈', volume_off: '♪×', help: '?',
 };
 const icon = (name: string, cls = ''): HTMLElement => h('span', {
   class: `mi ${cls}`.trim(), 'aria-hidden': 'true', title: '',
-}, ICONS[name] ?? '•');
+}, ICONS[name] ?? ICONS.help);
 
 /** Every search field in the app is registered by key, so each one gets its own
  *  persisted text, its own plain-text/regex mode, and its own anchored builder. */
@@ -883,7 +884,7 @@ function searchLine(key: string, placeholder: string, variant: 'field' | 'bar' =
       const next = document.querySelector<HTMLInputElement>(`[data-search="${key}"] input`);
       if (next) { next.focus(); next.setSelectionRange(next.value.length, next.value.length); }
     },
-  });
+  }) as HTMLInputElement;
   return h('div', { class: `searchline${variant === 'bar' ? ' bar' : ''}`, 'data-search': key },
     icon('search', 'lead'),
     input,
@@ -2218,36 +2219,51 @@ const emptyState = (msg: string): HTMLElement => h('div', { class: 'empty' }, ic
 /** MD3 menu-button select. Every dropdown carries its own search field and its
  *  own anchored regex builder — no menu is exempt for being short. */
 function selectField(label: string, options: string[], value: string, onChange: (v: string) => void): HTMLElement {
-  const key = `select:${label}`;
+  const key = `select:${state.dialog ?? state.view}:${label}`;
+  const listboxId = `select-listbox-${key.replace(/[^A-Za-z0-9_-]/gu, '-').slice(0, 80)}`;
+  const open = (button: HTMLButtonElement, preferred: 'first' | 'last' | 'selected' = 'selected'): void => {
+    const rect = button.getBoundingClientRect();
+    button.setAttribute('aria-expanded', 'true');
+    openMenu(rect.left, rect.bottom + 4, key, options, (v) => { onChange(v); }, Math.max(rect.width, 240), value, () => {
+      button.setAttribute('aria-expanded', 'false');
+      window.setTimeout(() => [...document.querySelectorAll<HTMLButtonElement>('[data-select-key]')].find((candidate) => candidate.dataset.selectKey === key)?.focus(), 0);
+    }, listboxId, preferred);
+  };
   const button = h('button', {
-      class: 'select-button', 'data-select-key': key, 'aria-label': `${label}: ${value}`, 'aria-haspopup': 'listbox', 'aria-expanded': 'false',
+      class: 'select-button', 'data-select-key': key, 'aria-label': `${label}: ${value}`,
+      'aria-haspopup': 'listbox', 'aria-expanded': 'false', 'aria-controls': listboxId,
       onclick: (e: MouseEvent) => {
         e.stopPropagation();
-        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        button.setAttribute('aria-expanded', 'true');
-        openMenu(rect.left, rect.bottom + 4, key, options, (v) => { onChange(v); }, Math.max(rect.width, 240), value, () => {
-          button.setAttribute('aria-expanded', 'false');
-          window.setTimeout(() => [...document.querySelectorAll<HTMLButtonElement>('[data-select-key]')].find((candidate) => candidate.dataset.selectKey === key)?.focus(), 0);
-        });
+        open(e.currentTarget as HTMLButtonElement);
+      },
+      onkeydown: (e: KeyboardEvent) => {
+        if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+        e.preventDefault(); e.stopPropagation();
+        open(e.currentTarget as HTMLButtonElement, e.key === 'ArrowUp' || e.key === 'End' ? 'last' : 'first');
       },
     }, h('span', {}, value), icon('arrow_drop_down'));
   return h('div', { class: 'field' }, label.toUpperCase(), button);
 }
 
-function openMenu(x: number, y: number, key: string, options: string[], pick: (v: string) => void, width = 260, selected = '', onClose?: () => void): void {
+function openMenu(x: number, y: number, key: string, options: string[], pick: (v: string) => void, width = 260, selected = '', onClose?: () => void, listboxId = `select-listbox-${key.replace(/[^A-Za-z0-9_-]/gu, '-').slice(0, 80)}`, preferred: 'first' | 'last' | 'selected' = 'selected'): void {
   document.querySelector('.menu')?.remove();
   const s = sq(key);
   const menu = h('div', {
     class: 'menu', style: `left:${Math.min(x, window.innerWidth - width - 12)}px;top:${Math.min(y, window.innerHeight - 320)}px;min-width:${width}px`,
     onkeydown: (event: KeyboardEvent) => {
       const buttons = [...menu.querySelectorAll<HTMLButtonElement>('[role="option"]')];
-      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); return; }
+      if (event.key === 'Escape') {
+        event.preventDefault(); event.stopPropagation();
+        if (s.text) { s.text = ''; input.value = ''; paint(); input.focus(); }
+        else close();
+        return;
+      }
       if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || !buttons.length) return;
       event.preventDefault(); event.stopPropagation();
       const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
-        : event.key === 'ArrowDown' ? (current + 1 + buttons.length) % buttons.length
-          : (current - 1 + buttons.length) % buttons.length;
+        : event.key === 'ArrowDown' ? (current < 0 ? 0 : (current + 1) % buttons.length)
+          : (current < 0 ? buttons.length - 1 : (current - 1 + buttons.length) % buttons.length);
       buttons[next].focus();
     },
   });
@@ -2259,8 +2275,9 @@ function openMenu(x: number, y: number, key: string, options: string[], pick: (v
     listWrap.replaceChildren(...(() => {
       const found = options.filter(match);
       if (!found.length) return [h('div', { class: 'menu-empty' }, 'Nothing matches this filter.')];
-      return found.map((o) => h('button', {
-        class: o === selected ? 'menu-selected' : '', role: 'option', 'aria-selected': o === selected ? 'true' : 'false', tabindex: '-1',
+      return found.map((o, index) => h('button', {
+        role: 'option', 'aria-selected': o === selected ? 'true' : 'false',
+        id: `${listboxId}-option-${index}`, class: o === selected ? 'menu-selected' : '', tabindex: o === selected ? '0' : '-1',
         onclick: () => { pick(o); close(); render(); },
       }, icon('check', o === selected ? '' : 'hidden'), h('span', {}, o)));
     })());
@@ -2269,17 +2286,21 @@ function openMenu(x: number, y: number, key: string, options: string[], pick: (v
     placeholder: 'Filter this menu', 'aria-label': 'Filter this dropdown menu', value: s.text, spellcheck: 'false',
     oninput: (e: Event) => { s.text = (e.target as HTMLInputElement).value; paint(); },
     onclick: (e: MouseEvent) => e.stopPropagation(),
-  });
+  }) as HTMLInputElement;
   menu.appendChild(h('div', { class: 'menu-search', onclick: (e: MouseEvent) => e.stopPropagation() },
     icon('search', 'lead'), input,
     h('button', {
       class: `regex-btn${s.regex ? ' on' : ''}`, title: 'Regex builder for this menu',
       onclick: () => { state.regexDraft.target = key; close(); openDialog('regex'); },
     }, '.*')));
-  menu.appendChild(h('div', { class: 'menu-list', role: 'listbox', 'aria-label': key.replace(/^select:/, '') }));
+  menu.appendChild(h('div', { id: listboxId, class: 'menu-list', role: 'listbox', 'aria-label': key.replace(/^select:/, ''), 'aria-live': 'polite' }));
   document.body.appendChild(menu);
   paint();
-  input.focus();
+  if (preferred === 'selected') input.focus();
+  else {
+    const buttons = [...menu.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+    (preferred === 'last' ? buttons.at(-1) : buttons[0])?.focus();
+  }
   window.setTimeout(() => document.addEventListener('click', close), 0);
 }
 
@@ -2291,7 +2312,7 @@ function rangeField(label: string, min: number, max: number, step: number, value
     h('span', { style: 'display:flex;justify-content:space-between' }, h('span', {}, label.toUpperCase()), readout),
     h('input', {
       type: 'range', min: String(min), max: String(max), step: String(step), value: String(value),
-      style: 'height:36px;border:0;background:none;padding:0',
+      style: 'height:44px;border:0;background:none;padding:0',
       oninput: (e: Event) => {
         const v = Number((e.target as HTMLInputElement).value);
         readout.textContent = String(v);
@@ -4169,7 +4190,7 @@ function colorDialog(): HTMLElement {
   const slider = (label: string, key: 'h' | 's' | 'l', max: number, track: string): HTMLElement => {
     const input = h('input', {
       type: 'range', min: '0', max: String(max), step: '1', value: String(Math.round(p[key])),
-      class: 'gradient', style: `--track:${track};height:34px;border:0;background:none;padding:0`,
+      class: 'gradient', style: `--track:${track};height:44px;border:0;background:none;padding:0`,
       oninput: (e: Event) => { p[key] = Number((e.target as HTMLInputElement).value); sync(key); },
     }) as HTMLInputElement;
     tracks[key] = input;

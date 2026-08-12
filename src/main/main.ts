@@ -9,7 +9,7 @@ import type {
   AuthenticatorBeginRequest, AuthenticatorCodes, AuthenticatorEntry, AuthenticatorRegistration,
   CommandResult, ExportFormat, HistoryBrowseResult, HistoryEntry, HistoryQuery, NarrationClientResult, NarrationEvent, NarrationRuntimeState,
   PersonalVocabularyState, PersonalVocabularyUploadResult, Preferences, RunKind, SchoolModeChangeResult,
-  ScheduledSettingsState, SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateRestartRequest, UpdateRestartResult, UpdateStatus, WinutilCatalog,
+  ScheduledSettingsState, SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateRestartRequest, UpdateRestartResult, UpdateStatus, WinutilCatalog, DimSumStartupPresentation,
 } from '../shared/types';
 import { resolvePackageRequest, validateCatalog, wingetArgs } from './package-policy';
 import { AUTHENTICATOR_PNG_LIMITS, AuthenticatorService } from './authenticator-service';
@@ -27,6 +27,7 @@ import { verifyOfflineDocsBundle, type OfflineDocsBundle } from '../shared/offli
 import { ScheduledSettingsService } from './scheduled-settings-service';
 import type { ScheduledSettingValue, ScheduledSettingsDocument } from '../shared/scheduled-settings';
 import { UpdateService } from './update-service';
+import { DimSumSurpriseService } from './dim-sum-surprise-service';
 
 const ROOT = path.join(__dirname, '..', '..');
 const CONFIG_DIR = path.join(__dirname, '..', 'config');
@@ -75,6 +76,7 @@ const EXPORT_VIEWS = new Set([
   'history', 'changelog', 'operations', 'security', 'settings', 'docs',
 ]);
 let updateService: UpdateService | null = null;
+let dimSumSurpriseService: DimSumSurpriseService | null = null;
 
 if (squirrelStartup) app.quit();
 
@@ -1005,6 +1007,29 @@ ipcMain.on('narration:speech-result', (event, id: number, ok: boolean, error?: s
   narrationTransport.complete(id, ok, typeof error === 'string' ? error : undefined);
 });
 
+ipcMain.handle('dim-sum:startup', async (event): Promise<DimSumStartupPresentation | null> => {
+  requireTrustedSender(event);
+  if (!dimSumSurpriseService || !currentNarratorPreferences) return null;
+  const firstRun = await dimSumSurpriseService.isFirstRun();
+  const schoolMode = settingsSurface().snapshot().schoolMode;
+  const preferences = currentNarratorPreferences;
+  return dimSumSurpriseService.startup({
+    context: {
+      firstRun,
+      errorPath: false,
+      updateFlow: updateService?.status().state === 'downloading' || updateService?.status().state === 'ready',
+      activeTask: packageMutationActive,
+      quietHours: preferences.narratorQuiet,
+      doNotDisturb: preferences.narratorReducedSound,
+      schoolMode: schoolMode.status !== 'ready' || schoolMode.effective.enabled,
+    },
+    language: preferences.language,
+    englishFunnyLevel: preferences.enFunny as 1 | 2 | 3 | 4 | 5,
+    yueFunnyLevel: preferences.yueFunny as 1 | 2 | 3 | 4 | 5,
+    reducedMotion: preferences.reducedMotion,
+  });
+});
+
 app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
@@ -1028,6 +1053,7 @@ app.whenReady().then(async () => {
     onApply: applyScheduledSnapshot,
   });
   await scheduledSettingsService.initialize({ ...preferencesAsSettings(basePreferences), displayName: initialSettings.displayName.displayName });
+  dimSumSurpriseService = new DimSumSurpriseService({ userDataDirectory: USER_DIR() });
   createWindow();
   win?.setTitle(initialSettings.displayName.displayName);
   settingsSurfaceService.startWatching(broadcastSettingsSurface);
@@ -1036,6 +1062,7 @@ app.whenReady().then(async () => {
     onStatus: (status) => win?.webContents.send('update:status', status),
   });
   await updateService.initialize();
+  void dimSumSurpriseService.refresh();
 });
 app.on('accessibility-support-changed', (_event, enabled) => {
   if (currentNarratorPreferences) narratorRuntime.configure(effectiveNarratorPreferences(currentNarratorPreferences), enabled);

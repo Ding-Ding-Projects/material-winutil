@@ -48,6 +48,8 @@ test('app manifest captures the functional locks and exact bundled documentation
   );
   assert.doesNotMatch(JSON.stringify([...captures.values()]), /openDetail\('Release boundary'/u);
   assert.match(captures.get('color-picker')?.prepare ?? '', /state\.selectionColor='#6750A4';openColorPicker\('selection','Smoke selection'\)/u);
+  assert.match(captures.get('dim-sum-startup-card')?.prepare ?? '', /state\.dimSumStartup=\{descriptor:/u);
+  assert.doesNotMatch(JSON.stringify([...captures.values()]), /maybeDimSum|DIM_SUM|dimSumSeen/u);
 });
 
 test('reduced-motion capture keeps the enabled preference visibly inspectable', async () => {

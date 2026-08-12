@@ -41,5 +41,6 @@ This roadmap separates shipped behavior from future work. Dates are intentionall
 - [x] Provide structured exports, bulk actions, local Git-backed history, locks, TOTP, and local recovery flows.
 - [ ] Finish the changelog viewer and command-palette coverage inventory.
 - [x] Finish the offline in-app documentation browser.
+- [x] Ship the non-blocking public-catalog dim-sum startup surprise with cache integrity checks and protected-startup suppression.
 
 Items remain unchecked until their actual runtime behavior, documentation, tests, artifacts, and release evidence exist.

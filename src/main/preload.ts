@@ -81,6 +81,7 @@ const bridge: Bridge = {
   setScheduledHomeAssistantToken: (ruleId, token) => ipcRenderer.invoke('scheduled-settings:set-ha-token', ruleId, token),
   clearScheduledHomeAssistantToken: (ruleId) => ipcRenderer.invoke('scheduled-settings:clear-ha-token', ruleId),
   onScheduledSettingsState: (cb) => { ipcRenderer.on('scheduled-settings:state', (_e, state) => cb(state)); },
+  dimSumStartup: () => ipcRenderer.invoke('dim-sum:startup'),
 };
 
 contextBridge.exposeInMainWorld('winutil', bridge);

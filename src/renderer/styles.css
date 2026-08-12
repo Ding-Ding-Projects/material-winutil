@@ -575,6 +575,20 @@ input[type="range"].gradient::-webkit-slider-thumb { -webkit-appearance: none; a
   font-size: 13.5px; max-width: min(92vw, 680px); animation: rise .2s ease; }
 .snack .mi { font-size: 19px; color: var(--md-sys-color-primary); }
 
+/* The startup surprise is deliberately a polite corner card, never a dialog:
+   it paints its own surface, receives no focus, and disappears on its timer. */
+.dim-sum-startup { position: fixed; z-index: 94; right: 24px; bottom: 24px; width: min(430px, calc(100vw - 32px));
+  min-height: 112px; display: grid; grid-template-columns: 96px minmax(0, 1fr) 44px; align-items: center; gap: 12px;
+  padding: 12px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--shape-xl);
+  background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface);
+  box-shadow: var(--md-elevation-4); overflow: hidden; animation: surface-rise .24s ease both; }
+.dim-sum-startup-image { width: 96px; height: 88px; object-fit: cover; border-radius: var(--shape-m); background: var(--md-sys-color-surface-container-lowest); }
+.dim-sum-startup-copy { min-width: 0; display: grid; gap: 4px; }
+.dim-sum-startup-copy b { font-size: 15px; }
+.dim-sum-startup-copy span { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.dim-sum-startup-copy small { color: var(--md-sys-color-on-surface-variant); line-height: 1.35; white-space: pre-line; overflow-wrap: anywhere; }
+.dim-sum-startup.reduced-motion { animation: none; }
+
 .keyrow { display: flex; gap: 10px; }
 .keyrow button { flex: 1; height: 54px; border-radius: 16px; border: 2px solid var(--md-sys-color-outline);
   font-size: 14px; font-weight: 500; }
@@ -677,6 +691,8 @@ input[type="range"].gradient::-webkit-slider-thumb { -webkit-appearance: none; a
   .scrim { padding: 8px; }
   .dialog { width: calc(100vw - 16px); max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); padding: 18px; }
   .menu button, .menu-search, .chip, .seg, .step { min-height: 44px; }
+  .dim-sum-startup { right: 8px; bottom: 8px; width: calc(100vw - 16px); grid-template-columns: 76px minmax(0, 1fr) 44px; padding: 10px; }
+  .dim-sum-startup-image { width: 76px; height: 70px; }
 }
 
 @media (max-width: 480px), (max-height: 520px) {

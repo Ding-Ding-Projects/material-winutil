@@ -33,7 +33,7 @@ interface AppearanceColorRuntime {
 type TabSearchKey = 'current' | 'groupNames' | 'master' | 'inGroup' | 'closeContaining' | 'closeNot';
 type DialogId =
   | 'palette' | 'regex' | 'tabs' | 'appearance' | 'lock' | 'auth'
-  | 'notifications' | 'export' | 'gate' | 'about' | 'profiles' | 'saveselection' | 'dimsum' | 'color'
+  | 'notifications' | 'export' | 'gate' | 'about' | 'profiles' | 'saveselection' | 'color'
   | 'school-unlock' | null;
 
 interface WinutilApp { id: string; name: string; cat: string; desc: string; winget: string; choco: string; link: string; foss: boolean; }
@@ -44,6 +44,15 @@ interface HistoryEntry { id: string; action: string; detail: string; at: string;
 interface GitHistoryEntry { commit: string; action: string; recordedAt: string; revisionId: string; restoredFrom?: string; label?: string; }
 interface ExportSaveResult { status: 'saved' | 'cancelled'; filePath?: string; warnings: string[]; vscode?: { available: boolean; label?: string }; }
 interface NotificationEntry { id: string; title: string; detail: string; icon: string; read: boolean; }
+interface DimSumStartupPresentation {
+  descriptor: {
+    autoDismissMs: number; motion: 'standard' | 'reduced';
+    dish: { names: { English: string; Yue: string } };
+    copy: { title: string; message: string };
+    image: { alt: string };
+  };
+  imageDataUrl: string;
+}
 interface UpdateStatus { state: 'disabled' | 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'up-to-date' | 'cancelled' | 'rolled-back' | 'error'; currentVersion: string; updateVersion: string; progressPercent: number | null; message: string; releaseUrl: string; canCancel: boolean; deferred: boolean; }
 type TotpAlgorithm = 'SHA1' | 'SHA256' | 'SHA512';
 interface AuthenticatorEntry { id: string; label: string; account: string; issuer?: string; algorithm: TotpAlgorithm; digits: number; period: number; createdAt: string; }
@@ -197,6 +206,7 @@ interface Bridge {
   setScheduledHomeAssistantToken(ruleId: string, token: Uint8Array): Promise<ScheduledSettingsState>;
   clearScheduledHomeAssistantToken(ruleId: string): Promise<ScheduledSettingsState>;
   onScheduledSettingsState(cb: (state: ScheduledSettingsState) => void): void;
+  dimSumStartup(): Promise<DimSumStartupPresentation | null>;
 }
 
 /* ------------------------------------------------------------- constants -- */
@@ -431,20 +441,6 @@ const SELECTION_COLORS: Array<[string, string]> = [
   ['indigo', '#3F5F90'], ['moss', '#3F6B3F'], ['clay', '#8C4A28'], ['slate', '#4A5560'],
 ];
 
-/** Shown by the dim sum surprise. Names only — the catalogue itself is a separate product. */
-const DIM_SUM = [
-  ['Har gow', 'Steamed shrimp dumpling in a translucent wheat-starch wrapper'],
-  ['Siu mai', 'Open-topped pork and shrimp dumpling, often crowned with roe'],
-  ['Char siu bao', 'Barbecued pork bun, steamed soft or baked with a crackly top'],
-  ['Cheung fun', 'Rolled rice noodle sheets with sweet soy'],
-  ['Lo mai gai', 'Glutinous rice with chicken, steamed in a lotus leaf'],
-  ['Dan tat', 'Egg tart with a flaky or shortcrust shell'],
-  ['Phoenix claws', 'Braised chicken feet in black bean sauce'],
-  ['Woo kok', 'Deep-fried taro puff with a lacy shell'],
-  ['Ma lai go', 'Steamed brown sugar sponge cake'],
-  ['Jin deui', 'Sesame ball with lotus or red bean paste'],
-];
-
 const EXPORT_FORMATS: Array<[string, string]> = [
   ['md', 'Markdown'], ['json', 'JSON'], ['jsonl', 'JSONL'], ['yaml', 'YAML'],
   ['toml', 'TOML'], ['xml', 'XML'], ['csv', 'CSV'], ['tsv', 'TSV'], ['html', 'HTML'], ['sql', 'SQL'],
@@ -586,7 +582,7 @@ const state = {
   rowColors: {} as Record<string, string>,
   profiles: [] as Array<{ id: string; name: string; color: string; view: ViewId; ids: string[] }>,
   profileDraft: { name: '', color: '#6750A4' },
-  dimSumSeen: 0,
+  dimSumStartup: null as DimSumStartupPresentation | null,
   picker: { target: '', label: '', h: 258, s: 32, l: 48, alpha: 1, representation: 'hex' as AppearanceColorSpace, representationInput: '', contrastBackground: '#ffffff', error: '', recents: [] as string[] },
   collapsedGroups: new Set<string>(),
   reading: null as null | { title: string; path: string; body: string; article?: OfflineDocArticle },
@@ -667,6 +663,27 @@ const state = {
   snack: '',
   isoLog: '[00:00:00] Waiting for an ISO. Select an official Microsoft image to begin.',
 };
+
+let dimSumDismissTimer: number | undefined;
+
+function dismissDimSumStartup(): void {
+  if (dimSumDismissTimer !== undefined) {
+    window.clearTimeout(dimSumDismissTimer);
+    dimSumDismissTimer = undefined;
+  }
+  if (state.dimSumStartup) {
+    state.dimSumStartup = null;
+    render();
+  }
+}
+
+function showDimSumStartup(presentation: DimSumStartupPresentation): void {
+  if (state.dimSumStartup || schoolModeRestrictsPersonalization()) return;
+  state.dimSumStartup = presentation;
+  if (dimSumDismissTimer !== undefined) window.clearTimeout(dimSumDismissTimer);
+  dimSumDismissTimer = window.setTimeout(() => dismissDimSumStartup(), presentation.descriptor.autoDismissMs);
+  render();
+}
 
 const WORKSPACE_STORAGE_KEY = 'material-system-utility.workspace.v1';
 const VALID_VIEWS = new Set<ViewId>(['install', 'tweaks', 'config', 'updates', 'iso', 'history', 'docs', 'settings']);
@@ -1092,6 +1109,7 @@ function bridge(): Bridge {
     setScheduledHomeAssistantToken: async () => fake.scheduledSettingsState(),
     clearScheduledHomeAssistantToken: async () => fake.scheduledSettingsState(),
     onScheduledSettingsState: () => undefined,
+    dimSumStartup: async () => null,
   };
   w.winutil = fake;
   return fake;
@@ -1289,8 +1307,24 @@ function render(): void {
   const root = $('#app');
   if (!root) return;
   root.replaceChildren(appBar(), h('div', { class: `body${state.drawerCollapsed ? ' drawer-collapsed' : ''}` }, drawer(), content(), sideRail()));
+  if (state.dimSumStartup) root.appendChild(dimSumStartupCard(state.dimSumStartup));
   if (state.dialog) root.appendChild(dialogLayer());
   if (state.snack) root.appendChild(h('div', { class: 'snack', 'aria-hidden': 'true' }, icon('check_circle'), h('span', {}, state.snack)));
+}
+
+function dimSumStartupCard(presentation: DimSumStartupPresentation): HTMLElement {
+  const descriptor = presentation.descriptor;
+  return h('aside', {
+    class: `dim-sum-startup${descriptor.motion === 'reduced' ? ' reduced-motion' : ''}`,
+    role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true',
+    'aria-label': `${descriptor.copy.title}: ${descriptor.dish.names.English} · ${descriptor.dish.names.Yue}`,
+  },
+  h('img', { class: 'dim-sum-startup-image', src: presentation.imageDataUrl, alt: descriptor.image.alt }),
+  h('div', { class: 'dim-sum-startup-copy' },
+    h('b', {}, descriptor.copy.title),
+    h('span', {}, `${descriptor.dish.names.English} · ${descriptor.dish.names.Yue}`),
+    h('small', {}, descriptor.copy.message)),
+  h('button', { class: 'icon-btn small', title: 'Dismiss dim sum surprise', 'aria-label': 'Dismiss dim sum surprise', onclick: () => dismissDimSumStartup() }, icon('close')));
 }
 
 function appBar(): HTMLElement {
@@ -1562,7 +1596,7 @@ function toolbarActions(): Array<{ label: string; variant: string; icon?: string
       { label: 'Apply selected', variant: 'filled', icon: 'play_arrow', disabled: true, title: 'Unavailable until the reviewed feature adapter is installed', act: () => undefined },
       { label: 'Undo selected', variant: 'outlined', icon: 'undo', disabled: true, title: 'Unavailable until the reviewed feature adapter is installed', act: () => undefined },
       { label: t('clear'), variant: 'text', icon: 'deselect', act: () => { state.selected.clear(); state.rowColors = {}; render(); } },
-      { label: 'Select every category', variant: 'text', icon: 'select_all', act: () => { allIdsInView().forEach((id) => { state.selected.add(id); state.rowColors[id] = state.selectionColor; }); maybeDimSum(); render(); } },
+      { label: 'Select every category', variant: 'text', icon: 'select_all', act: () => { allIdsInView().forEach((id) => { state.selected.add(id); state.rowColors[id] = state.selectionColor; }); render(); } },
     ];
     case 'history': return [];
     default: return [];
@@ -1794,7 +1828,7 @@ function checklistPane(source: WinutilTweak[], showPresets: boolean): HTMLElemen
         onclick: () => applyPreset(name),
         oncontextmenu: ctx(`preset-${name}`, () => [
           { icon: 'checklist', label: `Select the ${size} rows in ${name}`, act: () => applyPreset(name) },
-          { icon: 'add', label: `Add ${name} to the current selection`, act: () => { (state.catalog.presets[name] ?? []).forEach((id) => { state.selected.add(id); state.rowColors[id] = state.selectionColor; }); maybeDimSum(); } },
+          { icon: 'add', label: `Add ${name} to the current selection`, act: () => { (state.catalog.presets[name] ?? []).forEach((id) => { state.selected.add(id); state.rowColors[id] = state.selectionColor; }); } },
           { icon: 'remove', label: `Subtract ${name} from the selection`, act: () => (state.catalog.presets[name] ?? []).forEach((id) => { state.selected.delete(id); delete state.rowColors[id]; }) },
           'divider',
           { icon: 'warning', label: `Run ${name} — unavailable in this build`, act: () => snack('The reviewed tweak adapter is not installed in this build.') },
@@ -2622,20 +2656,8 @@ function toggleSelect(id: string): void {
   } else {
     state.selected.add(id);
     state.rowColors[id] = state.selectionColor;
-    maybeDimSum();
   }
   render();
-}
-
-/** One in ten chance, once the selection passes ten rows. Purely for fun. */
-function maybeDimSum(): void {
-  if (schoolModeRestrictsPersonalization()) return;
-  if (state.selected.size <= 10) return;
-  if (state.dimSumSeen > Date.now() - 60000) return;
-  if (Math.random() >= 0.1) return;
-  state.dimSumSeen = Date.now();
-  state.dialogArg = String(Math.floor(Math.random() * DIM_SUM.length));
-  window.setTimeout(() => { state.dialog = 'dimsum'; render(); }, 120);
 }
 
 function toggleChip(cat: string, additive: boolean): void {
@@ -2655,7 +2677,6 @@ function applyPreset(name: string): void {
   state.rowColors = {};
   ids.forEach((id) => { state.rowColors[id] = state.selectionColor; });
   recordHistory('preset', `Applied the ${name} tweak preset (${ids.length} items)`);
-  maybeDimSum();
   snack(`${name} preset selected — ${ids.length} tweaks.`);
 }
 
@@ -2827,9 +2848,9 @@ const ctx = (key: string, items: () => MenuItem[], title = ''): ((e: MouseEvent)
 
 const bulkItems = (ids: string[], label: string): MenuItem[] => [
   { section: 'Selection' },
-  { icon: 'select_all', label: `Select all ${ids.length} in view`, act: () => { ids.forEach((i) => { state.selected.add(i); state.rowColors[i] = state.selectionColor; }); maybeDimSum(); } },
+  { icon: 'select_all', label: `Select all ${ids.length} in view`, act: () => { ids.forEach((i) => { state.selected.add(i); state.rowColors[i] = state.selectionColor; }); } },
   { icon: 'deselect', label: 'Clear the selection', act: () => { state.selected.clear(); state.rowColors = {}; } },
-  { icon: 'flip_to_front', label: 'Invert the selection', act: () => { ids.forEach((i) => (state.selected.has(i) ? state.selected.delete(i) : (state.selected.add(i), state.rowColors[i] = state.selectionColor))); maybeDimSum(); } },
+  { icon: 'flip_to_front', label: 'Invert the selection', act: () => { ids.forEach((i) => (state.selected.has(i) ? state.selected.delete(i) : (state.selected.add(i), state.rowColors[i] = state.selectionColor))); } },
   { icon: 'data_object', label: 'Select by regex…', act: () => openBulkRegex('select') },
   { icon: 'backspace', label: 'Deselect by regex…', act: () => openBulkRegex('deselect') },
   { section: 'Colour' },
@@ -2930,7 +2951,6 @@ function dialogLayer(): HTMLElement {
       case 'about': return aboutDialog();
       case 'profiles': return profilesDialog();
       case 'saveselection': return saveSelectionDialog();
-      case 'dimsum': return dimSumDialog();
       case 'color': return colorDialog();
       case 'school-unlock': return schoolUnlockDialog();
       default: return h('div');
@@ -2955,7 +2975,7 @@ function dialogShell(eyebrow: string, title: string, kids: Array<Node | null>, a
   const category: DialogEmojiCategory = state.dialog === 'gate' ? 'destructive'
     : state.dialog === 'lock' || state.dialog === 'auth' || state.dialog === 'school-unlock' ? 'security'
       : state.dialog === 'notifications' ? 'information'
-        : state.dialog === 'dimsum' ? 'success' : 'information';
+        : 'information';
   const decoration = state.settingsSurface?.dialogDecorations[category] ?? null;
   return h('div', { class: `dialog${wide ? ' wide' : ''}`, role: 'dialog', tabindex: '-1', 'aria-modal': 'true', 'aria-labelledby': titleId },
     h('div', { class: 'dialog-head' },
@@ -4372,22 +4392,6 @@ function profilesDialog(): HTMLElement {
   ], true);
 }
 
-function dimSumDialog(): HTMLElement {
-  const [name, note] = DIM_SUM[Number(state.dialogArg) || 0];
-  return dialogShell('One in ten, past ten rows', 'Dim sum surprise', [
-    h('div', { class: 'dimsum' },
-      h('div', { class: 'dimsum-mark' }, icon('restaurant')),
-      h('div', {},
-        h('h3', { style: 'margin:0 0 4px;font-size:22px;font-weight:400' }, name),
-        h('p', {}, note))),
-    h('p', { style: 'font-size:12.5px' },
-      `You have ${state.selected.size} rows selected. Nothing has run yet — the surprise is decorative and changes no state.`),
-  ], [
-    h('button', { class: 'btn tonal', onclick: () => { state.dialogArg = String(Math.floor(Math.random() * DIM_SUM.length)); render(); } }, 'Another one'),
-    h('button', { class: 'btn filled', onclick: closeDialog }, 'Back to work'),
-  ]);
-}
-
 /* ---------------------------------------------------------- colour picker -- */
 
 const hslToHex = (hu: number, sa: number, li: number): string => {
@@ -4756,6 +4760,12 @@ async function boot(): Promise<void> {
   await refreshHistoryAccess();
   if (state.historyAccess.unlocked) await refreshGitHistory();
   render();
+  try {
+    const surprise = await bridge().dimSumStartup();
+    if (surprise) showDimSumStartup(surprise);
+  } catch {
+    // This small optional delight must never affect startup readiness.
+  }
   narrateFact('startup', NARRATOR_COPY.English.startup, NARRATOR_COPY.Yue.startup);
 }
 

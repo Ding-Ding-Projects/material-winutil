@@ -11,6 +11,7 @@ This index documents the current Material System Utility baseline. A feature is 
 - [Command palette](command-palette.md) — the available fixed command list, local search, shortcut, and current completeness boundary.
 - [Locks and authenticator boundary](locks-and-authenticator.md) — a working local RFC 6238 authenticator; password and OTP locks and support-ticket recovery remain unavailable.
 - [Offline documentation browser](offline-documentation.md) — every feature article bundled at build time, verified by manifest and SHA-256, safely rendered from an AST, internally linked, and independently searchable by title and body.
+- [Dim sum startup surprise](dim-sum-boundary.md) — a non-blocking once-per-launch public-catalog photo card with protected-state suppression and bounded application-data caching.
 
 ## Available with bounded limitations
 
@@ -22,7 +23,6 @@ This index documents the current Material System Utility baseline. A feature is 
 - [Exports and selection profiles](exports-and-selection-profiles.md) — row-identifier exports and local selection profiles, not complete round-trip or archive export.
 - [Destructive confirmation](destructive-confirmation.md) — a bounded two-control-and-slider flow that does not yet cover every destructive action.
 - [Appearance controls](appearance-controls.md) — working global preferences and color tools, with a partial non-root element editor.
-- [Dim sum interaction boundary](dim-sum-boundary.md) — an existing selection-triggered icon dialog that is not the required startup photo surprise.
 
 ## Read-only previews
 

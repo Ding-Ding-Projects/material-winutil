@@ -4,6 +4,7 @@
 
 - Scheduled settings are main-process owned, atomically persisted, evaluated in local time, exposed through trusted IPC/preload types, and editable from the Settings destination. JSON API sources retain the existing HTTPS/loopback, size, timeout, redirect, schema, DNS-rebinding, and generation boundaries. Home Assistant tokens live only in Windows Credential Manager. Packaged visual interaction proof remains pending.
 - The renderer color picker now consumes `src/shared/appearance.ts` directly through a renderer-only bootstrap. It supports selectable/editable/copyable HEX, RGB, HSL, HSV, HWB, Lab/LCH, OKLab/OKLCH, and CMYK representations with alpha, a 512-character input limit, explicit sRGB clipping-channel feedback, and composited WCAG contrast results. Packaged visual interaction proof remains pending.
+- The dim-sum startup service is main-process owned. It makes one cryptographic ten-percent draw per launch, suppresses protected startup states, refreshes a pinned public catalog release PNG only after the app is usable, validates redirect/PNG/size/SHA-256 boundaries, and presents a focus-safe auto-dismissing renderer card from application-data cache. Packaged visual interaction proof remains pending.
 
 Material System Utility is a public Windows Electron project derived from the reviewed data catalogue in WinUtil. The executable boundary is intentionally narrower than the source catalogue: exact package operations are enabled; higher-risk operating-system adapters are refused.
 

@@ -13,6 +13,7 @@ import type { OfflineDocsBundle } from './offline-docs';
 import type {
   ScheduledSettingRule, ScheduledSettingsDocument, ScheduledSettingValue,
 } from './scheduled-settings';
+import type { DimSumSurpriseDescriptor } from './dim-sum-surprise';
 
 /**
  * Shared contracts between the Electron main process, the preload bridge and the renderer.
@@ -322,6 +323,11 @@ export type PersonalVocabularyUploadResult =
 
 export type RunKind = 'install' | 'upgrade' | 'uninstall' | 'tweak' | 'undo' | 'feature' | 'update-profile';
 
+export interface DimSumStartupPresentation {
+  descriptor: DimSumSurpriseDescriptor;
+  imageDataUrl: `data:image/png;base64,${string}`;
+}
+
 /** The surface exposed on `window.winutil` by the preload bridge. */
 export interface Bridge {
   platform: NodeJS.Platform | 'browser';
@@ -399,6 +405,7 @@ export interface Bridge {
   setScheduledHomeAssistantToken(ruleId: string, token: Uint8Array): Promise<ScheduledSettingsState>;
   clearScheduledHomeAssistantToken(ruleId: string): Promise<ScheduledSettingsState>;
   onScheduledSettingsState(cb: (state: ScheduledSettingsState) => void): void;
+  dimSumStartup(): Promise<DimSumStartupPresentation | null>;
 }
 
 declare global {

@@ -15,6 +15,7 @@ This article is the truth table for the current Material System Utility baseline
 - Persistent application display-name customization with stable package and storage identity.
 - A persisted presentation-only dialog/message-box emoji switch.
 - Shared local School mode with a user-renamable label, Credential Manager-backed password verifier, live record watching, English-only projection, and suppression of personalization surfaces.
+- A non-blocking once-per-launch dim-sum startup surprise sourced from a validated public catalog release image cached in application data.
 - One-click runnable builds and unsigned Squirrel.Windows installer builds.
 
 ## Catalogue-only or read-only
@@ -40,12 +41,9 @@ release immutable and do not authenticate a software publisher.
 - Optional-feature application and undo.
 - AppX removal and update-policy profiles.
 - ISO mounting, servicing, and output creation.
-- Password or OTP locks and support-ticket recovery.
 - Packaged visual and interaction proof for the scheduled/external-settings surface beyond its local service and contract tests.
-- Complete per-element appearance editing and color-space translation.
-- Git-backed snapshot, diff, and restore history.
-- Complete exports, archive export, and external-editor handoff.
-- A complete offline Markdown documentation browser and full changelog viewer.
+- Complete per-element appearance editing.
+- A complete changelog viewer.
 - End-to-end installed-update download, staging, restart, replacement detection, and rollback proof.
 
 Unavailable behavior must remain visibly unavailable. The application must not simulate completion, display deterministic fake QR data, or turn a decorative preview into a safety claim.

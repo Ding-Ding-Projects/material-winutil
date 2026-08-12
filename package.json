@@ -1,0 +1,51 @@
+{
+  "name": "material-winutil",
+  "productName": "Material System Utility",
+  "version": "0.1.0",
+  "description": "A Material Design 3 Windows utility shell based on the WinUtil catalogue.",
+  "author": "Ding-Ding Projects",
+  "license": "MIT",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "build:ts": "tsc -p tsconfig.json",
+    "build:assets": "node scripts/copy-assets.mjs",
+    "build": "npm run clean && npm run build:ts && npm run build:assets",
+    "check": "npm run build && node scripts/verify-baseline.mjs",
+    "start": "npm run build && electron .",
+    "dist": "npm run check && electron-builder --win squirrel --publish never"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.30",
+    "electron": "37.0.0",
+    "electron-builder": "26.15.3",
+    "electron-builder-squirrel-windows": "26.15.3",
+    "typescript": "5.8.3"
+  },
+  "dependencies": {
+    "electron-squirrel-startup": "1.0.1"
+  },
+  "build": {
+    "appId": "org.dingdingprojects.materialsystemutility",
+    "productName": "Material System Utility",
+    "asar": true,
+    "directories": { "output": "release" },
+    "files": ["dist/**/*", "package.json", "LICENSE", "THIRD_PARTY_NOTICES.md"],
+    "win": {
+      "target": [{ "target": "squirrel", "arch": ["x64"] }],
+      "forceCodeSigning": false,
+      "signExecutable": false,
+      "signAndEditExecutable": false
+    },
+    "squirrelWindows": {
+      "name": "MaterialSystemUtility",
+      "artifactName": "MaterialSystemUtility-Setup.${ext}",
+      "iconUrl": "https://github.com/favicon.ico",
+      "msi": false
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://github.com/Ding-Ding-Projects/material-winutil/releases/latest/download/"
+    }
+  }
+}

@@ -154,7 +154,7 @@ async function prepareSite(client, capture, defaults) {
   let ready = false;
   while (Date.now() < deadline) {
     try {
-      ready = await client.evaluate(`document.readyState==='complete' && document.querySelector('[data-panel=${literal(capture.page ?? 'home')}]:not([hidden])')!==null`);
+      ready = await client.evaluate(`document.readyState==='complete' && document.querySelector('[data-page=${literal(capture.page ?? 'home')}]')!==null && document.querySelector('[data-panel=${literal(capture.page ?? 'home')}]')!==null`);
       if (ready) break;
     } catch { /* reload reconnects the execution context */ }
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 150));

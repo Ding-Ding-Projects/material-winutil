@@ -128,6 +128,8 @@ test('site reload preparation waits for a new document instead of trusting the d
   const source = await readFile(join(repo, 'scripts', 'smoke', 'capture.mjs'), 'utf8');
   assert.match(source, /Runtime\\\.evaluate failed: \(\?:Uncaught\|Execution context\)/u);
   assert.match(source, /if \(!ready\) throw new Error\(`\$\{capture\.id\} did not finish navigation/u);
+  assert.match(source, /document\.querySelector\('\[data-panel=\$\{literal\(capture\.page \?\? 'home'\)\}\]'\)!==null/u);
+  assert.doesNotMatch(source, /ready = await client\.evaluate\(`[^`]*data-panel[^`]*:not\(\[hidden\]\)/u);
   assert.match(source, /document\.querySelector\('\[data-page=\$\{literal\(requestedPage\)\}\]'\)\?\.click\(\)/u);
   assert.match(source, /if \(!activated\) throw new Error\(`\$\{capture\.id\} could not activate/u);
 });

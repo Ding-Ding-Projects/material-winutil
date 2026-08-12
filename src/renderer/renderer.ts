@@ -663,7 +663,7 @@ function drawer(): HTMLElement {
       class: 'fab-extended', onclick: () => primaryAction(), disabled: state.view !== 'install',
       title: state.view === 'install' ? 'Install the selected packages' : 'Unavailable until the reviewed system adapter is installed',
     },
-      icon('play_arrow'), h('span', {}, t('run'))),
+      icon(state.view === 'install' ? 'play_arrow' : 'info'), h('span', {}, state.view === 'install' ? t('run') : 'Read-only view')),
     searchLine('nav', 'Search destinations'),
   ];
   for (const item of NAV) {

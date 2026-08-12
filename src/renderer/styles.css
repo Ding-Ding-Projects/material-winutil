@@ -160,6 +160,7 @@ code, pre, kbd, .mono { font-family: ui-monospace, Consolas, monospace; }
   font-size: 14px; font-weight: 500; box-shadow: var(--md-elevation-2); white-space: nowrap; overflow: hidden;
 }
 .fab-extended:hover { box-shadow: var(--md-elevation-3); }
+.fab-extended:disabled { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface-variant); box-shadow: none; cursor: not-allowed; }
 .fab-extended .mi { font-size: 24px; }
 .drawer-collapsed .fab-extended { padding: 0 16px; justify-content: center; }
 .drawer-collapsed .fab-extended span:not(.mi), .drawer-collapsed .nav-item b, .drawer-collapsed .nav-count,

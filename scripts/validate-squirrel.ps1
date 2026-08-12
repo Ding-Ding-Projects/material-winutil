@@ -11,7 +11,7 @@ $releasePath = [IO.Path]::GetFullPath($ReleaseRoot)
 if (-not (Test-Path -LiteralPath $releasePath -PathType Container)) {
     throw "Squirrel.Windows output directory does not exist: $releasePath"
 }
-if ($ExpectedVersion -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') {
+if ($ExpectedVersion -notmatch '^\d+\.\d+\.\d+$') {
     throw "Expected package version is not valid SemVer: $ExpectedVersion"
 }
 if ($ExpectedCommit -notmatch '^[0-9a-fA-F]{40}$') {

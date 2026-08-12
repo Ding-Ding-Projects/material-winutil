@@ -132,12 +132,11 @@ export async function findCurrentSquirrelPackage(repo, expectedCommit) {
 
 export async function extractSquirrelApplication(repo, squirrel, destination) {
   const script = `
-param([string]$Archive,[string]$Destination)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-$archivePath = [IO.Path]::GetFullPath($Archive)
-$destinationPath = [IO.Path]::GetFullPath($Destination)
+$archivePath = [IO.Path]::GetFullPath($env:MATERIAL_WINUTIL_SMOKE_ARCHIVE)
+$destinationPath = [IO.Path]::GetFullPath($env:MATERIAL_WINUTIL_SMOKE_DESTINATION)
 [IO.Directory]::CreateDirectory($destinationPath) | Out-Null
 $zip = [IO.Compression.ZipFile]::OpenRead($archivePath)
 try {
@@ -158,8 +157,15 @@ try {
 } finally { $zip.Dispose() }
 `;
   const result = await new Promise((resolveResult, reject) => {
-    const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script, squirrel.packagePath, destination], {
-      cwd: repo, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+      cwd: repo,
+      env: {
+        ...process.env,
+        MATERIAL_WINUTIL_SMOKE_ARCHIVE: squirrel.packagePath,
+        MATERIAL_WINUTIL_SMOKE_DESTINATION: destination,
+      },
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = ''; let stderr = '';
     child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');

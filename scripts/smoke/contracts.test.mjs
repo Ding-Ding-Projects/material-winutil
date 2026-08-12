@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promise
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
-import { assertBuiltArtifactFresh, assertGitClean, parseArgs, selectCaptureManifests } from './lib/contracts.mjs';
+import { assertBuiltArtifactFresh, assertGitClean, extractSquirrelApplication, parseArgs, selectCaptureManifests } from './lib/contracts.mjs';
 import { assertSingleTarget } from './lib/cdp.mjs';
 import { assertUniquePngs, inspectPng } from './lib/png.mjs';
 import { commandLine } from './lib/lowlevel.mjs';
@@ -65,6 +65,24 @@ test('capture cleanliness check fails closed on tracked and untracked changes', 
     assert.deepEqual((await assertGitClean(root)).clean, true);
     await writeFile(join(root, 'untracked.txt'), 'two\n');
     await assert.rejects(() => assertGitClean(root), /clean working tree.*untracked\.txt/iu);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('Squirrel application extraction receives paths without PowerShell argument loss', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'material-winutil-package-'));
+  const source = join(root, 'source');
+  const destination = join(root, 'destination with spaces');
+  try {
+    await mkdir(join(source, 'lib', 'net45'), { recursive: true });
+    await writeFile(join(source, 'lib', 'net45', 'Smoke Product.exe'), 'fixture');
+    const archive = join(root, 'package with spaces.nupkg');
+    const command = `$ErrorActionPreference='Stop'; Compress-Archive -Path '${join(source, '*').replaceAll("'", "''")}' -DestinationPath '${archive.replaceAll("'", "''")}'`;
+    await new Promise((resolveRun, reject) => {
+      const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { windowsHide: true, stdio: 'ignore' });
+      child.once('error', reject); child.once('close', (code) => code === 0 ? resolveRun() : reject(new Error(`fixture archive exited ${code}`)));
+    });
+    await extractSquirrelApplication(root, { packagePath: archive }, destination);
+    assert.equal(await readFile(join(destination, 'Smoke Product.exe'), 'utf8'), 'fixture');
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

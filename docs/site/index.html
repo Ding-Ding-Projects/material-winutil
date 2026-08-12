@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Material System Utility documentation and verified capability guide.">
+  <meta name="theme-color" content="#6750a4">
+  <title>Material System Utility documentation</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <div class="app-shell" data-dock="left">
+    <header class="top-bar">
+      <button class="icon-button mobile-menu" id="menu-button" aria-label="Open navigation" aria-expanded="false">☰</button>
+      <span class="brand-mark" aria-hidden="true">M</span>
+      <div class="brand-copy">
+        <strong>Material System Utility</strong>
+        <span data-copy="docsLabel">Documentation</span>
+      </div>
+      <button class="search-launch" id="palette-launch" type="button">
+        <span aria-hidden="true">⌕</span>
+        <span data-copy="paletteHint">Find a page or command</span>
+        <kbd>Ctrl</kbd><span>+</span><kbd>Shift</kbd><span>+</span><kbd>F</kbd>
+      </button>
+    </header>
+
+    <nav class="tab-rail" id="tab-rail" aria-label="Documentation pages">
+      <div class="rail-heading">
+        <span data-copy="browse">Browse</span>
+        <button class="icon-button rail-close" id="rail-close" aria-label="Close navigation">×</button>
+      </div>
+      <div class="tab-list" role="tablist" aria-orientation="vertical">
+        <button class="nav-tab active" role="tab" aria-selected="true" aria-controls="panel-home" id="tab-home" data-page="home">
+          <span aria-hidden="true">⌂</span><span data-copy="home">Home</span>
+        </button>
+        <button class="nav-tab" role="tab" aria-selected="false" aria-controls="panel-capabilities" id="tab-capabilities" data-page="capabilities" tabindex="-1">
+          <span aria-hidden="true">✓</span><span data-copy="capabilities">Capabilities</span>
+        </button>
+        <button class="nav-tab" role="tab" aria-selected="false" aria-controls="panel-guides" id="tab-guides" data-page="guides" tabindex="-1">
+          <span aria-hidden="true">▤</span><span data-copy="guides">Guides</span>
+        </button>
+        <button class="nav-tab" role="tab" aria-selected="false" aria-controls="panel-safety" id="tab-safety" data-page="safety" tabindex="-1">
+          <span aria-hidden="true">◇</span><span data-copy="safety">Safety</span>
+        </button>
+        <button class="nav-tab" role="tab" aria-selected="false" aria-controls="panel-settings" id="tab-settings" data-page="settings" tabindex="-1">
+          <span aria-hidden="true">⚙</span><span data-copy="settings">Settings</span>
+        </button>
+      </div>
+      <div class="rail-footer">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span data-copy="localOnly">Local-only documentation</span>
+      </div>
+    </nav>
+
+    <main id="main-content" tabindex="-1">
+      <section class="page-panel active" id="panel-home" role="tabpanel" aria-labelledby="tab-home" data-panel="home">
+        <div class="hero">
+          <div class="hero-copy">
+            <span class="eyebrow"><span aria-hidden="true">●</span> <span data-copy="verifiedBaseline">Verified baseline</span></span>
+            <h1 data-copy="heroTitle">A focused, safer way to manage exact WinGet packages</h1>
+            <p class="hero-lede" data-copy="heroBody">Browse a reviewed catalogue, search locally, and run exact install, uninstall, or upgrade operations from a Material Design desktop shell.</p>
+            <div class="hero-actions">
+              <button class="filled-button" type="button" data-go="capabilities" data-copy="seeCapabilities">See verified capabilities</button>
+              <button class="outlined-button" type="button" data-go="guides" data-copy="buildLocally">Build locally</button>
+            </div>
+            <p class="availability-note"><strong data-copy="installerStatus">Installer status:</strong> <span data-copy="noPublishedInstaller">No verified public installer is linked from this site yet.</span></p>
+          </div>
+          <div class="hero-stats" aria-label="Verified catalogue totals">
+            <article><strong>227</strong><span data-copy="apps">applications</span></article>
+            <article><strong>67</strong><span data-copy="tweaksCatalogued">tweaks catalogued</span></article>
+            <article><strong>33</strong><span data-copy="featuresCatalogued">features catalogued</span></article>
+          </div>
+        </div>
+
+        <section class="content-section">
+          <div class="section-heading">
+            <div><span class="eyebrow" data-copy="realArtifact">Real built artifact</span><h2 data-copy="catalogueTitle">The safe package catalogue</h2></div>
+            <span class="chip">Dark theme · 1440 × 940</span>
+          </div>
+          <figure class="capture-card">
+            <a href="../screenshots/safe-package-catalogue-dark.png" target="_blank" rel="noopener">
+              <img src="../screenshots/safe-package-catalogue-dark.png" alt="Material System Utility showing the dark-theme package catalogue with search, categories, tabs, package rows, and exact package action controls.">
+            </a>
+            <figcaption data-copy="captureCaption">Captured from the real built desktop application. Select the image to inspect it at full size.</figcaption>
+          </figure>
+        </section>
+
+        <section class="content-section">
+          <div class="section-heading"><div><span class="eyebrow" data-copy="releaseBoundary">Release boundary</span><h2 data-copy="honestScope">Available means implemented and verified</h2></div></div>
+          <div class="card-grid three">
+            <article class="feature-card"><span class="state available">✓ <span data-copy="available">Available</span></span><h3>Exact package actions</h3><p>Install and uninstall validated WinGet or Microsoft Store catalogue identifiers. Upgrade all uses WinGet’s supported non-interactive path.</p></article>
+            <article class="feature-card"><span class="state available">✓ <span data-copy="available">Available</span></span><h3>Search and workspace</h3><p>Local catalogue search, an adjacent regex builder, browser-style tabs, groups, pinning, and a persisted appearance subset.</p></article>
+            <article class="feature-card"><span class="state unavailable">— <span data-copy="unavailable">Unavailable</span></span><h3>System modification adapters</h3><p>Tweaks, optional-feature changes, Windows Update policy profiles, image creation, locks, and authenticators are not enabled in this baseline.</p></article>
+          </div>
+        </section>
+      </section>
+
+      <section class="page-panel" id="panel-capabilities" role="tabpanel" aria-labelledby="tab-capabilities" data-panel="capabilities" hidden>
+        <header class="page-header"><span class="eyebrow" data-copy="capabilityInventory">Capability inventory</span><h1 data-copy="whatWorks">What works in this build</h1><p data-copy="inventoryIntro">This list distinguishes implemented behavior from catalogue-only content and unavailable future work.</p></header>
+        <div class="filter-row">
+          <label class="search-field"><span class="sr-only">Filter capabilities</span><span aria-hidden="true">⌕</span><input id="capability-filter" type="search" placeholder="Filter capabilities" autocomplete="off"></label>
+          <button class="regex-button" id="capability-regex-button" type="button" aria-expanded="false" aria-controls="capability-regex">.* <span class="sr-only">Open regex builder</span></button>
+        </div>
+        <section class="regex-builder" id="capability-regex" hidden>
+          <div><strong>Regex builder</strong><span>JavaScript RegExp · evaluated locally</span></div>
+          <label>Pattern<input id="capability-pattern" type="text" value=""></label>
+          <label>Flags<input id="capability-flags" type="text" value="i" maxlength="4"></label>
+          <p id="regex-feedback" role="status">Plain-text filtering is active.</p>
+        </section>
+        <div class="inventory" id="capability-list">
+          <article data-search="available exact winget install uninstall package msstore"><span class="state available">✓ Available</span><h2>Exact install and uninstall</h2><p>Only bounded catalogue identifiers reach the main process. Store entries use an explicit <code>msstore:&lt;StoreId&gt;</code> form and are separated into a validated source and identifier.</p><a href="../features/package-operations.md">Read the package operations guide</a></article>
+          <article data-search="available winget upgrade all"><span class="state available">✓ Available</span><h2>Upgrade all</h2><p>Requests <code>winget upgrade --all</code> with silent, non-interactive flags and package/source agreement flags.</p></article>
+          <article data-search="available catalogue search regex tabs groups appearance settings"><span class="state available">✓ Available</span><h2>Catalogue and workspace</h2><p>Local application catalogue, installed-package detection, search, regex mode, category filters, tabs, pinning, groups, and a persisted theme, density, accent, font, scale, and weight subset.</p><a href="../features/workspace-and-search.md">Read the workspace guide</a></article>
+          <article data-search="available build installer squirrel unsigned"><span class="state available">✓ Available</span><h2>One-click build paths</h2><p><code>build.bat</code> builds the runnable application. <code>build-installer.bat</code> produces and verifies unsigned Squirrel.Windows setup and update artifacts.</p><a href="../features/build-and-installer.md">Read the build guide</a></article>
+          <article data-search="catalogued unavailable tweaks features update profile image creator win11"><span class="state unavailable">— Unavailable</span><h2>Higher-risk system adapters</h2><p>The catalogue contains tweak and optional-feature records, but execution is deliberately refused with exit code 78 until bounded, reviewed adapters exist.</p><a href="../features/release-boundary.md">Read the release boundary</a></article>
+          <article data-search="partial application updater unavailable lock authenticator totp scheduled school narration personal vocabulary exports"><span class="state partial">◐ Partial</span><h2>Application updater and additional contracts</h2><p>Installed builds have visible Squirrel update states, a bounded background schedule, an unsigned-installer warning, and explicit restart control. Release-backed download and restart proof still needs the first immutable release. Locks, TOTP, scheduled settings, shared modes, narration, personal-vocabulary loading, and complete export coverage remain unavailable.</p></article>
+        </div>
+        <p class="empty-state" id="capability-empty" hidden>No capabilities match this filter.</p>
+      </section>
+
+      <section class="page-panel" id="panel-guides" role="tabpanel" aria-labelledby="tab-guides" data-panel="guides" hidden>
+        <header class="page-header"><span class="eyebrow" data-copy="guides">Guides</span><h1 data-copy="buildUse">Build and use the verified baseline</h1><p>No installer link is shown until a public release asset has been independently verified.</p></header>
+        <div class="card-grid two">
+          <article class="guide-card"><span class="step">1</span><h2>Build the runnable application</h2><p>From a checkout on Windows, run the root build script. It checks or obtains the required toolchain, installs project dependencies, builds the TypeScript application, copies local assets, and runs the baseline verifier.</p><pre><code>build.bat /s</code></pre></article>
+          <article class="guide-card"><span class="step">2</span><h2>Build the installer</h2><p>The installer route performs the same checks, creates unsigned Squirrel.Windows artifacts, verifies that the setup executable is unsigned, and prints its path and SHA-256.</p><pre><code>build-installer.bat /s</code></pre></article>
+          <article class="guide-card"><span class="step">3</span><h2>Choose exact package records</h2><p>Search by application name, description, category, or WinGet identifier. Select reviewed rows, inspect the count, then run the exact package action.</p></article>
+          <article class="guide-card"><span class="step">4</span><h2>Read the real result</h2><p>Operations are queued one at a time and report the actual process exit code and output. A failure remains a failure; the interface does not guess success.</p></article>
+        </div>
+        <aside class="callout warning"><strong>Unsigned installer</strong><p>The project permanently skips code signing. A locally built setup executable may trigger an unknown-publisher or SmartScreen warning.</p></aside>
+      </section>
+
+      <section class="page-panel" id="panel-safety" role="tabpanel" aria-labelledby="tab-safety" data-panel="safety" hidden>
+        <header class="page-header"><span class="eyebrow" data-copy="safety">Safety</span><h1>Bounded execution, explicit omissions</h1><p>The baseline intentionally narrows what can cross from the renderer into the operating-system process boundary.</p></header>
+        <div class="safety-list">
+          <article><span aria-hidden="true">01</span><div><h2>Context-isolated renderer bridge</h2><p>The desktop window uses an explicit preload bridge, context isolation, and no Node.js integration in renderer content.</p></div></article>
+          <article><span aria-hidden="true">02</span><div><h2>Validated identifiers, argument arrays</h2><p>Package identifiers are checked against bounded patterns and passed as argument arrays. Renderer text is not evaluated as PowerShell or a shell command.</p></div></article>
+          <article><span aria-hidden="true">03</span><div><h2>No silent third-party bootstrap</h2><p>The application uses the operating system’s supported WinGet client. It does not download or execute an arbitrary package-manager bootstrap script.</p></div></article>
+          <article><span aria-hidden="true">04</span><div><h2>Unsupported work fails closed</h2><p>Tweaks, optional-feature changes, update profiles, and other unsupported adapters return a clear unavailable result instead of simulating completion.</p></div></article>
+        </div>
+        <aside class="callout"><strong>Security reports</strong><p>Do not include credentials, private data, or exploit details in a public issue. Follow the private reporting route in <a href="../../SECURITY.md">SECURITY.md</a>.</p></aside>
+      </section>
+
+      <section class="page-panel" id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" data-panel="settings" hidden>
+        <header class="page-header"><span class="eyebrow" data-copy="settings">Settings</span><h1 data-copy="customizeDocs">Customize this documentation</h1><p data-copy="settingsLocal">These visitor preferences stay in local browser storage. They do not configure the desktop application.</p></header>
+        <div class="filter-row">
+          <label class="search-field"><span class="sr-only">Search documentation settings</span><span aria-hidden="true">⌕</span><input id="settings-search" type="search" placeholder="Search settings" autocomplete="off"></label>
+          <button class="regex-button" id="settings-regex-button" type="button" aria-expanded="false" aria-controls="settings-regex">.* <span class="sr-only">Open settings regex builder</span></button>
+        </div>
+        <section class="regex-builder" id="settings-regex" hidden>
+          <div><strong>Settings regex builder</strong><span>JavaScript RegExp · evaluated locally</span></div>
+          <label>Pattern<input id="settings-pattern" type="text"></label>
+          <label>Flags<input id="settings-flags" type="text" value="i" maxlength="4"></label>
+          <p id="settings-regex-feedback" role="status">Plain-text filtering is active.</p>
+        </section>
+        <div class="settings-grid" id="settings-list">
+          <article class="setting-card" data-setting="language english cantonese bilingual"><div><h2>Language mode</h2><p>Changes the site’s primary navigation and key explanatory copy.</p><small>Default: English · stored locally by this site</small></div><label><span>Language</span><select id="language"><option value="en">English</option><option value="yue">香港粵語</option><option value="both">English + 香港粵語</option></select></label></article>
+          <article class="setting-card" data-setting="english funny level serious playful"><div><h2>English funny level</h2><p>Styles optional site narration from serious to playful. Safety facts do not change.</p><small>Default: 2 · stored locally by this site</small></div><label><span id="english-level-output">Level 2</span><input id="english-level" type="range" min="1" max="5" value="2"></label></article>
+          <article class="setting-card" data-setting="cantonese funny level serious playful"><div><h2>Cantonese funny level</h2><p>Styles optional Cantonese narration independently from the English level.</p><small>Default: 3 · stored locally by this site</small></div><label><span id="cantonese-level-output">Level 3</span><input id="cantonese-level" type="range" min="1" max="5" value="3"></label></article>
+          <article class="setting-card" data-setting="theme light dark system appearance"><div><h2>Theme</h2><p>Choose light, dark, or follow the operating-system preference.</p><small>Default: System · stored locally by this site</small></div><label><span>Theme</span><select id="theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label></article>
+          <article class="setting-card" data-setting="density comfortable compact spacing"><div><h2>Density</h2><p>Adjusts spacing while preserving touch target sizes.</p><small>Default: Comfortable · stored locally by this site</small></div><label><span>Density</span><select id="density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label></article>
+          <article class="setting-card" data-setting="tab rail dock left right top bottom navigation"><div><h2>Tab rail position</h2><p>Moves the documentation tab list. Left is the default.</p><small>Default: Left · stored locally by this site</small></div><label><span>Dock</span><select id="dock"><option value="left">Left</option><option value="right">Right</option><option value="top">Top</option><option value="bottom">Bottom</option></select></label></article>
+          <article class="setting-card" data-setting="reset local preferences"><div><h2>Reset site preferences</h2><p>Clears this site’s locally stored language, humor, theme, density, and dock choices.</p><small>This does not change the desktop application.</small></div><button class="outlined-button" id="reset-preferences" type="button">Reset site preferences</button></article>
+        </div>
+        <p class="empty-state" id="settings-empty" hidden>No settings match this filter.</p>
+        <aside class="callout warning"><strong>Scope note</strong><p>This site implements its own local language, humor, theme, density, docking, search, and command-palette preferences. It does not claim the full application-wide customization, locks, authenticator, history, scheduling, personal vocabulary, narration, export, or bulk-action contracts.</p></aside>
+      </section>
+    </main>
+  </div>
+
+  <div class="scrim" id="scrim" hidden></div>
+  <section class="palette" id="command-palette" role="dialog" aria-modal="true" aria-labelledby="palette-title" hidden>
+    <header><div><span class="eyebrow">Ctrl+Shift+F</span><h2 id="palette-title">Command palette</h2></div><button class="icon-button" id="palette-close" aria-label="Close command palette">×</button></header>
+    <label class="search-field"><span class="sr-only">Search commands</span><span aria-hidden="true">⌕</span><input id="palette-search" type="search" placeholder="Search pages and commands" autocomplete="off"></label>
+    <div class="command-list" id="command-list" role="listbox" aria-label="Commands"></div>
+    <p class="empty-state" id="command-empty" hidden>No commands match.</p>
+  </section>
+
+  <div class="snackbar" id="snackbar" role="status" aria-live="polite" hidden></div>
+  <script src="app.js" defer></script>
+</body>
+</html>

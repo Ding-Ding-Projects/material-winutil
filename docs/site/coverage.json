@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "surface": "local documentation site",
+  "verified": [
+    { "id": "responsive-m3", "label": "Responsive Material Design 3 shell from 320px", "evidence": "styles.css responsive grid and 320px minimum" },
+    { "id": "tabbed-navigation", "label": "Left-default tabs with keyboard navigation and four dock positions", "evidence": "index.html tablist and app.js tabKeydown" },
+    { "id": "language-modes", "label": "English, Cantonese, and bilingual site modes", "evidence": "app.js copy catalog and language setting" },
+    { "id": "funny-levels", "label": "Independent English and Cantonese site humor-level controls", "evidence": "settings panel persisted controls; informational site copy only" },
+    { "id": "settings-search", "label": "Settings search with adjacent regex builder", "evidence": "settings-search and settings-regex controls" },
+    { "id": "capability-search", "label": "Capability search with adjacent regex builder", "evidence": "capability-filter and capability-regex controls" },
+    { "id": "command-palette", "label": "Ctrl+Shift+F command palette", "evidence": "command-palette and keyboard listener" },
+    { "id": "appearance-subset", "label": "Local theme, density, and tab-dock preferences", "evidence": "settings controls and localStorage" },
+    { "id": "real-capture", "label": "Real built application capture", "evidence": "../screenshots/safe-package-catalogue-dark.png" },
+    { "id": "offline-assets", "label": "No CDN, remote fonts, analytics, or runtime asset fetch", "evidence": "local HTML, CSS, JavaScript, and screenshot only" }
+  ],
+  "explicitlyUnavailable": [
+    "Published installer link until an immutable release asset is verified",
+    "Complete per-element appearance editor and color-space translator",
+    "Tab and appearance locks, OTP registration, and built-in authenticator",
+    "Release-backed application-update download and restart verification until the first immutable release exists",
+    "Scheduled and externally sourced settings",
+    "Shared School mode and personal-vocabulary upload",
+    "Narration and dim-sum startup surprise",
+    "Complete local version history, export-format matrix, and bulk actions",
+    "Destructive-action super confirmation",
+    "Site publishing status; this lane is local-only"
+  ]
+}

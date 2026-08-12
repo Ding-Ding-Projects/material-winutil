@@ -23,6 +23,7 @@ assert.match(html, /aria-orientation="vertical"/);
 assert.match(html, /id="settings-search"/);
 assert.match(html, /id="settings-regex-button"/);
 assert.match(html, /id="command-palette"/);
+assert.match(html, /releases\/download\/v0\.1\.0-build\.4\.1\/MaterialSystemUtility-Setup\.exe/);
 assert.match(html, /href="screenshots\/safe-package-catalogue-dark\.png"/);
 assert.match(html, /src="screenshots\/safe-package-catalogue-dark\.png"/);
 assert.doesNotMatch(html, /(?:href|src)="\.\.\//);
@@ -34,8 +35,11 @@ assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
 assert.ok(Array.isArray(coverage.verified) && coverage.verified.length >= 10, 'coverage manifest is incomplete');
 assert.ok(Array.isArray(coverage.explicitlyUnavailable) && coverage.explicitlyUnavailable.length >= 8, 'unavailable inventory is incomplete');
 
-for (const [name, content] of [['index.html', html], ['styles.css', css], ['app.js', js]]) {
+assert.doesNotMatch(html, /<(?:script|img|link)[^>]+(?:src|href)="https?:\/\//i, 'index.html must not load remote executable or visual assets');
+for (const [name, content] of [['styles.css', css], ['app.js', js]]) {
   assert.doesNotMatch(content, /https?:\/\//i, `${name} must not load remote assets`);
+}
+for (const [name, content] of [['index.html', html], ['styles.css', css], ['app.js', js]]) {
   assert.doesNotMatch(content, /analytics|googletagmanager|fonts\.google/i, `${name} contains a forbidden external integration`);
 }
 

@@ -19,8 +19,8 @@ This roadmap separates shipped behavior from future work. Dates are intentionall
 - [ ] Complete installed-build automatic-update verification with immutable feed assets.
 - [ ] Finish runtime accessibility checks at narrow widths and 100%, 125%, 150%, and 200% display scale.
 - [ ] Capture every shipped surface from the exact release commit.
-- [ ] Publish one verified non-draft release with unsigned Squirrel.Windows assets, hashes, release timing, line-count evidence, and current documentation.
-- [ ] Publish the documentation site only after its release links can point to verified immutable assets.
+- [x] Publish a verified non-draft release with unsigned Squirrel.Windows assets, hashes, release timing, line-count evidence, and current documentation.
+- [x] Publish the documentation site with an immutable installer link.
 
 ## Safe system adapters
 

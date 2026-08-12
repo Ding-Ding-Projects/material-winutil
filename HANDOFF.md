@@ -32,7 +32,7 @@ The current verified baseline includes:
 
 - Installed-build automatic-update proof is not yet established here.
 - Complete narrow-layout, high-scale, keyboard, and screen-reader runtime evidence remains required.
-- A verified public release, release assets, workflow timing, release line counts, and published documentation endpoint remain required.
+- The public release workflow, unsigned assets, workflow timing, release line counts, and documentation endpoint are published and independently verified.
 - Higher-risk system adapters and the broader universal product contracts remain intentionally unavailable.
 
 ## Next owner

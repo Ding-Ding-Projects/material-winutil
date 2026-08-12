@@ -1,6 +1,6 @@
 # Feature documentation
 
-This index documents the behavior that is implemented in the current Material System Utility baseline. A feature is called available only when its production path exists in the application and its bounded contract has local verification.
+This index documents the current Material System Utility baseline. A feature is called available only when its production path exists and its bounded contract has local verification. Partial, preview, and unavailable surfaces are listed separately so a visible control is never mistaken for a completed runtime.
 
 ## Available
 
@@ -8,9 +8,29 @@ This index documents the behavior that is implemented in the current Material Sy
 - [Workspace and search](workspace-and-search.md) — catalogue browsing, category filters, local search and regex mode, tabs, groups, pinning, and the implemented appearance subset.
 - [Build and installer](build-and-installer.md) — one-click runnable builds and unsigned Squirrel.Windows installer builds.
 - [Release boundary](release-boundary.md) — the authoritative split between available, catalogue-only, in-development, and unavailable behavior.
+- [Command palette](command-palette.md) — the available fixed command list, local search, shortcut, and current completeness boundary.
 
-## Not yet available
+## Available with bounded limitations
 
-The current application deliberately refuses tweak execution and undo, optional-feature application and undo, Windows Update policy profiles, AppX removal, and ISO servicing. It also does not ship the larger lock, TOTP, automatic-update runtime verification, shared-mode, scheduling, narration, personal-vocabulary, complete appearance, complete export, and Git-backed history contracts.
+- [Application updates](application-updates.md) — installed Squirrel event wiring and visible controls; the complete installed replacement and rollback cycle is not yet proven.
+- [Local history](local-history.md) — bounded JSON Lines event history with search and filters, not Git-backed snapshots, diffs, or restore.
+- [Offline documentation browser](offline-documentation.md) — six bundled plain-text articles, not complete Markdown or on-disk article parity.
+- [Settings, localization, and narration boundary](settings-localization-and-narration.md) — persisted settings and partial localization; narration and full funny-level behavior are unavailable.
+- [Notifications](notifications.md) — session-local snackbars and a notification centre without durable history or complete export.
+- [Exports and selection profiles](exports-and-selection-profiles.md) — row-identifier exports and local selection profiles, not complete round-trip or archive export.
+- [Destructive confirmation](destructive-confirmation.md) — a bounded two-control-and-slider flow that does not yet cover every destructive action.
+- [Appearance controls](appearance-controls.md) — working global preferences and color tools, with a partial non-root element editor.
+- [Dim sum interaction boundary](dim-sum-boundary.md) — an existing selection-triggered icon dialog that is not the required startup photo surprise.
+
+## Read-only previews
+
+- [Tweaks and configuration catalogue](tweaks-and-configuration.md) — searchable records and selection presets; execution and undo fail closed.
+- [ISO customization preview](iso-preview.md) — explanatory steps and a local preview log; no image selection, mounting, servicing, or output.
+
+## Unavailable
+
+- [Locks and authenticator boundary](locks-and-authenticator.md) — password and OTP locks, support-ticket recovery, QR pairing, vault storage, and authenticator codes are not installed.
+
+The application also deliberately refuses tweak execution and undo, optional-feature application and undo, Windows Update policy profiles, AppX removal, and ISO servicing. Shared School mode, scheduling, personal-vocabulary loading, production narration, app renaming, complete appearance, complete export and archive handling, external-editor handoff, and Git-backed restore history are not available.
 
 The documentation site exposes a small set of local visitor preferences. Those preferences customize the site only and do not imply equivalent desktop-application behavior.

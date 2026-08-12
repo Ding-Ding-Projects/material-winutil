@@ -134,11 +134,11 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path pages-site | Out-Null
-          Copy-Item -LiteralPath docs/site/* -Destination pages-site -Recurse -Force
+          Get-ChildItem -LiteralPath docs/site | Copy-Item -Destination pages-site -Recurse -Force
           New-Item -ItemType Directory -Force -Path pages-site/screenshots | Out-Null
-          Copy-Item -LiteralPath docs/screenshots/* -Destination pages-site/screenshots -Recurse -Force
+          Get-ChildItem -LiteralPath docs/screenshots | Copy-Item -Destination pages-site/screenshots -Recurse -Force
           New-Item -ItemType Directory -Force -Path pages-site/features | Out-Null
-          Copy-Item -LiteralPath docs/features/* -Destination pages-site/features -Recurse -Force
+          Get-ChildItem -LiteralPath docs/features | Copy-Item -Destination pages-site/features -Recurse -Force
           Copy-Item -LiteralPath SECURITY.md -Destination pages-site/SECURITY.md -Force
 
       - name: Upload the documentation site

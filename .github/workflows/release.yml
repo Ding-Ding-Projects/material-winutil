@@ -7,15 +7,16 @@ on:
     tags-ignore:
       - '**'
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Exact commit or ref to build and publish; defaults to the triggering commit
+        required: false
+        type: string
 
 permissions:
   contents: write
   pages: write
   id-token: write
-
-concurrency:
-  group: release-${{ github.repository }}
-  cancel-in-progress: false
 
 jobs:
   release:
@@ -39,6 +40,17 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.source_ref || github.sha }}
+
+      - name: Resolve exact source commit
+        id: source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = (git rev-parse HEAD).Trim()
+          if ($source -notmatch '^[0-9a-f]{40}$') { throw "Resolved source is not a full commit SHA: $source" }
+          "sha=$source" >> $env:GITHUB_OUTPUT
+          "SOURCE_COMMIT=$source" >> $env:GITHUB_ENV
 
       - name: Bootstrap Node.js
         uses: actions/setup-node@v4
@@ -55,7 +67,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path workflow-evidence | Out-Null
           "Workflow started: $env:WORKFLOW_STARTED_AT" | Set-Content -Encoding utf8 workflow-evidence/timing.txt
           @(
-            "Commit: $env:GITHUB_SHA"
+            "Commit: $env:SOURCE_COMMIT"
             "Runner name: $env:RUNNER_NAME"
             "Runner OS: $env:RUNNER_OS"
             "Runner architecture: $env:RUNNER_ARCH"
@@ -115,7 +127,7 @@ jobs:
             -ManifestPath workflow-evidence/release-assets.json `
             -ProvenancePath workflow-evidence/release-provenance.json `
             -ExpectedVersion '${{ steps.package_version.outputs.value }}' `
-            -ExpectedCommit $env:GITHUB_SHA
+            -ExpectedCommit $env:SOURCE_COMMIT
           $provenance = Get-Content -Raw workflow-evidence/release-provenance.json | ConvertFrom-Json
           "signature_status=$($provenance.signatureStatus)" >> $env:GITHUB_OUTPUT
           $manifest = @(Get-Content -Raw workflow-evidence/release-assets.json | ConvertFrom-Json)
@@ -154,7 +166,7 @@ jobs:
           $indexPath = Join-Path $PWD 'pages-site/index.html'
           $index = [IO.File]::ReadAllText($indexPath)
           if (-not $index.Contains('__SOURCE_COMMIT__')) { throw 'Pages source commit placeholder is missing.' }
-          [IO.File]::WriteAllText($indexPath, $index.Replace('__SOURCE_COMMIT__', $env:GITHUB_SHA), [Text.UTF8Encoding]::new($false))
+          [IO.File]::WriteAllText($indexPath, $index.Replace('__SOURCE_COMMIT__', $env:SOURCE_COMMIT), [Text.UTF8Encoding]::new($false))
           New-Item -ItemType Directory -Force -Path pages-site/screenshots | Out-Null
           Get-ChildItem -LiteralPath docs/screenshots | Copy-Item -Destination pages-site/screenshots -Recurse -Force
           New-Item -ItemType Directory -Force -Path pages-site/features | Out-Null
@@ -176,7 +188,7 @@ jobs:
           WORKFLOW_STARTED_AT: ${{ steps.timing_start.outputs.started_at }}
           WORKFLOW_COMPLETED_AT: ${{ steps.timing_start.outputs.started_at }}
           RELEASE_TAG: ${{ steps.package_version.outputs.tag }}
-          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_COMMIT: ${{ steps.source.outputs.sha }}
           WORKFLOW_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RUNNER_IMAGE: ${{ env.ImageOS || 'windows-2025' }}
           INSTALLER_SIGNATURE_STATUS: ${{ steps.assets.outputs.signature_status }}
@@ -197,7 +209,7 @@ jobs:
           $assets = Get-ChildItem -LiteralPath release-staging -File | ForEach-Object FullName
           if ($assets.Count -lt 3) { throw 'Fewer than three Squirrel.Windows release assets were staged.' }
           $tag = '${{ steps.package_version.outputs.tag }}'
-          gh release create $tag @assets --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "Material System Utility $tag" --notes-file workflow-evidence/release-notes.md --latest
+          gh release create $tag @assets --repo $env:GITHUB_REPOSITORY --target $env:SOURCE_COMMIT --title "Material System Utility $tag" --notes-file workflow-evidence/release-notes.md --latest
 
       - name: Record publication completion and finalize release notes
         id: timing_complete
@@ -205,7 +217,7 @@ jobs:
         env:
           WORKFLOW_STARTED_AT: ${{ steps.timing_start.outputs.started_at }}
           RELEASE_TAG: ${{ steps.package_version.outputs.tag }}
-          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_COMMIT: ${{ steps.source.outputs.sha }}
           WORKFLOW_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RUNNER_IMAGE: ${{ env.ImageOS || 'windows-2025' }}
           INSTALLER_SIGNATURE_STATUS: ${{ steps.assets.outputs.signature_status }}
@@ -234,7 +246,7 @@ jobs:
           $tag = '${{ steps.package_version.outputs.tag }}'
           $release = gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,targetCommitish,isDraft,isPrerelease,url,assets,body | ConvertFrom-Json
           if ($release.isDraft -or $release.isPrerelease) { throw 'The release is not a final public release.' }
-          if ($release.targetCommitish -ne $env:GITHUB_SHA) { throw "Release target $($release.targetCommitish) does not equal $env:GITHUB_SHA." }
+          if ($release.targetCommitish -ne $env:SOURCE_COMMIT) { throw "Release target $($release.targetCommitish) does not equal $env:SOURCE_COMMIT." }
           $expected = Get-Content -Raw workflow-evidence/release-assets.json | ConvertFrom-Json
           $downloadRoot = Join-Path $env:RUNNER_TEMP "published-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           New-Item -ItemType Directory -Force -Path $downloadRoot | Out-Null
@@ -265,7 +277,7 @@ jobs:
           if (Test-Path release-staging) { Copy-Item -LiteralPath release-staging -Destination safe-workflow-output -Recurse -Force }
           @(
             "Run ID: $env:GITHUB_RUN_ID"
-            "Commit: $env:GITHUB_SHA"
+            "Commit: $env:SOURCE_COMMIT"
             "Job status: ${{ job.status }}"
             "Runner: $env:RUNNER_NAME / $env:RUNNER_OS / $env:RUNNER_ARCH / $env:ImageOS"
           ) | Set-Content -Encoding utf8 safe-workflow-output/run-summary.txt

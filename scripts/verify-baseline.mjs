@@ -13,6 +13,7 @@ for (const app of catalog.apps) {
 }
 
 const main = await readFile(new URL('../src/main/main.ts', import.meta.url), 'utf8');
+const updater = await readFile(new URL('../src/main/update-service.ts', import.meta.url), 'utf8');
 assert.doesNotMatch(main, /ScriptBlock::Create|DownloadString\(|Invoke-WinUtilTweaks|Set-WinUtilUpdateProfile/);
 assert.match(main, /resolvePackageRequest/);
 assert.match(main, /sandbox: true/);
@@ -48,9 +49,12 @@ assert.match(main, /electron-squirrel-startup/);
 assert.match(renderer, /role: 'tab'/);
 assert.match(renderer, /role: 'checkbox'/);
 assert.match(styles, /\[tabindex\]:focus-visible/);
-assert.match(main, /autoUpdater\.setFeedURL/);
-assert.match(main, /setInterval\(\(\) => \{ void checkForUpdates\(\); \}, 4 \* 60 \* 60 \* 1000\)/);
-assert.match(main, /updateStatus\.state === 'ready'/);
+assert.match(updater, /adapter\.setFeedURL/);
+assert.match(updater, /UPDATE_CHECK_INTERVAL_MS = 4 \* 60 \* 60 \* 1000/);
+assert.match(main, /new UpdateService/);
+assert.match(main, /updateService!\.restart\(request\)/);
 assert.match(renderer, /Restart to install update/);
+assert.match(renderer, /Cancel check/);
+assert.match(renderer, /confirmDiscard: false/);
 assert.match(renderer, /every installer is unsigned/);
 console.log('PASS: safe catalogue baseline verified');

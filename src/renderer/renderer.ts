@@ -39,12 +39,12 @@ type DialogId =
 interface WinutilApp { id: string; name: string; cat: string; desc: string; winget: string; choco: string; link: string; foss: boolean; }
 interface WinutilTweak { id: string; name: string; cat: string; desc: string; panel?: string; type?: string; }
 interface Catalog { apps: WinutilApp[]; tweaks: WinutilTweak[]; features: WinutilTweak[]; presets: Record<string, string[]>; dns: Record<string, Record<string, string>>; }
-interface WorkspaceTab { id: string; view: ViewId; pinned: boolean; group: string | null; locked: boolean; }
+interface WorkspaceTab { id: string; view: ViewId; pinned: boolean; group: string | null; locked: boolean; unsaved?: boolean; }
 interface HistoryEntry { id: string; action: string; detail: string; at: string; }
 interface GitHistoryEntry { commit: string; action: string; recordedAt: string; revisionId: string; restoredFrom?: string; label?: string; }
 interface ExportSaveResult { status: 'saved' | 'cancelled'; filePath?: string; warnings: string[]; vscode?: { available: boolean; label?: string }; }
 interface NotificationEntry { id: string; title: string; detail: string; icon: string; read: boolean; }
-interface UpdateStatus { state: 'disabled' | 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'up-to-date' | 'error'; currentVersion: string; updateVersion: string; message: string; releaseUrl: string; }
+interface UpdateStatus { state: 'disabled' | 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'up-to-date' | 'cancelled' | 'rolled-back' | 'error'; currentVersion: string; updateVersion: string; progressPercent: number | null; message: string; releaseUrl: string; canCancel: boolean; deferred: boolean; }
 type TotpAlgorithm = 'SHA1' | 'SHA256' | 'SHA512';
 interface AuthenticatorEntry { id: string; label: string; account: string; issuer?: string; algorithm: TotpAlgorithm; digits: number; period: number; createdAt: string; }
 interface AuthenticatorRegistration { registrationId: string; entry: AuthenticatorEntry; manualSecret: string; uri: string; qrDataUrl: string; imported: boolean; expiresAt: string; }
@@ -150,7 +150,9 @@ interface Bridge {
   historyExport(query: Record<string, unknown>): Promise<ExportSaveResult>;
   updateStatus(): Promise<UpdateStatus>;
   checkForUpdates(): Promise<UpdateStatus>;
-  restartToUpdate(): void;
+  cancelUpdateCheck(): Promise<UpdateStatus>;
+  deferUpdate(): Promise<UpdateStatus>;
+  restartToUpdate(request: { unsavedWork: string[]; confirmDiscard: boolean }): Promise<{ status: 'not-ready' | 'restarting' } | { status: 'unsaved-work'; unsavedWork: string[] }>;
   onUpdateStatus(cb: (status: UpdateStatus) => void): void;
   authenticatorBegin(request: { mode: 'generate'; account: string; issuer?: string; label?: string; algorithm?: TotpAlgorithm; digits?: number; period?: number } | { mode: 'import'; uri: string }): Promise<AuthenticatorRegistration>;
   authenticatorImportPngFile(): Promise<AuthenticatorRegistration | null>;
@@ -631,7 +633,7 @@ const state = {
   historyAccess: { configured: false, unlocked: false, password: '' },
   exportDraft: { archive: 'none', lineEnding: 'lf', level: 'normal', method: 'LZMA2', dictionary: 64, word: 64, solid: true, solidBlock: 256, threads: 4, split: 0, encryption: false, encryptHeaders: true, password: '', savedPath: '' },
   notifications: [] as NotificationEntry[],
-  update: { state: 'idle', currentVersion: '0.1.0', updateVersion: '', message: 'Automatic update checks are enabled.', releaseUrl: '' } as UpdateStatus,
+  update: { state: 'idle', currentVersion: '0.1.0', updateVersion: '', progressPercent: null, message: 'Automatic update checks are enabled.', releaseUrl: '', canCancel: false, deferred: false } as UpdateStatus,
   auth: {
     phase: 'list' as 'list' | 'generate' | 'import' | 'confirm', loading: false, error: '', status: '',
     entries: [] as AuthenticatorEntry[], selectedId: '', codes: null as AuthenticatorCodes | null,
@@ -1023,7 +1025,9 @@ function bridge(): Bridge {
     historyExport: async () => ({ status: 'cancelled', warnings: [] }),
     updateStatus: async () => state.update,
     checkForUpdates: async () => ({ ...state.update, state: 'disabled', message: 'Update checks run only in an installed build.' }),
-    restartToUpdate: () => undefined,
+    cancelUpdateCheck: async () => ({ ...state.update, state: 'cancelled', canCancel: false, message: 'The update check was cancelled before download began.' }),
+    deferUpdate: async () => ({ ...state.update, deferred: true, message: 'The update remains ready. Restart when your work is saved.' }),
+    restartToUpdate: async () => ({ status: 'not-ready' }),
     onUpdateStatus: () => undefined,
     authenticatorBegin: async () => { throw new Error('Authenticator registration is available only in the installed application.'); },
     authenticatorImportPngFile: async () => { throw new Error('Authenticator PNG import is available only in the installed application.'); },
@@ -1871,9 +1875,10 @@ function updatesPane(): HTMLElement {
     h('p', {}, u.message),
     h('div', { class: 'notice warn' }, icon('warning'), h('span', {}, 'Updates are transported over HTTPS and checked with Squirrel package hashes, but every installer is unsigned and may show an unknown-publisher warning.')),
     h('div', { class: 'btnrow' },
-      h('button', { class: 'btn tonal', disabled: u.state === 'checking', onclick: () => { void bridge().checkForUpdates().then((status) => { state.update = status; render(); }); } }, u.state === 'checking' ? 'Checking…' : 'Check for updates'),
-      u.state === 'ready' ? h('button', { class: 'btn filled', onclick: () => bridge().restartToUpdate() }, 'Restart to install update') : null,
-      u.state === 'ready' ? h('button', { class: 'btn text', onclick: () => snack('The update remains ready. Restart when your work is saved.') }, 'Later') : null)));
+      h('button', { class: 'btn tonal', disabled: u.state === 'checking' || u.state === 'downloading' || u.state === 'ready', onclick: () => { void bridge().checkForUpdates().then((status) => { state.update = status; render(); }); } }, u.state === 'checking' ? 'Checking…' : u.state === 'downloading' ? 'Downloading…' : 'Check for updates'),
+      u.canCancel ? h('button', { class: 'btn text', onclick: () => { void bridge().cancelUpdateCheck().then((status) => { state.update = status; render(); }); } }, 'Cancel check') : null,
+      u.state === 'ready' ? h('button', { class: 'btn filled', onclick: () => { void restartReadyUpdate(); } }, 'Restart to install update') : null,
+      u.state === 'ready' ? h('button', { class: 'btn text', disabled: u.deferred, onclick: () => { void bridge().deferUpdate().then((status) => { state.update = status; snack(status.message); render(); }); } }, u.deferred ? 'Later selected' : 'Later') : null)));
   for (const p of UPDATE_PROFILES.filter((p) => match(`${p.title} ${p.subtitle} ${p.bullets.join(' ')}`))) {
     cards.appendChild(h('article', { class: 'card', style: 'min-height:340px' },
       h('div', { class: 'card-head' }, h('div', {},
@@ -1898,6 +1903,29 @@ function updatesPane(): HTMLElement {
   return h('div', { class: 'pane padded' },
     h('div', { style: 'margin-bottom:16px;max-width:520px' }, searchLine('updates', 'Search update profiles and their effects')),
     cards);
+}
+
+async function restartReadyUpdate(): Promise<void> {
+  const unsavedWork = collectUnsavedWork();
+  const first = await bridge().restartToUpdate({ unsavedWork, confirmDiscard: false });
+  if (first.status !== 'unsaved-work') return;
+  const detail = first.unsavedWork.join(', ');
+  if (!window.confirm(`Save or close this unsaved work before restarting: ${detail}.\n\nRestart anyway and discard those unsaved changes?`)) {
+    snack('Restart cancelled. The update remains ready and no work was discarded.');
+    return;
+  }
+  await bridge().restartToUpdate({ unsavedWork: first.unsavedWork, confirmDiscard: true });
+}
+
+function collectUnsavedWork(): string[] {
+  const work = state.tabs.filter((tab) => tab.unsaved).map((tab) => `${VIEW_META[tab.view].title} tab`);
+  const settings = state.settingsSurface;
+  if (settings && state.settingsDraft.displayName.trim() !== settings.displayName.displayName) work.push('Display-name edit');
+  if (settings?.schoolMode.status === 'ready' && state.settingsDraft.schoolLabel.trim() !== settings.schoolMode.state.displayLabel) work.push('School-mode name edit');
+  if (state.settingsDraft.password || state.settingsDraft.confirmPassword) work.push('Unsubmitted settings credential');
+  if (state.schedule.draft) work.push(`Scheduled-settings rule ${state.schedule.draft.label || state.schedule.draft.id}`);
+  if (state.auth.phase !== 'list' && (state.auth.registration || state.auth.draft.account || state.auth.draft.uri || state.auth.draft.code)) work.push('Authenticator registration');
+  return [...new Set(work)];
 }
 
 function isoPane(): HTMLElement {

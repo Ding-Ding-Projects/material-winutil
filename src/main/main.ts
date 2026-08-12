@@ -9,7 +9,7 @@ import type {
   AuthenticatorBeginRequest, AuthenticatorCodes, AuthenticatorEntry, AuthenticatorRegistration,
   CommandResult, ExportFormat, HistoryBrowseResult, HistoryEntry, HistoryQuery, NarrationClientResult, NarrationEvent, NarrationRuntimeState,
   PersonalVocabularyState, PersonalVocabularyUploadResult, Preferences, RunKind, SchoolModeChangeResult,
-  ScheduledSettingsState, SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateStatus, WinutilCatalog,
+  ScheduledSettingsState, SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateRestartRequest, UpdateRestartResult, UpdateStatus, WinutilCatalog,
 } from '../shared/types';
 import { resolvePackageRequest, validateCatalog, wingetArgs } from './package-policy';
 import { AUTHENTICATOR_PNG_LIMITS, AuthenticatorService } from './authenticator-service';
@@ -26,6 +26,7 @@ import { LockService, type LockCreateRequest, type LockSearchRequest, type LockU
 import { verifyOfflineDocsBundle, type OfflineDocsBundle } from '../shared/offline-docs';
 import { ScheduledSettingsService } from './scheduled-settings-service';
 import type { ScheduledSettingValue, ScheduledSettingsDocument } from '../shared/scheduled-settings';
+import { UpdateService } from './update-service';
 
 const ROOT = path.join(__dirname, '..', '..');
 const CONFIG_DIR = path.join(__dirname, '..', 'config');
@@ -58,7 +59,6 @@ const narrationTransport = new IpcNarrationTransport(() => {
 const narratorRuntime = new NarratorRuntime(narrationTransport);
 let currentNarratorPreferences: Preferences | null = null;
 let basePreferences: Preferences | null = null;
-const UPDATE_FEED = 'https://github.com/Ding-Ding-Projects/material-winutil/releases/latest/download/';
 const COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_TEXT_PAYLOAD = 2 * 1024 * 1024;
 const MAX_HISTORY_FIELD = 4096;
@@ -74,19 +74,9 @@ const EXPORT_VIEWS = new Set([
   'install', 'tweaks', 'config', 'updates', 'iso', 'overview', 'sync', 'skills', 'memory',
   'history', 'changelog', 'operations', 'security', 'settings', 'docs',
 ]);
-let updateStatus: UpdateStatus = {
-  state: app.isPackaged ? 'idle' : 'disabled', currentVersion: app.getVersion(), updateVersion: '',
-  message: app.isPackaged ? 'Automatic update checks are enabled.' : 'Update checks run only in an installed build.',
-  releaseUrl: 'https://github.com/Ding-Ding-Projects/material-winutil/releases/latest',
-};
+let updateService: UpdateService | null = null;
 
 if (squirrelStartup) app.quit();
-
-function setUpdateStatus(patch: Partial<UpdateStatus>): UpdateStatus {
-  updateStatus = { ...updateStatus, ...patch };
-  win?.webContents.send('update:status', updateStatus);
-  return updateStatus;
-}
 
 async function loadCatalog(): Promise<WinutilCatalog> {
   if (catalogCache) return catalogCache;
@@ -113,34 +103,6 @@ function trustedSender(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEven
 
 function requireTrustedSender(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): void {
   if (!trustedSender(event)) throw new Error('The request did not originate from the application renderer.');
-}
-
-async function checkForUpdates(): Promise<UpdateStatus> {
-  if (!app.isPackaged) return updateStatus;
-  setUpdateStatus({ state: 'checking', message: 'Checking the unsigned HTTPS update feed…' });
-  try {
-    await autoUpdater.checkForUpdates();
-  } catch (error) {
-    setUpdateStatus({ state: 'error', message: error instanceof Error ? error.message : String(error) });
-  }
-  return updateStatus;
-}
-
-function configureUpdater(): void {
-  if (!app.isPackaged || process.platform !== 'win32') return;
-  autoUpdater.setFeedURL({ url: UPDATE_FEED });
-  autoUpdater.on('checking-for-update', () => setUpdateStatus({ state: 'checking', message: 'Checking the unsigned HTTPS update feed…' }));
-  autoUpdater.on('update-available', () => setUpdateStatus({
-    state: 'available', message: 'An update is available and will download in the background.',
-  }));
-  autoUpdater.on('update-not-available', () => setUpdateStatus({ state: 'up-to-date', updateVersion: '', message: 'This is the latest published version.' }));
-  autoUpdater.on('error', (error) => setUpdateStatus({ state: 'error', message: error.message }));
-  autoUpdater.on('update-downloaded', (_event, releaseNotes, releaseName) => setUpdateStatus({
-    state: 'ready', updateVersion: String(releaseName ?? '').replace(/^v/, ''),
-    message: typeof releaseNotes === 'string' ? releaseNotes.slice(0, 240) : 'The update is ready to install.',
-  }));
-  setTimeout(() => { void checkForUpdates(); }, 15_000);
-  setInterval(() => { void checkForUpdates(); }, 4 * 60 * 60 * 1000);
 }
 
 function createWindow(): void {
@@ -867,9 +829,11 @@ ipcMain.handle('history:export', async (event, query: HistoryQuery): Promise<Str
   } });
 });
 
-ipcMain.handle('update:status', (event): UpdateStatus => { requireTrustedSender(event); return updateStatus; });
-ipcMain.handle('update:check', async (event): Promise<UpdateStatus> => { requireTrustedSender(event); return checkForUpdates(); });
-ipcMain.on('update:restart', (event) => { if (trustedSender(event) && updateStatus.state === 'ready') autoUpdater.quitAndInstall(); });
+ipcMain.handle('update:status', (event): UpdateStatus => { requireTrustedSender(event); return updateService!.status(); });
+ipcMain.handle('update:check', async (event): Promise<UpdateStatus> => { requireTrustedSender(event); return updateService!.check(); });
+ipcMain.handle('update:cancel', (event): UpdateStatus => { requireTrustedSender(event); return updateService!.cancel(); });
+ipcMain.handle('update:defer', async (event): Promise<UpdateStatus> => { requireTrustedSender(event); return updateService!.defer(); });
+ipcMain.handle('update:restart', async (event, request: UpdateRestartRequest): Promise<UpdateRestartResult> => { requireTrustedSender(event); return updateService!.restart(request); });
 
 function authenticator(): AuthenticatorService {
   if (!authenticatorService) authenticatorService = new AuthenticatorService({ appDataDirectory: USER_DIR() });
@@ -1067,7 +1031,11 @@ app.whenReady().then(async () => {
   createWindow();
   win?.setTitle(initialSettings.displayName.displayName);
   settingsSurfaceService.startWatching(broadcastSettingsSurface);
-  configureUpdater();
+  updateService = new UpdateService({
+    adapter: autoUpdater, packaged: app.isPackaged, platform: process.platform, currentVersion: app.getVersion(), userDataDirectory: USER_DIR(),
+    onStatus: (status) => win?.webContents.send('update:status', status),
+  });
+  await updateService.initialize();
 });
 app.on('accessibility-support-changed', (_event, enabled) => {
   if (currentNarratorPreferences) narratorRuntime.configure(effectiveNarratorPreferences(currentNarratorPreferences), enabled);

@@ -255,12 +255,18 @@ export interface CommandResult {
 }
 
 export interface UpdateStatus {
-  state: 'disabled' | 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'up-to-date' | 'error';
+  state: 'disabled' | 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'up-to-date' | 'cancelled' | 'rolled-back' | 'error';
   currentVersion: string;
   updateVersion: string;
+  progressPercent: number | null;
   message: string;
   releaseUrl: string;
+  canCancel: boolean;
+  deferred: boolean;
 }
+
+export interface UpdateRestartRequest { unsavedWork: string[]; confirmDiscard: boolean }
+export type UpdateRestartResult = { status: 'not-ready' | 'restarting' } | { status: 'unsaved-work'; unsavedWork: string[] };
 
 export interface TotpSecret {
   id: string;
@@ -346,7 +352,9 @@ export interface Bridge {
   historyExport(query: HistoryQuery): Promise<StructuredExportSaveResult>;
   updateStatus(): Promise<UpdateStatus>;
   checkForUpdates(): Promise<UpdateStatus>;
-  restartToUpdate(): void;
+  cancelUpdateCheck(): Promise<UpdateStatus>;
+  deferUpdate(): Promise<UpdateStatus>;
+  restartToUpdate(request: UpdateRestartRequest): Promise<UpdateRestartResult>;
   onUpdateStatus(cb: (status: UpdateStatus) => void): void;
   authenticatorBegin(request: AuthenticatorBeginRequest): Promise<AuthenticatorRegistration>;
   authenticatorImportPngFile(): Promise<AuthenticatorRegistration | null>;

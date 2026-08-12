@@ -30,6 +30,21 @@ function Find-Node {
     throw 'Node.js LTS installation completed but node.exe was not found in the current or standard user/machine paths.'
 }
 
+function Install-LockedDependencies([string]$NpmPath) {
+    $attempts = 3
+    for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+        Write-Phase "Installing the exact locked dependency tree (attempt $attempt of $attempts)."
+        & $NpmPath ci --no-audit --no-fund
+        if ($LASTEXITCODE -eq 0) { return }
+        if ($attempt -eq $attempts) {
+            throw "npm ci failed with exit code $LASTEXITCODE after $attempts attempts."
+        }
+        $delaySeconds = 3 * $attempt
+        Write-Phase "npm ci failed with exit code $LASTEXITCODE; retrying after $delaySeconds seconds because package downloads can be transient."
+        Start-Sleep -Seconds $delaySeconds
+    }
+}
+
 $node = Find-Node
 $nodeDir = Split-Path -Parent $node
 $npm = Join-Path $nodeDir 'npm.cmd'
@@ -39,9 +54,7 @@ Write-Phase "Using $(& $node --version) from $node"
 
 Push-Location $root
 try {
-    Write-Phase 'Installing the exact locked dependency tree.'
-    & $npm ci --no-audit --no-fund
-    if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE." }
+    Install-LockedDependencies -NpmPath $npm
 
     Write-Phase 'Verifying the Electron binary and repairing it from the checksum-verified cache when necessary.'
     & $node (Join-Path $PSScriptRoot 'ensure-electron-binary.mjs')

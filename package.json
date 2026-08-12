@@ -10,7 +10,8 @@
     "clean": "node scripts/clean.mjs",
     "build:ts": "tsc -p tsconfig.json",
     "build:assets": "node scripts/copy-assets.mjs && node scripts/build-offline-docs-bundle.mjs",
-    "build": "npm run clean && npm run build:ts && npm run build:assets",
+    "build": "npm run clean && npm run build:icon && npm run build:ts && npm run build:assets",
+    "build:icon": "node scripts/build-icon.mjs",
     "test:contracts": "npm run build && node --test scripts/tests/*.test.mjs",
     "test:smoke-contracts": "node --test scripts/smoke/contracts.test.mjs",
     "smoke:capture": "node scripts/smoke/capture.mjs",
@@ -41,7 +42,8 @@
     "productName": "Material System Utility",
     "asar": true,
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
       "dist/**/*",
@@ -50,6 +52,7 @@
       "THIRD_PARTY_NOTICES.md"
     ],
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         {
           "target": "squirrel",
@@ -65,7 +68,7 @@
     "squirrelWindows": {
       "name": "MaterialSystemUtility",
       "artifactName": "MaterialSystemUtility-Setup.${ext}",
-      "iconUrl": "https://github.com/favicon.ico",
+      "iconUrl": "https://raw.githubusercontent.com/Ding-Ding-Projects/material-winutil/main/build/icon.ico",
       "msi": false
     },
     "publish": {

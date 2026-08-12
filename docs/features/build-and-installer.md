@@ -2,6 +2,8 @@
 
 The repository provides two root-level one-click build paths for Windows.
 
+The package uses the local multi-resolution icon `build/icon.ico`. It is embedded in the executable and referenced by Squirrel installer metadata; it is a product identity asset, not a signing or authenticity mechanism.
+
 ## Build a runnable application
 
 Run:

@@ -48,8 +48,12 @@ jobs:
 
       - name: Record runner and toolchain context
         shell: pwsh
+        env:
+          WORKFLOW_STARTED_AT: ${{ steps.timing_start.outputs.started_at }}
         run: |
           $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path workflow-evidence | Out-Null
+          "Workflow started: $env:WORKFLOW_STARTED_AT" | Set-Content -Encoding utf8 workflow-evidence/timing.txt
           @(
             "Commit: $env:GITHUB_SHA"
             "Runner name: $env:RUNNER_NAME"

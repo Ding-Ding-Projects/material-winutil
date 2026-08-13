@@ -482,6 +482,31 @@ async function readHistoryBounded(): Promise<HistoryEntry[]> {
   }
 }
 
+interface RedactedHistorySnapshot {
+  entries: HistoryEntry[];
+}
+
+function redactedHistorySnapshot(entries: readonly HistoryEntry[]): RedactedHistorySnapshot {
+  return { entries: entries.map((entry) => ({ ...entry })) };
+}
+
+function projectRedactedHistorySnapshot(value: unknown): RedactedHistorySnapshot {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('The selected history revision has no restorable state.');
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).length !== 1 || !Array.isArray(record.entries) || record.entries.length > MAX_HISTORY_ENTRIES) {
+    throw new Error('The selected history revision has an invalid restorable state.');
+  }
+  const entries = record.entries.map((entry) => projectHistoryEntry(entry));
+  if (entries.some((entry) => entry === null)) throw new Error('The selected history revision contains invalid redacted entries.');
+  return { entries: entries as HistoryEntry[] };
+}
+
+async function replaceHistoryEntries(entries: readonly HistoryEntry[]): Promise<void> {
+  await fs.mkdir(USER_DIR(), { recursive: true });
+  const body = entries.map((entry) => JSON.stringify(entry)).join('\n');
+  await atomicWrite(HISTORY_FILE(), body ? `${body}\n` : '');
+}
+
 function unsupported(kind: RunKind): CommandResult {
   return {
     ok: false,
@@ -892,7 +917,7 @@ ipcMain.handle('history:append', async (_e, entry: Omit<HistoryEntry, 'id' | 'at
     }
   });
   await historyWriteQueue;
-  await localHistory().recordRedactedSnapshot('updated', { action: full.action, detail: full.detail, recordedAt: full.at });
+  await localHistory().recordRedactedSnapshot('updated', redactedHistorySnapshot(await readHistoryBounded()));
   return full;
 });
 
@@ -950,9 +975,23 @@ ipcMain.handle('history:diff', async (event, left: string, right: string) => {
   return changes.slice(0, 1_000);
 });
 
-ipcMain.handle('history:restore', async (event, revision: string) => { requireTrustedSender(event); await requireHistoryAccess(); return localHistory().restore(revision); });
-ipcMain.handle('history:label', async (event, revision: string, label: string) => { requireTrustedSender(event); await requireHistoryAccess(); return localHistory().label(revision, label); });
-ipcMain.handle('history:prune', async (event, keep: number) => { requireTrustedSender(event); await requireHistoryAccess(); return localHistory().prune(keep); });
+ipcMain.handle('history:restore', async (event, revision: string) => {
+  requireTrustedSender(event);
+  await requireHistoryAccess();
+  const snapshot = projectRedactedHistorySnapshot(await localHistory().snapshot(revision));
+  await replaceHistoryEntries(snapshot.entries);
+  return localHistory().restore(revision, redactedHistorySnapshot(snapshot.entries));
+});
+ipcMain.handle('history:label', async (event, revision: string, label: string) => {
+  requireTrustedSender(event);
+  await requireHistoryAccess();
+  return localHistory().label(revision, label, redactedHistorySnapshot(await readHistoryBounded()));
+});
+ipcMain.handle('history:prune', async (event, keep: number) => {
+  requireTrustedSender(event);
+  await requireHistoryAccess();
+  return localHistory().prune(keep, redactedHistorySnapshot(await readHistoryBounded()));
+});
 ipcMain.handle('history:export', async (event, query: HistoryQuery): Promise<StructuredExportSaveResult> => {
   requireTrustedSender(event);
   await requireHistoryAccess();

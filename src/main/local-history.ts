@@ -159,7 +159,7 @@ export class LocalHistory {
     });
   }
 
-  async restore(revision: string): Promise<LocalHistoryEntry> {
+  async restore(revision: string, activeSnapshot?: JsonValue): Promise<LocalHistoryEntry> {
     return this.enqueue(async () => {
       await this.initializeUnlocked();
       if (!/^[0-9a-f]{7,40}$/i.test(revision)) throw new Error('Revision must be a Git commit identifier');
@@ -167,7 +167,8 @@ export class LocalHistory {
       const isAncestor = await this.gitExitCode(['merge-base', '--is-ancestor', fullRevision, 'HEAD']);
       if (isAncestor !== 0) throw new Error('Revision is not part of local history');
       const document = parseSnapshotDocument(await this.git(['show', `${fullRevision}:${SNAPSHOT_FILE}`]));
-      return this.commitSnapshot('restored', document.snapshot, fullRevision);
+      if (activeSnapshot !== undefined) assertRedactedJson(activeSnapshot);
+      return this.commitSnapshot('restored', activeSnapshot ?? document.snapshot, fullRevision);
     });
   }
 
@@ -231,24 +232,26 @@ export class LocalHistory {
     });
   }
 
-  async label(revision: string, label: string): Promise<LocalHistoryEntry> {
+  async label(revision: string, label: string, activeSnapshot?: JsonValue): Promise<LocalHistoryEntry> {
     return this.enqueue(async () => {
       await this.initializeUnlocked();
       const fullRevision = await this.resolveRevision(revision);
       const cleanLabel = label.trim();
       if (!cleanLabel || cleanLabel.length > 120 || /[\x00-\x1f\x7f]/u.test(cleanLabel)) throw new Error('Label must be a bounded single-line value');
       const document = parseSnapshotDocument(await this.git(['show', `${fullRevision}:${SNAPSHOT_FILE}`]));
-      return this.commitSnapshot('updated', document.snapshot, undefined, cleanLabel);
+      if (activeSnapshot !== undefined) assertRedactedJson(activeSnapshot);
+      return this.commitSnapshot('updated', activeSnapshot ?? document.snapshot, undefined, cleanLabel);
     });
   }
 
-  async prune(keep: number): Promise<LocalHistoryEntry> {
+  async prune(keep: number, activeSnapshot?: JsonValue): Promise<LocalHistoryEntry> {
     return this.enqueue(async () => {
       await this.initializeUnlocked();
       if (!Number.isInteger(keep) || keep < 10 || keep > MAX_HISTORY_RESULTS) throw new Error('keep must be between 10 and 500');
-      const snapshot = await this.hasCommits()
+      const snapshot = activeSnapshot ?? (await this.hasCommits()
         ? parseSnapshotDocument(await readFile(path.join(this.repositoryDirectory, SNAPSHOT_FILE), 'utf8')).snapshot
-        : {};
+        : {});
+      assertRedactedJson(snapshot);
       return this.commitSnapshot('settings-changed', snapshot, undefined, `Retention: keep ${keep}`);
     });
   }

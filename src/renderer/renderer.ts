@@ -750,6 +750,7 @@ const state = {
   gate: { left: false, right: false, slider: 0, action: '', kind: null as RunKind | null, ids: null as string[] | null, after: null as null | (() => void) },
   queue: { active: false, index: 0, total: 0, current: '', log: [] as string[] },
   deps: [] as Array<{ name: string; present: boolean; installed: boolean; detail: string }>,
+  basePrefs: { ...DEFAULT_PREFS },
   prefs: { ...DEFAULT_PREFS },
   runOutput: 'No command has run yet. Package actions use WinGet. Other system operations stay disabled until their verified WinUtil adapter is installed.',
   history: [] as HistoryEntry[],
@@ -1266,13 +1267,40 @@ function applyAppearanceDraft(): void {
 
 async function persistAppearanceOverrides(): Promise<void> {
   state.prefs.appearanceOverrides = { ...state.appearanceOverrides };
-  await bridge().writePrefs({ ...state.prefs, appearanceOverrides: { ...state.appearanceOverrides } });
+  captureBasePrefsFromLive();
+  state.basePrefs.appearanceOverrides = { ...state.appearanceOverrides };
+  await bridge().writePrefs({ ...state.basePrefs, appearanceOverrides: { ...state.appearanceOverrides } });
 }
 
 function appearanceAttrs(targetId: string, attrs: Record<string, unknown> = {}): Record<string, unknown> {
   const safeTargetId = appearanceTargetId(targetId);
   const style = appearanceStyle(targetId);
   return { ...attrs, 'data-appearance-target': safeTargetId, ...(style ? { style: attrs.style ? `${String(attrs.style)};${style}` : style } : {}) };
+}
+
+const SCHEDULED_PREF_KEYS = ['theme', 'density', 'language', 'narrator', 'narratorEnabled', 'enFunny', 'yueFunny', 'accent', 'font', 'scale', 'weight', 'radius', 'reducedMotion', 'exportFormat'] as const satisfies readonly (keyof Prefs)[];
+
+function scheduledPrefs(base: Prefs, scheduled: ScheduledSettingsState | null): Prefs {
+  const next: Prefs = { ...base, appearanceOverrides: { ...base.appearanceOverrides } };
+  const effective = scheduled?.effectiveSettings;
+  if (!effective) return next;
+  for (const key of SCHEDULED_PREF_KEYS) {
+    const value = effective[key];
+    if (value !== undefined) (next as unknown as Record<string, ScheduledSettingValue>)[key] = value;
+  }
+  return next;
+}
+
+function captureBasePrefsFromLive(): void {
+  const expected = scheduledPrefs(state.basePrefs, state.schedule.data);
+  const next: Prefs = { ...state.basePrefs, appearanceOverrides: { ...state.prefs.appearanceOverrides } };
+  for (const key of SCHEDULED_PREF_KEYS) {
+    if (state.prefs[key] !== expected[key]) {
+      (next as unknown as Record<string, ScheduledSettingValue>)[key] = (state.prefs as unknown as Record<string, ScheduledSettingValue>)[key];
+    }
+  }
+  state.basePrefs = next;
+  state.prefs = scheduledPrefs(state.basePrefs, state.schedule.data);
 }
 
 function applyPrefs(persist = false): void {
@@ -1288,12 +1316,12 @@ function applyPrefs(persist = false): void {
   document.body.style.fontFamily = `${p.font}, "Segoe UI", system-ui, sans-serif`;
   document.body.style.fontWeight = String(p.weight);
   state.appearanceOverrides = { ...p.appearanceOverrides };
-  if (persist) void bridge().writePrefs({ ...p, appearanceOverrides: { ...state.appearanceOverrides } });
+  if (persist) void bridge().writePrefs({ ...state.basePrefs, appearanceOverrides: { ...state.basePrefs.appearanceOverrides } });
   persistWorkspace();
   try { localStorage.setItem('winutil.profiles', JSON.stringify(state.profiles)); } catch { /* profiles stay in memory */ }
 }
 
-function savePrefs(): void { applyPrefs(true); }
+function savePrefs(): void { captureBasePrefsFromLive(); applyPrefs(true); }
 
 function schoolModeReady(): SettingsSurfaceState['schoolMode'] & { status: 'ready' } | null {
   const value = state.settingsSurface?.schoolMode;
@@ -1321,10 +1349,7 @@ function scheduledDisplayName(): string {
 
 function acceptScheduledSettings(next: ScheduledSettingsState): void {
   state.schedule.data = next;
-  const effective = next.effectiveSettings;
-  for (const key of ['theme', 'density', 'language', 'narrator', 'narratorEnabled', 'enFunny', 'yueFunny', 'accent', 'font', 'scale', 'weight', 'radius', 'reducedMotion', 'exportFormat'] as const) {
-    if (effective[key] !== undefined) (state.prefs as unknown as Record<string, ScheduledSettingValue>)[key] = effective[key];
-  }
+  state.prefs = scheduledPrefs(state.basePrefs, next);
   document.title = scheduledDisplayName();
   applyPrefs(false);
 }
@@ -3655,7 +3680,8 @@ async function refreshAppearanceThemes(): Promise<void> {
 async function applyNamedAppearanceTheme(id: string): Promise<void> {
   try {
     const result = await bridge().appearanceThemeApply(id);
-    state.prefs = { ...result.preferences, appearanceOverrides: { ...result.preferences.appearanceOverrides } };
+    state.basePrefs = { ...result.preferences, appearanceOverrides: { ...result.preferences.appearanceOverrides } };
+    state.prefs = scheduledPrefs(state.basePrefs, state.schedule.data);
     state.appearanceOverrides = { ...state.prefs.appearanceOverrides };
     applyPrefs(false);
     render();
@@ -3668,7 +3694,8 @@ async function applyNamedAppearanceTheme(id: string): Promise<void> {
 async function resetNamedAppearanceTheme(): Promise<void> {
   try {
     const preferences = await bridge().appearanceThemeReset();
-    state.prefs = { ...preferences, appearanceOverrides: { ...preferences.appearanceOverrides } };
+    state.basePrefs = { ...preferences, appearanceOverrides: { ...preferences.appearanceOverrides } };
+    state.prefs = scheduledPrefs(state.basePrefs, state.schedule.data);
     state.appearanceOverrides = { ...state.prefs.appearanceOverrides };
     applyPrefs(false);
     render();
@@ -4327,7 +4354,8 @@ function appearanceThemesDialog(): HTMLElement {
               state.appearanceThemes.data = await bridge().appearanceThemeDelete(theme.id);
               if (wasActive) {
                 const saved = await bridge().readPrefs();
-                state.prefs = { ...state.prefs, ...saved, appearanceOverrides: { ...(saved.appearanceOverrides ?? state.prefs.appearanceOverrides) } };
+                state.basePrefs = { ...DEFAULT_PREFS, ...saved, appearanceOverrides: { ...(saved.appearanceOverrides ?? {}) } };
+                state.prefs = scheduledPrefs(state.basePrefs, state.schedule.data);
                 state.appearanceOverrides = { ...state.prefs.appearanceOverrides };
                 applyPrefs(false);
               }
@@ -5582,7 +5610,8 @@ function bindShortcuts(): void {
 
 async function boot(): Promise<void> {
   const saved = await bridge().readPrefs();
-  state.prefs = { ...DEFAULT_PREFS, ...saved };
+  state.basePrefs = { ...DEFAULT_PREFS, ...saved, appearanceOverrides: { ...(saved.appearanceOverrides ?? {}) } };
+  state.prefs = { ...state.basePrefs, appearanceOverrides: { ...state.basePrefs.appearanceOverrides } };
   try { acceptSettingsSurface(await bridge().settingsSurfaceState()); }
   catch {
     state.settingsSurface = {

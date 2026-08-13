@@ -11,7 +11,6 @@ import { ExternalSettingsSourceError, loadHomeAssistantBooleanSource, loadJsonSe
 const EMPTY_DOCUMENT: ScheduledSettingsDocument = Object.freeze({ schemaVersion: SCHEDULED_SETTINGS_SCHEMA_VERSION, rules: [] });
 const HA_TARGET_PREFIX = 'scheduled-settings-ha-';
 const HA_ACCOUNT = 'local-user';
-const TICK_MS = 60_000;
 
 export interface ScheduledSourceStatus {
   readonly ruleId: string;
@@ -115,6 +114,7 @@ export class ScheduledSettingsService {
   private readonly cache = new Map<string, CachedSource>();
   private generation = 0;
   private timer: NodeJS.Timeout | null = null;
+  private closed = false;
   private evaluation: Promise<ScheduledSettingsSnapshot> = Promise.resolve({
     document: EMPTY_DOCUMENT, effectiveSettings: {}, activeRuleIds: [], settingRuleIds: {}, sourceStatuses: [],
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local system time', evaluatedAt: new Date(0).toISOString(),
@@ -125,13 +125,13 @@ export class ScheduledSettingsService {
   }
 
   async initialize(baseSettings: Readonly<Record<string, ScheduledSettingValue>>): Promise<ScheduledSettingsSnapshot> {
+    this.closed = false;
     this.baseSettings = cloneSettings(baseSettings);
     try { this.document = productionDocument(parseScheduledSettingsJson(await fs.readFile(this.file, 'utf8'))); }
     catch { this.document = EMPTY_DOCUMENT; }
     await atomicWrite(this.file, JSON.stringify(this.document, null, 2));
     const snapshot = await this.refresh(true);
-    this.timer = setInterval(() => { void this.refresh(false); }, TICK_MS);
-    this.timer.unref();
+    this.scheduleNextMinuteEvaluation();
     return snapshot;
   }
 
@@ -183,9 +183,31 @@ export class ScheduledSettingsService {
   }
 
   close(): void {
+    this.closed = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     this.generation += 1;
+  }
+
+  /**
+   * Rule windows are defined to minute precision.  A repeating interval can
+   * drift past a boundary after a slow external-source refresh, leaving an
+   * expired override live until the next arbitrary tick.  Re-arm one timeout
+   * at the next local minute boundary instead, so every start and expiry gets
+   * a fresh evaluation from the unchanged persisted base settings.
+   */
+  private scheduleNextMinuteEvaluation(): void {
+    if (this.closed) return;
+    if (this.timer) clearTimeout(this.timer);
+    const next = new Date();
+    next.setSeconds(0, 0);
+    next.setMinutes(next.getMinutes() + 1);
+    const delay = Math.max(25, next.getTime() - Date.now() + 25);
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      if (!this.closed) void this.refresh(false).finally(() => this.scheduleNextMinuteEvaluation());
+    }, delay);
+    this.timer.unref();
   }
 
   private async evaluate(generation: number, force: boolean): Promise<ScheduledSettingsSnapshot> {

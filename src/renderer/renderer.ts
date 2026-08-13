@@ -1871,9 +1871,9 @@ function ollamaText(english: string, yue: string): string {
   return english;
 }
 
-function installedOllamaVariants(): OllamaInstalledVariant[] {
+function installedOllamaVariants(includeDegraded = false): OllamaInstalledVariant[] {
   const snapshot = state.ollama.installedEnrichment;
-  if (!snapshot?.complete || snapshot.stale || snapshot.skippedCount !== 0) return [];
+  if (!snapshot || (!includeDegraded && (!snapshot.complete || snapshot.stale || snapshot.skippedCount !== 0))) return [];
   return snapshot.models.flatMap((model) => {
     const separator = model.name.lastIndexOf(':');
     if (separator <= 0 || separator === model.name.length - 1) return [];
@@ -1902,6 +1902,21 @@ async function refreshOllama(refreshCatalog = false): Promise<void> {
     state.ollama.health = health; state.ollama.hardware = hardware; state.ollama.catalog = catalog; state.ollama.installedEnrichment = installedEnrichment; state.ollama.queue = queue;
     if (!state.ollama.selectedModel) state.ollama.selectedModel = catalog.variants[0]?.qualifiedName ?? installedOllamaVariants()[0]?.qualifiedName ?? '';
   } catch (error) { state.ollama.error = error instanceof Error ? error.message : 'The local Ollama state could not be loaded.'; }
+  finally { state.ollama.busy = false; render(); }
+}
+
+async function refreshLocalOllamaInventory(): Promise<void> {
+  if (state.ollama.busy) return;
+  state.ollama.busy = true; state.ollama.error = ''; render();
+  try {
+    const [health, installedEnrichment] = await Promise.all([
+      bridge().ollamaHealth(),
+      bridge().ollamaRefreshInstalledEnrichment(),
+    ]);
+    state.ollama.health = health;
+    state.ollama.installedEnrichment = installedEnrichment;
+    if (!state.ollama.selectedModel) state.ollama.selectedModel = installedOllamaVariants()[0]?.qualifiedName ?? '';
+  } catch (error) { state.ollama.error = error instanceof Error ? error.message : 'The local installed-model inventory could not be refreshed.'; }
   finally { state.ollama.busy = false; render(); }
 }
 
@@ -1996,10 +2011,27 @@ function ollamaFitText(variant: OllamaModelVariant): { verdict: string; detail: 
 
 function ollamaStore(): HTMLElement {
   const catalog = state.ollama.catalog;
-  const localVariants = installedOllamaVariants();
+  const health = state.ollama.health;
+  const localInventory = state.ollama.installedEnrichment;
+  const localVariants = installedOllamaVariants(true);
   const search = sq('ollama:model-store'); const match = makeMatcher(search);
   const officialVariants = (catalog?.variants ?? []).filter((variant) => match(`${variant.qualifiedName} ${variant.capabilities.join(' ')} ${variant.quantization ?? ''} ${variant.blobSizeBytes ?? ''}`));
   const visibleLocalVariants = localVariants.filter((variant) => match(`${variant.qualifiedName} ${variant.family} ${variant.parameterSize} ${variant.capabilities.join(' ')} ${variant.quantization} ${variant.blobSizeBytes}`));
+  const localInventoryState = !localInventory
+    ? health?.state === 'healthy' ? ollamaText('NOT LOADED', '未載入') : ollamaText('UNAVAILABLE', '不可用')
+    : localInventory.complete && !localInventory.stale && health?.state === 'healthy'
+      ? ollamaText('CURRENT', '最新')
+      : localInventory.stale || health?.state !== 'healthy'
+        ? ollamaText('STALE', '過期')
+        : ollamaText('INCOMPLETE', '未完整');
+  const localInventoryMessage = localInventory
+    ? localInventory.message
+    : health?.state === 'missing'
+      ? ollamaText('The local service is not running, so no installed-model inventory is available.', '本機服務未有運行，所以未有已安裝模型清單。')
+      : health?.state === 'unhealthy'
+        ? ollamaText('The local service is unhealthy, so its installed-model inventory is unavailable.', '本機服務唔健康，所以已安裝模型清單不可用。')
+        : ollamaText('No local installed-model inventory has been loaded yet.', '尚未載入本機已安裝模型清單。');
+  const localInventoryCurrent = !!localInventory?.complete && !localInventory.stale && localInventory.skippedCount === 0 && health?.state === 'healthy';
   const modelCard = (variant: OllamaModelVariant, origin: 'official' | 'installed') => {
     const fit = ollamaFitText(variant); const selected = state.ollama.selectedModel === variant.qualifiedName; const inCart = state.ollama.cart.has(variant.qualifiedName);
     const pullEligible = origin === 'official' && !!catalog?.complete;
@@ -2010,7 +2042,7 @@ function ollamaStore(): HTMLElement {
       h('p', {}, `${variant.blobSizeBytes === null ? 'Size unknown' : byteSize(variant.blobSizeBytes)} · ${variant.parameterCount === null ? (origin === 'installed' ? (variant as OllamaInstalledVariant).parameterSize || 'Parameters unknown' : 'Parameters unknown') : variant.parameterCount.toLocaleString()} · ${variant.quantization ?? 'Quantization unknown'} · ${variant.contextLength ?? 'Context unknown'}`),
       origin === 'installed' ? h('p', {}, `${ollamaText('Digest', '摘要')}: ${variant.digest ?? 'Unknown'} · ${ollamaText('Capabilities', '能力')}: ${variant.capabilities.length ? variant.capabilities.join(' · ') : ollamaText('Not reported', '未有報告')}`) : null,
       h('p', { class: 'unavailable-note' }, fit.detail),
-      h('div', { class: 'btnrow' }, h('button', { class: 'btn text', onclick: () => { state.ollama.selectedModel = variant.qualifiedName; render(); } }, selected ? ollamaText('Selected', '已選') : ollamaText('Use for chat', '用於聊天')),
+      h('div', { class: 'btnrow' }, h('button', { class: 'btn text', disabled: origin === 'installed' && !localInventoryCurrent, title: origin === 'installed' && !localInventoryCurrent ? ollamaText('Refresh the healthy complete local inventory before using this saved model record for chat.', '請先重新整理健康而且完整嘅本機清單，先可以用呢個已儲存模型記錄聊天。') : '', onclick: () => { state.ollama.selectedModel = variant.qualifiedName; render(); } }, selected ? ollamaText('Selected', '已選') : ollamaText('Use for chat', '用於聊天')),
         pullEligible ? h('button', { class: 'btn tonal', onclick: () => { inCart ? state.ollama.cart.delete(variant.qualifiedName) : state.ollama.cart.add(variant.qualifiedName); render(); } }, inCart ? ollamaText('Remove from cart', '移出下載清單') : ollamaText('Add to pull cart', '加入下載清單')) : null));
   };
   return h('section', { class: 'ollama-store', 'aria-label': ollamaText('Model Store and installed local models', '模型商店同本機已安裝模型') },
@@ -2020,8 +2052,15 @@ function ollamaStore(): HTMLElement {
         h('span', {}, catalog?.message ?? ollamaText('No official snapshot is available.', '未有官方快照。')),
         h('small', {}, `${catalog?.pageCount ?? 0} page(s) · ${catalog?.variants.length ?? 0} variant(s) · ${catalog?.stale ? 'stale' : 'current'} · revision ${catalog?.sourceRevision || 'unknown'}`))),
     h('section', { class: 'ollama-models', 'aria-label': ollamaText('Verified installed local models', '已驗證本機已安裝模型') },
-      h('h3', {}, ollamaText('Verified installed local models', '已驗證本機已安裝模型')),
-      h('p', { class: 'unavailable-note' }, state.ollama.installedEnrichment?.message ?? ollamaText('No installed-model enrichment is loaded.', '未有載入已安裝模型資料。')),
+      h('div', { class: 'pane-head' }, h('div', {},
+        h('h3', {}, ollamaText('Verified local installed inventory', '已驗證本機已安裝清單')),
+        h('p', { class: 'unavailable-note' }, ollamaText('This section is only the documented local loopback inventory from /api/tags and per-model /api/show responses. It is not an official catalog and cannot add models to the pull cart.', '呢個部分只會顯示經記錄本機 loopback /api/tags 同每個模型 /api/show 回應嘅清單。佢唔係官方目錄，亦唔可以加入下載清單。'))),
+        h('button', { class: 'btn tonal', disabled: state.ollama.busy, onclick: () => void refreshLocalOllamaInventory() }, icon('refresh'), ollamaText('Refresh local inventory', '重新整理本機清單'))),
+      h('div', { class: `ollama-catalog-banner${localInventory?.complete && !localInventory.stale && health?.state === 'healthy' ? ' complete' : ' unavailable'}`, role: 'status' },
+        icon(localInventory?.complete && !localInventory.stale && health?.state === 'healthy' ? 'verified' : 'warning'), h('div', {},
+          h('b', {}, localInventoryState),
+          h('span', {}, localInventoryMessage),
+          h('small', {}, `${ollamaText('Local service', '本機服務')}: ${health?.state ?? ollamaText('unknown', '未知')} · ${ollamaText('Source revision', '來源版本')}: ${localInventory?.sourceRevision || ollamaText('unavailable', '不可用')} · ${ollamaText('Inventory revision', '清單版本')}: ${localInventory?.inventoryRevision || ollamaText('unavailable', '不可用')} · ${ollamaText('Fetched', '擷取時間')}: ${localInventory?.fetchedAt ?? ollamaText('never', '從未')} · ${localInventory?.models.length ?? 0} ${ollamaText('model(s)', '個模型')}`))),
       ...(visibleLocalVariants.length ? visibleLocalVariants.map((variant) => modelCard(variant, 'installed')) : [emptyState(ollamaText('No current complete local installed-model inventory is available. No model is invented.', '未有完整最新本機已安裝模型清單；唔會虛構模型。'))])),
     h('section', { class: 'ollama-models', 'aria-label': ollamaText('Official Model Store', '官方模型商店') },
       h('h3', {}, ollamaText('Official Model Store', '官方模型商店')),

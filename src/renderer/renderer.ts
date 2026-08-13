@@ -2187,6 +2187,12 @@ async function refreshOllamaChatSessions(): Promise<void> {
   } finally { chat.sessionLoading = false; }
 }
 
+async function restoreOllamaChatSessionAtBoot(): Promise<void> {
+  await refreshOllamaChatSessions();
+  const newest = state.ollama.chat.sessions[0];
+  if (newest) await selectOllamaChatSession(newest.id);
+}
+
 async function createOllamaChatSession(): Promise<void> {
   const variant = ollamaVariant(); const chat = state.ollama.chat;
   if (!variant || chat.sessionLoading || chat.busy) return;
@@ -5953,7 +5959,7 @@ async function boot(): Promise<void> {
   catch (error) { state.appLogo.error = error instanceof Error ? error.message : 'The local app-logo state could not be loaded.'; }
   await refreshAppearanceThemes();
   await refreshOllama(false);
-  await refreshOllamaChatSessions();
+  await restoreOllamaChatSessionAtBoot();
   try { state.history = (await bridge().history()).reverse(); } catch { state.history = []; }
   await refreshChangelog();
   await refreshHistoryAccess();

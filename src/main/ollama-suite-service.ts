@@ -482,7 +482,7 @@ export class OllamaSuiteService {
         seed: validated.options.seed, num_ctx: validated.options.numCtx, num_predict: validated.options.numPredict,
       }, stream: true }, controller, remaining(deadline, this.timeouts.request));
       if (!response.body) throw new Error('Ollama chat returned no stream.');
-      reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ''; let total = 0;
+      reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ''; let total = 0; let assistantContent = '';
       while (true) {
         const result = await withDeadline(reader.read(), controller, remaining(deadline, this.timeouts.streamIdle), 'The local Ollama chat stream timed out.'); if (result.done) break;
         total += result.value.byteLength; if (total > OLLAMA_LIMITS.responseBytes) throw new Error('Ollama chat response exceeds 8 MiB.');
@@ -490,14 +490,21 @@ export class OllamaSuiteService {
         const lines = buffer.split(/\r?\n/u); buffer = lines.pop() ?? '';
         for (const line of lines.filter(Boolean)) {
           const parsed = JSON.parse(line) as { message?: { content?: unknown } };
-          if (typeof parsed.message?.content === 'string') onChunk(parsed.message.content);
+          if (typeof parsed.message?.content === 'string' && parsed.message.content) {
+            assistantContent += parsed.message.content;
+            onChunk(parsed.message.content);
+          }
         }
       }
       if (buffer.trim()) {
         const parsed = JSON.parse(buffer) as { message?: { content?: unknown } };
-        if (typeof parsed.message?.content === 'string') onChunk(parsed.message.content);
+        if (typeof parsed.message?.content === 'string' && parsed.message.content) {
+          assistantContent += parsed.message.content;
+          onChunk(parsed.message.content);
+        }
       }
-      return validated;
+      if (!assistantContent) throw new Error('The local Ollama chat completed without a response.');
+      return { ...validated, messages: [...validated.messages, { role: 'assistant', content: assistantContent }] };
     } catch (error) {
       if (controller.signal.reason instanceof UserCancelledError) throw new Error('The local Ollama chat was cancelled.');
       throw error;

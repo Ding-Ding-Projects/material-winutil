@@ -145,6 +145,33 @@ export interface Preferences {
   exportFormat: ExportFormat;
 }
 
+export interface AppearanceThemeValues {
+  theme: ThemeMode;
+  density: Density;
+  accent: string;
+  font: string;
+  scale: number;
+  weight: number;
+  radius: number;
+  reducedMotion: boolean;
+  tabDock: 'left' | 'right' | 'top' | 'bottom';
+}
+
+export interface AppearanceThemeRecord {
+  id: string;
+  name: string;
+  theme: AppearanceThemeValues;
+}
+
+export interface AppearanceThemeDocument {
+  schemaVersion: 1;
+  themes: AppearanceThemeRecord[];
+}
+
+export type AppearanceThemeImportResult =
+  | { status: 'cancelled'; document: AppearanceThemeDocument; imported: 0 }
+  | { status: 'imported'; document: AppearanceThemeDocument; imported: number };
+
 export interface NarrationEvent {
   category: string;
   English: string;
@@ -470,6 +497,12 @@ export interface Bridge {
   appLogoSelectPreset(presetId: AppLogoPresetId, transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot>;
   appLogoUpdateTransform(transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot>;
   appLogoReset(): Promise<AppLogoRuntimeSnapshot>;
+  appearanceThemeList(): Promise<AppearanceThemeDocument>;
+  appearanceThemeCreate(name: string, theme: AppearanceThemeValues): Promise<AppearanceThemeDocument>;
+  appearanceThemeApply(id: string): Promise<AppearanceThemeValues>;
+  appearanceThemeDelete(id: string): Promise<AppearanceThemeDocument>;
+  appearanceThemeImport(): Promise<AppearanceThemeImportResult>;
+  appearanceThemeExport(id: string): Promise<{ status: 'saved' | 'cancelled'; filePath?: string }>;
   ollamaHealth(): Promise<OllamaHealthSnapshot>;
   ollamaInstalledEnrichment(): Promise<OllamaInstalledEnrichmentSnapshot | null>;
   ollamaRefreshInstalledEnrichment(): Promise<OllamaInstalledEnrichmentSnapshot>;

@@ -10,6 +10,7 @@ import type {
   CommandResult, ExportFormat, HistoryBrowseResult, HistoryEntry, HistoryQuery, NarrationClientResult, NarrationEvent, NarrationRuntimeState,
   PersonalVocabularyState, PersonalVocabularyUploadResult, Preferences, RunKind, SchoolModeChangeResult,
   ScheduledSettingsState, SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateRestartRequest, UpdateRestartResult, UpdateStatus, WinutilCatalog, DimSumStartupPresentation, FileConverterSurfaceState, AppLogoRuntimeSnapshot,
+  AppearanceThemeDocument, AppearanceThemeImportResult, AppearanceThemeValues,
 } from '../shared/types';
 import type { OllamaCatalogSnapshot, OllamaChatRequest, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress, OllamaHarnessPlan, OllamaHarnessPreflightRequest, OllamaHarnessProfileId, OllamaHarnessRestoreResult, OllamaHarnessLaunchResult, OllamaHarnessExecutable } from '../shared/ollama-suite';
 import { resolvePackageRequest, validateCatalog, wingetArgs } from './package-policy';
@@ -35,6 +36,7 @@ import { APP_LOGO_LIMITS, validateAppLogoTransform, type AppLogoPresetId, type A
 import { OllamaSuiteService } from './ollama-suite-service';
 import { OllamaHardwareService } from './ollama-hardware-service';
 import { OllamaHarnessService } from './ollama-harness-service';
+import { AppearanceThemeService } from './appearance-theme-service';
 
 const ROOT = path.join(__dirname, '..', '..');
 const CONFIG_DIR = path.join(__dirname, '..', 'config');
@@ -61,6 +63,7 @@ let appLogoService: AppLogoService | null = null;
 let ollamaSuiteService: OllamaSuiteService | null = null;
 let ollamaHardwareService: OllamaHardwareService | null = null;
 let ollamaHarnessService: OllamaHarnessService | null = null;
+let appearanceThemeService: AppearanceThemeService | null = null;
 let lastExportPath = '';
 let historyUnlockedUntil = 0;
 const HISTORY_CREDENTIAL_TARGET = 'history-manager-primary';
@@ -1127,6 +1130,64 @@ ipcMain.handle('app-logo:update-transform', async (event, transformValue: unknow
 ipcMain.handle('app-logo:reset', async (event): Promise<AppLogoRuntimeSnapshot> => {
   requireTrustedSender(event);
   return appLogo().reset();
+});
+
+function appearanceThemes(): AppearanceThemeService {
+  if (!appearanceThemeService) appearanceThemeService = new AppearanceThemeService(USER_DIR());
+  return appearanceThemeService;
+}
+
+async function saveAppearanceThemeExport(document: AppearanceThemeDocument): Promise<{ status: 'saved' | 'cancelled'; filePath?: string }> {
+  if (!win || win.isDestroyed()) throw new Error('The application window is unavailable.');
+  const theme = document.themes[0];
+  const safeName = theme.name.replace(/[^A-Za-z0-9_-]/gu, '-').replace(/^-+|-+$/gu, '').slice(0, 60) || 'appearance-theme';
+  const choice = await dialog.showSaveDialog(win, {
+    title: 'Export named appearance theme',
+    defaultPath: path.join(app.getPath('downloads'), `${safeName}.appearance-theme.json`),
+    filters: [{ name: 'Appearance theme JSON', extensions: ['json'] }],
+  });
+  if (choice.canceled || !choice.filePath) return { status: 'cancelled' };
+  if (await fs.stat(choice.filePath).then(() => true).catch(() => false)) {
+    throw new Error('The selected export path already exists. Choose a new filename so no theme is overwritten.');
+  }
+  await fs.writeFile(choice.filePath, JSON.stringify(document, null, 2), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+  return { status: 'saved', filePath: choice.filePath };
+}
+
+ipcMain.handle('appearance-theme:list', async (event): Promise<AppearanceThemeDocument> => {
+  requireTrustedSender(event);
+  return appearanceThemes().list();
+});
+ipcMain.handle('appearance-theme:create', async (event, name: unknown, theme: unknown): Promise<AppearanceThemeDocument> => {
+  requireTrustedSender(event);
+  return appearanceThemes().create(name, theme);
+});
+ipcMain.handle('appearance-theme:apply', async (event, id: unknown): Promise<AppearanceThemeValues> => {
+  requireTrustedSender(event);
+  return appearanceThemes().apply(id);
+});
+ipcMain.handle('appearance-theme:delete', async (event, id: unknown): Promise<AppearanceThemeDocument> => {
+  requireTrustedSender(event);
+  return appearanceThemes().remove(id);
+});
+ipcMain.handle('appearance-theme:import', async (event): Promise<AppearanceThemeImportResult> => {
+  requireTrustedSender(event);
+  if (!win || win.isDestroyed()) throw new Error('The application window is unavailable.');
+  const choice = await dialog.showOpenDialog(win, {
+    title: 'Import named appearance themes', properties: ['openFile'],
+    filters: [{ name: 'Appearance theme JSON', extensions: ['json'] }],
+  });
+  if (choice.canceled || choice.filePaths.length !== 1) return { status: 'cancelled', document: await appearanceThemes().list(), imported: 0 };
+  const source = choice.filePaths[0];
+  const stat = await fs.stat(source);
+  if (!stat.isFile() || stat.size > 512 * 1024) throw new Error('The selected appearance theme document exceeds its 512 KiB boundary.');
+  const text = await fs.readFile(source, 'utf8');
+  const result = await appearanceThemes().importDocument(JSON.parse(text) as unknown);
+  return { status: 'imported', ...result };
+});
+ipcMain.handle('appearance-theme:export', async (event, id: unknown): Promise<{ status: 'saved' | 'cancelled'; filePath?: string }> => {
+  requireTrustedSender(event);
+  return saveAppearanceThemeExport(await appearanceThemes().exportDocument(id));
 });
 
 function ollamaSuite(): OllamaSuiteService {

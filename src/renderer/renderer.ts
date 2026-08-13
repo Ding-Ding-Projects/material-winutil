@@ -77,7 +77,7 @@ type TabSearchKey = 'current' | 'groupNames' | 'master' | 'inGroup' | 'closeCont
 type DialogId =
   | 'palette' | 'regex' | 'tabs' | 'appearance' | 'lock' | 'auth'
   | 'notifications' | 'export' | 'gate' | 'about' | 'profiles' | 'saveselection' | 'color'
-  | 'school-unlock' | null;
+  | 'school-unlock' | 'appearance-themes' | null;
 
 interface WinutilApp { id: string; name: string; cat: string; desc: string; winget: string; choco: string; link: string; foss: boolean; }
 interface WinutilTweak { id: string; name: string; cat: string; desc: string; panel?: string; type?: string; }
@@ -97,6 +97,10 @@ interface DimSumStartupPresentation {
   imageDataUrl: string;
 }
 interface UpdateStatus { state: 'disabled' | 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'up-to-date' | 'cancelled' | 'rolled-back' | 'error'; currentVersion: string; updateVersion: string; progressPercent: number | null; message: string; releaseUrl: string; canCancel: boolean; deferred: boolean; }
+interface AppearanceThemeValues { theme: ThemeMode; density: Density; accent: string; font: string; scale: number; weight: number; radius: number; reducedMotion: boolean; tabDock: TabDock; }
+interface AppearanceTheme { id: string; name: string; theme: AppearanceThemeValues; }
+interface AppearanceThemeDocument { schemaVersion: 1; themes: readonly AppearanceTheme[]; }
+interface AppearanceThemeImportResult { status: 'imported' | 'cancelled'; document: AppearanceThemeDocument; imported: number; }
 type TotpAlgorithm = 'SHA1' | 'SHA256' | 'SHA512';
 interface AuthenticatorEntry { id: string; label: string; account: string; issuer?: string; algorithm: TotpAlgorithm; digits: number; period: number; createdAt: string; }
 interface AuthenticatorRegistration { registrationId: string; entry: AuthenticatorEntry; manualSecret: string; uri: string; qrDataUrl: string; imported: boolean; expiresAt: string; }
@@ -188,6 +192,12 @@ interface Bridge {
   openExportInVSCode(filePath: string): Promise<{ ok: boolean; status: string; error?: string; vscodeDownloadUrl?: string }>;
   readPrefs(): Promise<Partial<Prefs>>;
   writePrefs(p: Prefs): Promise<void>;
+  appearanceThemeList(): Promise<AppearanceThemeDocument>;
+  appearanceThemeCreate(name: string, values: AppearanceThemeValues): Promise<AppearanceThemeDocument>;
+  appearanceThemeApply(id: string): Promise<AppearanceThemeValues>;
+  appearanceThemeDelete(id: string): Promise<AppearanceThemeDocument>;
+  appearanceThemeImport(): Promise<AppearanceThemeImportResult>;
+  appearanceThemeExport(id: string): Promise<{ status: 'saved' | 'cancelled'; filePath?: string }>;
   history(): Promise<HistoryEntry[]>;
   appendHistory(e: { action: string; detail: string }): Promise<HistoryEntry>;
   historyBrowse(query: { query?: string; regex?: { source: string; flags: string }; actions?: string[]; from?: string; to?: string; limit?: number }): Promise<{ entries: GitHistoryEntry[]; actionCounts: Array<{ action: string; count: number }> }>;
@@ -699,6 +709,7 @@ const state = {
   dlgSelected: new Set<string>(),
   appearanceTarget: { id: 'app-root', label: 'Application root' },
   appearanceOverrides: {} as Record<string, { accent: string; font: string; radius: number; scale: number; weight: number }>,
+  appearanceThemes: { data: { schemaVersion: 1, themes: [] } as AppearanceThemeDocument, loading: false, error: '', draftName: '' },
   gate: { left: false, right: false, slider: 0, action: '', kind: null as RunKind | null, ids: null as string[] | null, after: null as null | (() => void) },
   queue: { active: false, index: 0, total: 0, current: '', log: [] as string[] },
   deps: [] as Array<{ name: string; present: boolean; installed: boolean; detail: string }>,
@@ -3371,6 +3382,35 @@ function openAppearance(id: string, label: string): void {
   openDialog('appearance');
 }
 
+function appearanceThemeValues(): AppearanceThemeValues {
+  const { theme, density, accent, font, scale, weight, radius, reducedMotion, tabDock } = state.prefs;
+  return { theme, density, accent, font, scale, weight, radius, reducedMotion, tabDock };
+}
+
+async function refreshAppearanceThemes(): Promise<void> {
+  state.appearanceThemes.loading = true;
+  try {
+    state.appearanceThemes.data = await bridge().appearanceThemeList();
+    state.appearanceThemes.error = '';
+  } catch (error) {
+    state.appearanceThemes.error = error instanceof Error ? error.message : 'Named themes could not be loaded.';
+  } finally {
+    state.appearanceThemes.loading = false;
+    render();
+  }
+}
+
+async function applyNamedAppearanceTheme(id: string): Promise<void> {
+  try {
+    const values = await bridge().appearanceThemeApply(id);
+    state.prefs = { ...state.prefs, ...values };
+    applyPrefs(true);
+    snack('Named theme applied and persisted.');
+  } catch (error) {
+    snack(error instanceof Error ? error.message : 'Named theme could not be applied.');
+  }
+}
+
 function gate(action: string, kind?: RunKind, ids?: string[], after?: () => void): void {
   state.gate = { left: false, right: false, slider: 0, action, kind: kind ?? null, ids: ids ?? null, after: after ?? null };
   openDialog('gate');
@@ -3383,6 +3423,7 @@ function dialogLayer(): HTMLElement {
       case 'regex': return regexDialog();
       case 'tabs': return tabsDialog();
       case 'appearance': return appearanceDialog();
+      case 'appearance-themes': return appearanceThemesDialog();
       case 'lock': return lockDialog();
       case 'auth': return authDialog();
       case 'notifications': return notificationsDialog();
@@ -3911,12 +3952,73 @@ function appearanceDialog(): HTMLElement {
   ], [
     h('button', { class: 'btn text', onclick: closeDialog }, 'Cancel'),
     h('button', { class: 'btn outlined', onclick: () => { delete state.appearanceOverrides[target.id]; closeDialog(); snack('Element reset to the inherited appearance.'); } }, 'Reset element'),
-    h('button', { class: 'btn tonal', disabled: true, title: 'Named-theme storage is not installed in this build' }, 'Save named theme'),
+    h('button', { class: 'btn tonal', onclick: () => openDialog('appearance-themes') }, 'Save named theme'),
     h('button', {
       class: 'btn filled',
       onclick: () => { if (target.id === 'app-root') { state.prefs.accent = o.accent; state.prefs.font = o.font; state.prefs.radius = o.radius; state.prefs.scale = o.scale; state.prefs.weight = o.weight; savePrefs(); } closeDialog(); snack('Appearance applied and persisted.'); },
     }, 'Apply appearance'),
   ]);
+}
+
+function appearanceThemesDialog(): HTMLElement {
+  const themes = state.appearanceThemes.data.themes;
+  const draft = h('input', {
+    value: state.appearanceThemes.draftName,
+    maxlength: '80',
+    placeholder: 'Theme name',
+    'aria-label': 'Named theme name',
+    oninput: (event: Event) => { state.appearanceThemes.draftName = (event.target as HTMLInputElement).value; },
+  });
+  const create = async (): Promise<void> => {
+    const name = state.appearanceThemes.draftName.trim();
+    if (!name) { state.appearanceThemes.error = 'Enter a theme name before saving.'; render(); return; }
+    state.appearanceThemes.loading = true; state.appearanceThemes.error = ''; render();
+    try {
+      state.appearanceThemes.data = await bridge().appearanceThemeCreate(name, appearanceThemeValues());
+      state.appearanceThemes.draftName = '';
+      snack(`Saved named theme “${name}”.`);
+    } catch (error) {
+      state.appearanceThemes.error = error instanceof Error ? error.message : 'Named theme could not be saved.';
+    } finally { state.appearanceThemes.loading = false; render(); }
+  };
+  const importThemes = async (): Promise<void> => {
+    state.appearanceThemes.loading = true; state.appearanceThemes.error = ''; render();
+    try {
+      const result = await bridge().appearanceThemeImport();
+      state.appearanceThemes.data = result.document;
+      if (result.status === 'imported') snack(`Imported ${result.imported} named theme(s).`);
+    } catch (error) { state.appearanceThemes.error = error instanceof Error ? error.message : 'Named themes could not be imported.'; }
+    finally { state.appearanceThemes.loading = false; render(); }
+  };
+  return dialogShell('Appearance library', 'Named themes', [
+    h('p', {}, 'Saved themes contain only visual preferences. They never include credentials, personal-vocabulary data, or other account state.'),
+    h('label', { class: 'field' }, 'SAVE CURRENT APPEARANCE AS', draft),
+    state.appearanceThemes.error ? h('p', { class: 'feedback bad', role: 'alert' }, state.appearanceThemes.error) : null,
+    themes.length
+      ? h('div', { class: 'listbox', 'aria-label': 'Saved named themes' }, ...themes.map((theme) => h('div', { class: 'row' },
+        h('div', { style: 'min-width:0;flex:1' }, h('div', { class: 'primary' }, theme.name), h('div', { class: 'snippet' }, `${theme.theme.theme} · ${theme.theme.density} · ${theme.theme.accent}`)),
+        h('div', { class: 'btnrow' },
+          h('button', { class: 'btn text', onclick: () => { void applyNamedAppearanceTheme(theme.id); } }, 'Apply'),
+          h('button', { class: 'btn text', onclick: async () => {
+            state.appearanceThemes.loading = true; render();
+            try {
+              const result = await bridge().appearanceThemeExport(theme.id);
+              if (result.status === 'saved') snack('Named theme exported without overwriting an existing file.');
+            } catch (error) { snack(error instanceof Error ? error.message : 'Named theme could not be exported.'); }
+            finally { state.appearanceThemes.loading = false; render(); }
+          } }, 'Export'),
+          h('button', { class: 'btn text danger-text', onclick: async () => {
+            state.appearanceThemes.loading = true; render();
+            try { state.appearanceThemes.data = await bridge().appearanceThemeDelete(theme.id); snack(`Deleted named theme “${theme.name}”.`); }
+            catch (error) { state.appearanceThemes.error = error instanceof Error ? error.message : 'Named theme could not be deleted.'; }
+            finally { state.appearanceThemes.loading = false; render(); }
+          } }, 'Delete')))))
+      : h('p', { class: 'feedback' }, 'No named themes are saved yet. Save the current appearance to create the first one.'),
+  ], [
+    h('button', { class: 'btn text', onclick: closeDialog }, 'Close'),
+    h('button', { class: 'btn outlined', disabled: state.appearanceThemes.loading, onclick: () => { void importThemes(); } }, 'Import'),
+    h('button', { class: 'btn filled', disabled: state.appearanceThemes.loading, onclick: () => { void create(); } }, 'Save current appearance'),
+  ], true);
 }
 
 function lockTarget(id: string, label: string): { kind: LockTargetKind; id: string; label: string } {

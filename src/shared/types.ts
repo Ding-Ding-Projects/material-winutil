@@ -17,7 +17,7 @@ import type { DimSumSurpriseDescriptor } from './dim-sum-surprise';
 import type { ConverterAdapter, FileKind, QueueItemState, QueueState } from './file-converter';
 import type { AppLogoExportMetadata, AppLogoPersistedState, AppLogoPresetId, AppLogoTransform, AppLogoDerivedAsset } from './app-logo';
 import type {
-  OllamaCatalogSnapshot, OllamaCatalogVariant, OllamaChatExportResult, OllamaChatExportSaveRequest, OllamaChatRequest, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress,
+  OllamaCatalogSnapshot, OllamaCatalogVariant, OllamaChatAttachmentPickResult, OllamaChatExportResult, OllamaChatExportSaveRequest, OllamaChatRequest, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress,
   OllamaHarnessExecutable, OllamaHarnessLaunchResult, OllamaHarnessPlan, OllamaHarnessPreflightRequest, OllamaHarnessProfileId, OllamaHarnessRestoreResult,
 } from './ollama-suite';
 
@@ -513,6 +513,8 @@ export interface Bridge {
   ollamaEnqueuePulls(models: string[]): Promise<OllamaPullProgress[]>;
   ollamaCancelPull(model: string): Promise<boolean>;
   ollamaRetryPull(model: string): Promise<OllamaPullProgress[]>;
+  ollamaPickChatAttachment(model: string): Promise<OllamaChatAttachmentPickResult>;
+  ollamaClearChatAttachment(id: string): Promise<boolean>;
   ollamaChat(request: OllamaChatRequest, variant: OllamaCatalogVariant): Promise<OllamaChatRequest>;
   ollamaCancelChat(): Promise<boolean>;
   ollamaExportChat(request: OllamaChatExportSaveRequest): Promise<OllamaChatExportResult>;

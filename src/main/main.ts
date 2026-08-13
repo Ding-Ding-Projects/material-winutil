@@ -12,7 +12,8 @@ import type {
   ScheduledSettingsState, SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateRestartRequest, UpdateRestartResult, UpdateStatus, WinutilCatalog, DimSumStartupPresentation, FileConverterSurfaceState, AppLogoRuntimeSnapshot,
   AppearanceThemeDocument, AppearanceThemeImportResult, AppearanceThemeValues,
 } from '../shared/types';
-import type { OllamaCatalogSnapshot, OllamaChatExportDocument, OllamaChatExportResult, OllamaChatExportSaveRequest, OllamaChatRequest, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress, OllamaHarnessPlan, OllamaHarnessPreflightRequest, OllamaHarnessProfileId, OllamaHarnessRestoreResult, OllamaHarnessLaunchResult, OllamaHarnessExecutable } from '../shared/ollama-suite';
+import type { OllamaCatalogSnapshot, OllamaChatAttachment, OllamaChatAttachmentPickResult, OllamaChatExportDocument, OllamaChatExportResult, OllamaChatExportSaveRequest, OllamaChatRequest, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress, OllamaHarnessPlan, OllamaHarnessPreflightRequest, OllamaHarnessProfileId, OllamaHarnessRestoreResult, OllamaHarnessLaunchResult, OllamaHarnessExecutable } from '../shared/ollama-suite';
+import { OLLAMA_LIMITS } from '../shared/ollama-suite';
 import { resolvePackageRequest, validateCatalog, wingetArgs } from './package-policy';
 import { AUTHENTICATOR_PNG_LIMITS, AuthenticatorService } from './authenticator-service';
 import { PersonalVocabularyStore } from './personal-vocabulary-store';
@@ -64,6 +65,9 @@ let ollamaSuiteService: OllamaSuiteService | null = null;
 let ollamaHardwareService: OllamaHardwareService | null = null;
 let ollamaHarnessService: OllamaHarnessService | null = null;
 let appearanceThemeService: AppearanceThemeService | null = null;
+interface EphemeralOllamaAttachment { descriptor: OllamaChatAttachment; base64: string; }
+const ollamaChatAttachments = new Map<string, EphemeralOllamaAttachment>();
+const OLLAMA_ATTACHMENT_ID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/iu;
 let lastExportPath = '';
 let historyUnlockedUntil = 0;
 const HISTORY_CREDENTIAL_TARGET = 'history-manager-primary';
@@ -1268,6 +1272,93 @@ function ollamaHarness(): OllamaHarnessService {
   return ollamaHarnessService;
 }
 
+function readPngDimensions(bytes: Buffer): { width: number; height: number } | null {
+  if (bytes.byteLength < 45 || !bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) || bytes.readUInt32BE(8) !== 13 || bytes.toString('ascii', 12, 16) !== 'IHDR') return null;
+  const dimensions = { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+  let offset = 8;
+  while (offset + 12 <= bytes.byteLength) {
+    const chunkLength = bytes.readUInt32BE(offset);
+    const chunkEnd = offset + 12 + chunkLength;
+    if (chunkEnd > bytes.byteLength) return null;
+    const type = bytes.toString('ascii', offset + 4, offset + 8);
+    if (type === 'IEND') return chunkLength === 0 && chunkEnd === bytes.byteLength ? dimensions : null;
+    offset = chunkEnd;
+  }
+  return null;
+}
+
+function readJpegDimensions(bytes: Buffer): { width: number; height: number } | null {
+  if (bytes.byteLength < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  let offset = 2;
+  while (offset + 9 <= bytes.byteLength) {
+    if (bytes[offset] !== 0xff) return null;
+    while (offset < bytes.byteLength && bytes[offset] === 0xff) offset += 1;
+    const marker = bytes[offset++]!;
+    if (marker === 0xd9 || marker === 0xda || (marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) continue;
+    if (offset + 2 > bytes.byteLength) return null;
+    const length = bytes.readUInt16BE(offset);
+    if (length < 2 || offset + length > bytes.byteLength) return null;
+    if (marker >= 0xc0 && marker <= 0xc3) {
+      if (length < 8) return null;
+      return { height: bytes.readUInt16BE(offset + 3), width: bytes.readUInt16BE(offset + 5) };
+    }
+    offset += length;
+  }
+  return null;
+}
+
+async function pickOllamaChatAttachment(model: unknown): Promise<OllamaChatAttachmentPickResult> {
+  if (typeof model !== 'string') throw new Error('Choose a verified local vision model before adding an image.');
+  const health = await ollamaSuite().health();
+  if (health.state !== 'healthy' || !health.installed.some((installed) => installed.name === model)) {
+    throw new Error('Choose a healthy, installed local model before adding an image.');
+  }
+  const variant = await ollamaSuite().verifiedHarnessVariant(model);
+  if (!variant.capabilities.includes('vision')) throw new Error('The selected verified local model does not support image attachments.');
+  const currentWindow = win;
+  if (!currentWindow || currentWindow.isDestroyed()) throw new Error('The application window is unavailable.');
+  const selected = await dialog.showOpenDialog(currentWindow, {
+    title: 'Choose a local image for this chat',
+    properties: ['openFile'],
+    filters: [{ name: 'Supported images', extensions: ['png', 'jpg', 'jpeg'] }],
+  });
+  if (selected.canceled || !selected.filePaths[0]) return { status: 'cancelled' };
+  if (ollamaChatAttachments.size >= OLLAMA_LIMITS.chatAttachments) throw new Error(`A chat can hold at most ${OLLAMA_LIMITS.chatAttachments} pending image attachments. Remove one before choosing another.`);
+  const bytes = await fs.readFile(selected.filePaths[0]);
+  if (bytes.byteLength === 0 || bytes.byteLength > OLLAMA_LIMITS.attachmentBytes) throw new Error(`Image attachments must be between 1 byte and ${OLLAMA_LIMITS.attachmentBytes} bytes.`);
+  const png = readPngDimensions(bytes);
+  const jpeg = png ? null : readJpegDimensions(bytes);
+  const dimensions = png ?? jpeg;
+  if (!dimensions) throw new Error('The selected image is not a valid PNG or JPEG file.');
+  if (!Number.isSafeInteger(dimensions.width) || !Number.isSafeInteger(dimensions.height) || dimensions.width < 1 || dimensions.height < 1 || dimensions.width > OLLAMA_LIMITS.attachmentDimension || dimensions.height > OLLAMA_LIMITS.attachmentDimension || dimensions.width * dimensions.height > OLLAMA_LIMITS.attachmentPixels) throw new Error('The selected image dimensions exceed the local chat safety limits.');
+  const descriptor: OllamaChatAttachment = { id: randomUUID(), mediaType: png ? 'image/png' : 'image/jpeg', byteLength: bytes.byteLength, width: dimensions.width, height: dimensions.height };
+  ollamaChatAttachments.set(descriptor.id, { descriptor, base64: bytes.toString('base64') });
+  return { status: 'selected', attachment: descriptor };
+}
+
+function resolveOllamaChatAttachments(request: unknown): { request: unknown; attachmentIds: string[] } {
+  if (!request || typeof request !== 'object' || Array.isArray(request)) throw new Error('Chat request is invalid.');
+  const input = request as { model?: unknown; messages?: unknown; options?: unknown };
+  if (!Array.isArray(input.messages)) throw new Error('Chat request is invalid.');
+  const attachmentIds: string[] = [];
+  const messages = input.messages.map((message) => {
+      if (!message || typeof message !== 'object' || Array.isArray(message)) throw new Error('Chat message is invalid.');
+      const candidate = message as { role?: unknown; content?: unknown; attachmentIds?: unknown; images?: unknown };
+      if (candidate.images !== undefined) throw new Error('Chat image payloads must originate from the local attachment picker.');
+      const ids = candidate.attachmentIds;
+      if (ids === undefined) return { role: candidate.role, content: candidate.content };
+      if (!Array.isArray(ids) || ids.length > OLLAMA_LIMITS.chatAttachments || new Set(ids).size !== ids.length || ids.some((id) => typeof id !== 'string' || !OLLAMA_ATTACHMENT_ID.test(id))) throw new Error('Chat attachment references are invalid.');
+      const images = ids.map((id) => {
+        const attachment = ollamaChatAttachments.get(id);
+        if (!attachment) throw new Error('A selected local image attachment is no longer available. Choose it again.');
+        attachmentIds.push(id);
+        return attachment.base64;
+      });
+      return { role: candidate.role, content: candidate.content, ...(images.length ? { images } : {}) };
+  });
+  return { request: { model: input.model, messages, options: input.options }, attachmentIds };
+}
+
 ipcMain.handle('ollama:health', async (event): Promise<OllamaHealthSnapshot> => {
   requireTrustedSender(event); return ollamaSuite().health();
 });
@@ -1301,12 +1392,28 @@ ipcMain.handle('ollama:retry-pull', async (event, model: unknown): Promise<Ollam
   requireTrustedSender(event); if (typeof model !== 'string') throw new Error('The Ollama pull selection is invalid.');
   await ollamaSuite().retryPull(model); return ollamaSuite().pullQueue();
 });
+ipcMain.handle('ollama:pick-chat-attachment', async (event, model: unknown): Promise<OllamaChatAttachmentPickResult> => {
+  requireTrustedSender(event); return pickOllamaChatAttachment(model);
+});
+ipcMain.handle('ollama:clear-chat-attachment', (event, id: unknown): boolean => {
+  requireTrustedSender(event); if (typeof id !== 'string' || !OLLAMA_ATTACHMENT_ID.test(id)) return false; return ollamaChatAttachments.delete(id);
+});
 ipcMain.handle('ollama:chat', async (event, request: unknown, variant: unknown): Promise<OllamaChatRequest> => {
   requireTrustedSender(event);
   void variant;
-  return ollamaSuite().chat(request as OllamaChatRequest, (content) => {
-    if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('ollama:chat-chunk', content);
-  });
+  const resolved = resolveOllamaChatAttachments(request);
+  try {
+    const completed = await ollamaSuite().chat(resolved.request as OllamaChatRequest, (content) => {
+      if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('ollama:chat-chunk', content);
+    });
+    return {
+      model: completed.model,
+      messages: completed.messages.map(({ role, content }) => ({ role, content })),
+      options: completed.options,
+    };
+  } finally {
+    for (const id of resolved.attachmentIds) ollamaChatAttachments.delete(id);
+  }
 });
 ipcMain.handle('ollama:cancel-chat', (event): boolean => { requireTrustedSender(event); return ollamaSuite().cancelChat(); });
 ipcMain.handle('ollama:export-chat', async (event, request: unknown): Promise<OllamaChatExportResult> => {

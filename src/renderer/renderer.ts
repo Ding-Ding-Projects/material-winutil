@@ -65,7 +65,9 @@ interface OllamaHardwareEvidence { detectedAt: string; ramTotalBytes: number | n
 type OllamaFitVerdict = 'runs-well' | 'runs-with-limits' | 'unlikely' | 'unknown';
 interface OllamaFitAssessment { verdict: OllamaFitVerdict; reasons: string[]; evidence: OllamaHardwareEvidence; requirements: { blobSizeBytes: number | null; parameterCount: number | null; quantization: string | null; contextLength: number | null; estimatedWorkingSetBytes: number | null; requiredFreeDiskBytes: number | null } }
 interface OllamaPullProgress { model: string; state: 'queued' | 'pulling' | 'completed' | 'cancelled' | 'failed'; status: string; completedBytes: number | null; totalBytes: number | null; error: string | null; }
-interface OllamaChatMessage { role: 'system' | 'user' | 'assistant'; content: string; images?: string[]; }
+interface OllamaChatMessage { role: 'system' | 'user' | 'assistant'; content: string; attachmentIds?: string[]; images?: string[]; }
+interface OllamaChatAttachment { id: string; mediaType: 'image/png' | 'image/jpeg'; byteLength: number; width: number; height: number; }
+type OllamaChatAttachmentPickResult = { status: 'selected'; attachment: OllamaChatAttachment } | { status: 'cancelled' };
 interface OllamaChatRequest { model: string; messages: OllamaChatMessage[]; options: { temperature?: number; topP?: number; topK?: number; seed?: number; numCtx?: number; numPredict?: number }; }
 interface OllamaChatExportDocument { schemaVersion: 1; messages: Array<{ role: OllamaChatMessage['role']; content: string; attachmentsOmitted: number }>; }
 type OllamaChatExportResult =
@@ -287,6 +289,8 @@ interface Bridge {
   ollamaEnqueuePulls(models: string[]): Promise<OllamaPullProgress[]>;
   ollamaCancelPull(model: string): Promise<boolean>;
   ollamaRetryPull(model: string): Promise<OllamaPullProgress[]>;
+  ollamaPickChatAttachment(model: string): Promise<OllamaChatAttachmentPickResult>;
+  ollamaClearChatAttachment(id: string): Promise<boolean>;
   ollamaChat(request: OllamaChatRequest, variant: OllamaModelVariant): Promise<OllamaChatRequest>;
   ollamaCancelChat(): Promise<boolean>;
   ollamaExportChat(request: { chat: OllamaChatRequest; format: 'markdown' | 'json' }): Promise<OllamaChatExportResult>;
@@ -774,7 +778,7 @@ const state = {
     queue: [] as OllamaPullProgress[],
     tab: 'store' as 'status' | 'store' | 'cart' | 'chat' | 'harness',
     busy: false, error: '', selectedModel: '', cart: new Set<string>(),
-    chat: { system: '', prompt: '', messages: [] as OllamaChatMessage[], output: '', busy: false, attachmentRequested: false, lastExportPath: '',
+    chat: { system: '', prompt: '', messages: [] as OllamaChatMessage[], output: '', busy: false, attachment: null as OllamaChatAttachment | null, lastExportPath: '',
       temperature: 0.4, contextLength: 4096 },
     harness: { profile: 'vscode-continue' as OllamaHarnessProfileId, workspaceFolder: '', executables: [] as OllamaHarnessExecutable[], executablePath: '', plan: null as OllamaHarnessPlan | null, busy: false, message: '' },
   },
@@ -1864,16 +1868,21 @@ function ollamaCart(): HTMLElement {
 
 function ollamaChat(): HTMLElement {
   const variant = ollamaVariant(); const localVariants = installedOllamaVariants(); const installed = new Set(localVariants.map(({ qualifiedName }) => qualifiedName)); const available = !!variant && installed.has(variant.qualifiedName) && state.ollama.health?.state === 'healthy';
-  const chat = state.ollama.chat;
+  const chat = state.ollama.chat; const canAttach = !!variant?.capabilities.includes('vision') && available;
+  const attachment = chat.attachment;
   return h('section', { class: 'ollama-chat', 'aria-label': ollamaText('Local Ollama chat', '本機 Ollama 聊天') },
     selectField(ollamaText('Verified installed model', '已驗證已安裝模型'), localVariants.map(({ qualifiedName }) => qualifiedName), state.ollama.selectedModel || ollamaText('No verified installed model', '冇已驗證已安裝模型'), (value) => { state.ollama.selectedModel = value; render(); }),
     h('label', { class: 'field' }, ollamaText('System prompt', '系統提示').toUpperCase(), h('textarea', { maxlength: '32768', value: chat.system, oninput: (event: Event) => { chat.system = (event.target as HTMLTextAreaElement).value; } })),
     h('label', { class: 'field' }, ollamaText('Message', '訊息').toUpperCase(), h('textarea', { maxlength: '32768', value: chat.prompt, oninput: (event: Event) => { chat.prompt = (event.target as HTMLTextAreaElement).value; } })),
     h('div', { class: 'ollama-chat-options' }, rangeField(ollamaText('Temperature', '溫度'), 0, 2, 0.1, chat.temperature, (value) => { chat.temperature = value; }), numberField(ollamaText('Context length', 'Context 長度'), 256, variant?.contextLength ?? 131072, chat.contextLength, (value) => { chat.contextLength = value; })),
-    h('div', { class: 'ollama-attachment-note', role: 'note' }, icon(variant?.capabilities.includes('vision') ? 'image' : 'block'), h('span', {}, variant?.capabilities.includes('vision')
-      ? ollamaText('This verified variant reports vision capability. Attachment file picking is not wired in this build, so no file leaves the chooser or enters chat.', '呢個已驗證模型版本支援影像，但呢個版本未接好附件選擇器，所以冇檔案會離開選擇器或者進入聊天。')
-      : ollamaText('Attachments are unavailable because the selected variant does not report vision capability.', '揀選嘅模型版本未有報告影像能力，所以附件不可用。'))),
+    h('div', { class: 'ollama-attachment-note', role: 'note' }, icon(canAttach ? 'image' : 'block'), h('span', {}, attachment
+      ? ollamaText(`One local ${attachment.mediaType} image is attached for this send only (${attachment.width} × ${attachment.height}, ${byteSize(attachment.byteLength)}).`, `已加入一張本機 ${attachment.mediaType} 圖片，只會跟今次傳送（${attachment.width} × ${attachment.height}、${byteSize(attachment.byteLength)}）。`)
+      : canAttach
+        ? ollamaText('This verified local model reports vision capability. Choose one PNG or JPEG image; its bytes remain in the local main process and are consumed after this chat request.', '呢個已驗證本機模型支援影像。可以揀一張 PNG 或 JPEG；圖片位元只會留喺本機主程序，今次聊天後就會清除。')
+        : ollamaText('Attachments are unavailable until a healthy, verified installed model reports vision capability.', '要等健康而且已驗證嘅已安裝模型報告支援影像，附件先可用。')),
+      attachment ? h('button', { class: 'btn text', disabled: chat.busy, onclick: () => void clearOllamaChatAttachment() }, ollamaText('Remove image', '移除圖片')) : null),
     h('div', { class: 'btnrow' }, h('button', { class: 'btn filled', disabled: !available || !chat.prompt.trim() || chat.busy, title: !available ? ollamaText('Select an installed verified model and start the local service.', '請揀已安裝已驗證模型，再啟動本機服務。') : '', onclick: () => void sendOllamaChat() }, ollamaText('Send locally', '本機傳送')),
+      h('button', { class: 'btn outlined', disabled: !canAttach || chat.busy || !!attachment, title: !canAttach ? ollamaText('Choose a healthy verified vision model before adding an image.', '請先揀健康而且已驗證嘅影像模型先可以加入圖片。') : '', onclick: () => void pickOllamaChatAttachment() }, ollamaText('Attach local image', '加入本機圖片')),
       h('button', { class: 'btn outlined', disabled: !chat.busy, onclick: () => void bridge().ollamaCancelChat() }, ollamaText('Cancel response', '取消回應')),
       h('button', { class: 'btn text', disabled: !chat.messages.length || chat.busy, onclick: () => void exportOllamaChat('markdown') }, ollamaText('Save redacted Markdown', '儲存遮蔽 Markdown')),
       h('button', { class: 'btn text', disabled: !chat.messages.length || chat.busy, onclick: () => void exportOllamaChat('json') }, ollamaText('Save redacted JSON', '儲存遮蔽 JSON')),
@@ -1884,10 +1893,30 @@ function ollamaChat(): HTMLElement {
 async function sendOllamaChat(): Promise<void> {
   const variant = ollamaVariant(); const chat = state.ollama.chat; if (!variant || chat.busy || !chat.prompt.trim()) return;
   const messages: OllamaChatMessage[] = [...chat.messages]; if (chat.system.trim() && !messages.some(({ role }) => role === 'system')) messages.unshift({ role: 'system', content: chat.system.trim() });
-  messages.push({ role: 'user', content: chat.prompt.trim() }); chat.output = ''; chat.busy = true; state.ollama.error = ''; render();
+  const attachment = chat.attachment; messages.push({ role: 'user', content: chat.prompt.trim(), ...(attachment ? { attachmentIds: [attachment.id] } : {}) }); chat.output = ''; chat.busy = true; state.ollama.error = ''; render();
   try { const validated = await bridge().ollamaChat({ model: variant.qualifiedName, messages, options: { temperature: chat.temperature, numCtx: chat.contextLength } }, variant); chat.messages = validated.messages; chat.prompt = ''; }
   catch (error) { state.ollama.error = error instanceof Error ? error.message : 'Local chat failed safely.'; }
-  finally { chat.busy = false; render(); }
+  finally { if (attachment?.id) void bridge().ollamaClearChatAttachment(attachment.id); if (chat.attachment?.id === attachment?.id) chat.attachment = null; chat.busy = false; render(); }
+}
+
+async function pickOllamaChatAttachment(): Promise<void> {
+  const variant = ollamaVariant(); const chat = state.ollama.chat;
+  if (!variant?.capabilities.includes('vision') || chat.busy || chat.attachment) return;
+  state.ollama.error = '';
+  try {
+    const result = await bridge().ollamaPickChatAttachment(variant.qualifiedName);
+    if (result.status === 'selected') chat.attachment = result.attachment;
+  } catch (error) {
+    state.ollama.error = error instanceof Error ? error.message : ollamaText('The local image could not be attached.', '無法加入本機圖片。');
+  } finally { render(); }
+}
+
+async function clearOllamaChatAttachment(): Promise<void> {
+  const attachment = state.ollama.chat.attachment;
+  if (!attachment) return;
+  await bridge().ollamaClearChatAttachment(attachment.id);
+  if (state.ollama.chat.attachment?.id === attachment.id) state.ollama.chat.attachment = null;
+  render();
 }
 
 async function exportOllamaChat(format: 'markdown' | 'json'): Promise<void> {

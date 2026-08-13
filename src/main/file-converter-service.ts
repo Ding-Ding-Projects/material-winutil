@@ -51,14 +51,15 @@ function validatePersistedSelectedSource(value: unknown): PersistedSelectedSourc
   if (typeof entry.id !== 'string' || !/^[a-zA-Z0-9_-]{1,120}$/u.test(entry.id)) throw new Error('Persisted source id is invalid.');
   if (typeof entry.sourcePath !== 'string' || entry.sourcePath.length === 0 || entry.sourcePath.includes('\0') || !path.isAbsolute(entry.sourcePath) || Buffer.byteLength(entry.sourcePath, 'utf8') > FILE_CONVERTER_LIMITS.itemPathBytes) throw new Error('Persisted source path is invalid.');
   if (typeof entry.name !== 'string' || entry.name.length === 0 || entry.name.includes('\0') || entry.name !== path.basename(entry.name) || Buffer.byteLength(entry.name, 'utf8') > 512) throw new Error('Persisted source name is invalid.');
-  if (!Number.isSafeInteger(entry.bytes) || entry.bytes < 0 || entry.bytes > FILE_CONVERTER_LIMITS.maxItemBytes) throw new Error('Persisted source size is invalid.');
+  const bytes = entry.bytes;
+  if (typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes < 0 || bytes > FILE_CONVERTER_LIMITS.maxItemBytes) throw new Error('Persisted source size is invalid.');
   const fileKinds: readonly FileKind[] = ['pdf', 'png', 'jpeg', 'gif', 'webp', 'zip', 'seven-zip', 'wav', 'mp3', 'ogg', 'mp4', 'text', 'unknown'];
   if (typeof entry.kind !== 'string' || !fileKinds.includes(entry.kind as FileKind)) throw new Error('Persisted source type is invalid.');
   if (entry.confidence !== 'magic' && entry.confidence !== 'extension' && entry.confidence !== 'unknown') throw new Error('Persisted source confidence is invalid.');
   if (typeof entry.conflict !== 'boolean') throw new Error('Persisted source conflict state is invalid.');
   if (typeof entry.reason !== 'string' || Buffer.byteLength(entry.reason, 'utf8') > 2048) throw new Error('Persisted source reason is invalid.');
   return {
-    id: entry.id, name: entry.name, sourcePath: entry.sourcePath, bytes: entry.bytes,
+    id: entry.id, name: entry.name, sourcePath: entry.sourcePath, bytes,
     kind: entry.kind as FileKind, confidence: entry.confidence, conflict: entry.conflict, reason: entry.reason,
   };
 }

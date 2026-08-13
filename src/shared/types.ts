@@ -18,6 +18,7 @@ import type { ConverterAdapter, FileKind, QueueItemState, QueueState } from './f
 import type { AppLogoExportMetadata, AppLogoPersistedState, AppLogoPresetId, AppLogoTransform, AppLogoDerivedAsset } from './app-logo';
 import type {
   OllamaCatalogSnapshot, OllamaCatalogVariant, OllamaChatRequest, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress,
+  OllamaHarnessExecutable, OllamaHarnessLaunchResult, OllamaHarnessPlan, OllamaHarnessPreflightRequest, OllamaHarnessProfileId, OllamaHarnessRestoreResult,
 } from './ollama-suite';
 
 /**
@@ -482,6 +483,11 @@ export interface Bridge {
   ollamaChat(request: OllamaChatRequest, variant: OllamaCatalogVariant): Promise<OllamaChatRequest>;
   ollamaCancelChat(): Promise<boolean>;
   ollamaExportChat(request: OllamaChatRequest, variant: OllamaCatalogVariant): Promise<ReturnType<typeof import('./ollama-suite').redactChatExport>>;
+  ollamaHarnessExecutables(profileId: OllamaHarnessProfileId): Promise<OllamaHarnessExecutable[]>;
+  ollamaHarnessPickWorkspace(): Promise<string | null>;
+  ollamaHarnessPreflight(request: OllamaHarnessPreflightRequest): Promise<OllamaHarnessPlan>;
+  ollamaHarnessLaunch(plan: OllamaHarnessPlan): Promise<OllamaHarnessLaunchResult>;
+  ollamaHarnessRestore(plan: OllamaHarnessPlan): Promise<OllamaHarnessRestoreResult>;
   onOllamaPullProgress(cb: (progress: OllamaPullProgress) => void): void;
   onOllamaChatChunk(cb: (content: string) => void): void;
 }

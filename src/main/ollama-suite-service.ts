@@ -467,6 +467,10 @@ export class OllamaSuiteService {
     return this.localInstalledVariant(qualifiedName, enrichment);
   }
 
+  async verifiedHarnessVariant(model: string): Promise<OllamaCatalogVariant> {
+    return this.verifiedVariant(model);
+  }
+
   async chat(request: OllamaChatRequest, onChunk: (content: string) => void): Promise<OllamaChatRequest> {
     if (this.chatController) throw new Error('A chat request is already active.');
     const variant = await this.verifiedVariant(request?.model);

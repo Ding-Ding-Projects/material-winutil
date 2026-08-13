@@ -17,7 +17,7 @@ import type { DimSumSurpriseDescriptor } from './dim-sum-surprise';
 import type { ConverterAdapter, FileKind, QueueItemState, QueueState } from './file-converter';
 import type { AppLogoExportMetadata, AppLogoPersistedState, AppLogoPresetId, AppLogoTransform, AppLogoDerivedAsset } from './app-logo';
 import type {
-  OllamaCatalogSnapshot, OllamaCatalogVariant, OllamaChatRequest, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress,
+  OllamaCatalogSnapshot, OllamaCatalogVariant, OllamaChatExportResult, OllamaChatExportSaveRequest, OllamaChatRequest, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress,
   OllamaHarnessExecutable, OllamaHarnessLaunchResult, OllamaHarnessPlan, OllamaHarnessPreflightRequest, OllamaHarnessProfileId, OllamaHarnessRestoreResult,
 } from './ollama-suite';
 
@@ -515,7 +515,7 @@ export interface Bridge {
   ollamaRetryPull(model: string): Promise<OllamaPullProgress[]>;
   ollamaChat(request: OllamaChatRequest, variant: OllamaCatalogVariant): Promise<OllamaChatRequest>;
   ollamaCancelChat(): Promise<boolean>;
-  ollamaExportChat(request: OllamaChatRequest, variant: OllamaCatalogVariant): Promise<ReturnType<typeof import('./ollama-suite').redactChatExport>>;
+  ollamaExportChat(request: OllamaChatExportSaveRequest): Promise<OllamaChatExportResult>;
   ollamaHarnessExecutables(profileId: OllamaHarnessProfileId): Promise<OllamaHarnessExecutable[]>;
   ollamaHarnessPickWorkspace(): Promise<string | null>;
   ollamaHarnessPreflight(request: OllamaHarnessPreflightRequest): Promise<OllamaHarnessPlan>;

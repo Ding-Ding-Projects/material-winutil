@@ -1278,6 +1278,24 @@ function appearanceAttrs(targetId: string, attrs: Record<string, unknown> = {}):
   return { ...attrs, 'data-appearance-target': safeTargetId, ...(style ? { style: attrs.style ? `${String(attrs.style)};${style}` : style } : {}) };
 }
 
+function reapplyPersistedAppearanceOverrides(): void {
+  const targets = [['app-root', $('#app')]] as const;
+  for (const [targetId, element] of targets) {
+    if (!element) continue;
+    element.dataset.appearanceTarget = targetId;
+    const style = appearanceStyle(targetId);
+    if (style) element.setAttribute('style', style);
+    else element.removeAttribute('style');
+  }
+  document.querySelectorAll<HTMLElement>('[data-appearance-target]').forEach((element) => {
+    const targetId = element.getAttribute('data-appearance-target');
+    if (!targetId || targetId === 'app-root') return;
+    const style = appearanceStyle(targetId);
+    if (style) element.setAttribute('style', style);
+    else element.removeAttribute('style');
+  });
+}
+
 const SCHEDULED_PREF_KEYS = ['theme', 'density', 'language', 'narrator', 'narratorEnabled', 'enFunny', 'yueFunny', 'accent', 'font', 'scale', 'weight', 'radius', 'reducedMotion', 'exportFormat'] as const satisfies readonly (keyof Prefs)[];
 
 function scheduledPrefs(base: Prefs, scheduled: ScheduledSettingsState | null): Prefs {
@@ -1428,6 +1446,7 @@ function render(): void {
     root.removeAttribute('style');
   }
   root.replaceChildren(appBar(), h('div', { class: `body${state.drawerCollapsed ? ' drawer-collapsed' : ''}` }, drawer(), content(), sideRail()));
+  reapplyPersistedAppearanceOverrides();
   if (state.dimSumStartup) root.appendChild(dimSumStartupCard(state.dimSumStartup));
   if (state.dialog) root.appendChild(dialogLayer());
   if (state.snack) root.appendChild(h('div', { class: 'snack', 'aria-hidden': 'true' }, icon('check_circle'), h('span', {}, state.snack)));

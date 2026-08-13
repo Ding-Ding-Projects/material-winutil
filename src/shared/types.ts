@@ -390,6 +390,7 @@ export interface FileConverterQueueItemView {
   state: QueueItemState;
   retryCount: number;
   outcome?: string;
+  outputPath?: string;
 }
 
 export interface FileConverterSurfaceState {
@@ -512,6 +513,7 @@ export interface Bridge {
   fileConverterPause(): Promise<FileConverterSurfaceState>;
   fileConverterResume(): Promise<FileConverterSurfaceState>;
   fileConverterCancelAll(): Promise<FileConverterSurfaceState>;
+  fileConverterRetryFailed(): Promise<FileConverterSurfaceState>;
   fileConverterResetQueue(): Promise<FileConverterSurfaceState>;
   appLogoState(): Promise<AppLogoRuntimeSnapshot>;
   appLogoPickPng(transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot | null>;

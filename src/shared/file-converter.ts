@@ -429,6 +429,11 @@ export interface ConversionQueueItem {
   state: QueueItemState;
   retryCount: number;
   outcome?: string;
+  /**
+   * Absolute output path recorded only after the atomic output has reopened
+   * successfully. This is queue metadata, never source content.
+   */
+  outputPath?: string;
 }
 export interface ConversionQueuePage { id: string; items: ConversionQueueItem[] }
 export interface ConversionQueueIndex {
@@ -477,7 +482,7 @@ export class PersistentConversionQueue {
     if (this.index.pageIds.includes(page.id)) throw new Error(`Duplicate queue page id: ${page.id}`);
     const metadataBytes = utf8Bytes(JSON.stringify(page));
     if (metadataBytes > FILE_CONVERTER_LIMITS.pageMetadataBytes) throw new Error('Queue page metadata exceeds its bounded size');
-    await this.store.writePage({ id: page.id, items: page.items.map((item) => ({ ...item, state: 'queued', retryCount: 0, outcome: undefined })) });
+    await this.store.writePage({ id: page.id, items: page.items.map((item) => ({ ...item, state: 'queued', retryCount: 0, outcome: undefined, outputPath: undefined })) });
     this.index.pageIds.push(page.id);
     await this.persistIndex();
   }
@@ -503,7 +508,7 @@ export class PersistentConversionQueue {
     return claimed;
   }
 
-  async complete(itemId: string, outcome = 'validated output'): Promise<void> { await this.settle(itemId, 'succeeded', outcome); }
+  async complete(itemId: string, outcome = 'validated output', outputPath?: string): Promise<void> { await this.settle(itemId, 'succeeded', outcome, outputPath); }
   /**
    * Return a claimed item to the durable queue without consuming a retry.
    * This is used when a user pauses the queue after a worker has claimed an
@@ -536,15 +541,52 @@ export class PersistentConversionQueue {
   async pause(): Promise<void> { if (this.index.state === 'active') { this.index.state = 'paused'; await this.persistIndex(); } }
   async resume(): Promise<void> { if (this.index.state === 'paused') { this.index.state = 'active'; await this.persistIndex(); } }
   async cancelAll(): Promise<void> { this.index.state = 'cancelled'; this.index.inFlightBytes = 0; await this.persistIndex(); }
+  /**
+   * Retries only terminal failures. Cancelling a queue stays terminal, so a
+   * deliberate cancellation cannot silently restart work after a reload.
+   */
+  async retryFailed(): Promise<number> {
+    if (this.index.state === 'cancelled') throw new Error('Cancelled queues cannot retry failed work. Create a new queue instead.');
+    let retried = 0;
+    for (const id of this.index.pageIds) {
+      const page = await this.requiredPage(id);
+      let changed = false;
+      for (const item of page.items) {
+        if (item.state !== 'failed' || item.retryCount >= FILE_CONVERTER_LIMITS.maxRetryCount) continue;
+        item.state = 'queued';
+        item.retryCount += 1;
+        item.outcome = boundedOutcome(`Retry ${item.retryCount} scheduled from the persisted failure state.`);
+        item.outputPath = undefined;
+        retried += 1;
+        changed = true;
+      }
+      if (changed) await this.store.writePage(page);
+    }
+    if (retried) await this.persistIndex();
+    return retried;
+  }
+  async invalidateCompleted(itemId: string, outcome: string): Promise<void> {
+    const found = await this.findItem(itemId);
+    if (!found) throw new Error(`Unknown queue item: ${itemId}`);
+    const { page, item } = found;
+    if (item.state !== 'succeeded') throw new Error(`Queue item ${itemId} is not a completed result`);
+    item.state = 'failed';
+    item.outcome = boundedOutcome(outcome);
+    item.outputPath = undefined;
+    await this.store.writePage(page);
+    await this.persistIndex();
+  }
   summary(): Readonly<ConversionQueueIndex> { return Object.freeze({ ...this.index, pageIds: [...this.index.pageIds] }); }
 
-  private async settle(itemId: string, state: 'succeeded' | 'cancelled', outcome: string): Promise<void> {
+  private async settle(itemId: string, state: 'succeeded' | 'cancelled', outcome: string, outputPath?: string): Promise<void> {
     const found = await this.findItem(itemId);
     if (!found) throw new Error(`Unknown queue item: ${itemId}`);
     const { page, item } = found;
     if (item.state !== 'running' && item.state !== 'queued') throw new Error(`Queue item ${itemId} cannot transition from ${item.state}`);
     if (item.state === 'running') this.index.inFlightBytes = Math.max(0, this.index.inFlightBytes - item.sourceBytes);
-    item.state = state; item.outcome = boundedOutcome(outcome);
+    item.state = state;
+    item.outcome = boundedOutcome(outcome);
+    item.outputPath = state === 'succeeded' ? boundedOutputPath(outputPath) : undefined;
     await this.store.writePage(page); await this.persistIndex();
   }
   private async findItem(itemId: string): Promise<{ page: ConversionQueuePage; item: ConversionQueueItem } | undefined> {
@@ -581,7 +623,16 @@ function validateQueuePage(page: ConversionQueuePage): void {
     for (const value of [item.sourceBytes, item.estimatedOutputBytes]) if (!Number.isSafeInteger(value) || value < 0 || value > FILE_CONVERTER_LIMITS.maxItemBytes) throw new Error('Queue item byte estimate exceeds its bound');
     if (!/^[a-z0-9-]{3,80}$/u.test(item.adapterId) || !['queued', 'running', 'succeeded', 'failed', 'cancelled'].includes(item.state)) throw new Error('Queue item adapter or state is invalid');
     if (!Number.isSafeInteger(item.retryCount) || item.retryCount < 0 || item.retryCount > FILE_CONVERTER_LIMITS.maxRetryCount) throw new Error('Queue item retry count is invalid');
+    if (item.outputPath !== undefined) {
+      if (item.state !== 'succeeded') throw new Error('Only succeeded queue items may retain an output path');
+      boundedOutputPath(item.outputPath);
+    }
   }
 }
 function boundedOutcome(value: string): string { if (typeof value !== 'string') throw new Error('Queue outcome must be a string'); return value.slice(0, 1024); }
+function boundedOutputPath(value: unknown): string {
+  if (typeof value !== 'string') throw new Error('Queue output path is invalid or exceeds its metadata bound');
+  if (!/^(?:[A-Za-z]:[\\/]|\\\\)/u.test(value) || value.length === 0 || value.includes('\0') || utf8Bytes(value) > FILE_CONVERTER_LIMITS.itemPathBytes) throw new Error('Queue output path is invalid or exceeds its metadata bound');
+  return value;
+}
 function utf8Bytes(value: string): number { return new TextEncoder().encode(value).byteLength; }

@@ -1259,6 +1259,9 @@ ipcMain.handle('file-converter:resume', async (event): Promise<FileConverterSurf
 ipcMain.handle('file-converter:cancel-all', async (event): Promise<FileConverterSurfaceState> => {
   requireTrustedSender(event); return converter().cancelAll();
 });
+ipcMain.handle('file-converter:retry-failed', async (event): Promise<FileConverterSurfaceState> => {
+  requireTrustedSender(event); return converter().retryFailed();
+});
 ipcMain.handle('file-converter:reset-queue', async (event): Promise<FileConverterSurfaceState> => {
   requireTrustedSender(event); return converter().resetQueue();
 });

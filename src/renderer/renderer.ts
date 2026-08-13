@@ -36,7 +36,7 @@ interface FileConverterSurfaceState {
   schemaVersion: 1;
   catalog: Array<{ id: string; category: ConverterCategory; sourceKinds: string[]; targetFormat: string; metadataBehavior: string; lossiness: 'lossless' | 'lossy' | 'opaque'; sandbox: 'isolated-local'; limits: { inputBytes: number; outputBytes: number; memoryBytes: number; cpuMs: number; tempBytes: number }; outputValidator: string; availability: 'available' | 'unavailable'; unavailableReason?: string }>;
   selected: Array<{ id: string; name: string; bytes: number; kind: string; confidence: string; conflict: boolean; reason: string }>;
-  queue: { state: 'active' | 'paused' | 'cancelled'; pageCount: number; inFlightBytes: number; counts: Record<'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled', number>; items: Array<{ id: string; sourceName: string; sourceBytes: number; estimatedOutputBytes: number; adapterId: string; state: string; retryCount: number; outcome?: string }> };
+  queue: { state: 'active' | 'paused' | 'cancelled'; pageCount: number; inFlightBytes: number; counts: Record<'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled', number>; items: Array<{ id: string; sourceName: string; sourceBytes: number; estimatedOutputBytes: number; adapterId: string; state: string; retryCount: number; outcome?: string; outputPath?: string }> };
   storage: { availableBytes: number; requiredBytes: number; reserveBytes: number; status: 'ready' | 'insufficient' | 'unavailable' };
   outputDestination: { mode: 'user-selected' | 'application-data-fallback'; directory: string; validation: 'ready' | 'unavailable' };
   limits: { signatureBytes: number; pageItems: number; maxConcurrency: number };
@@ -301,6 +301,7 @@ interface Bridge {
   fileConverterPause(): Promise<FileConverterSurfaceState>;
   fileConverterResume(): Promise<FileConverterSurfaceState>;
   fileConverterCancelAll(): Promise<FileConverterSurfaceState>;
+  fileConverterRetryFailed(): Promise<FileConverterSurfaceState>;
   fileConverterResetQueue(): Promise<FileConverterSurfaceState>;
   appLogoState(): Promise<AppLogoRuntimeSnapshot>;
   appLogoPickPng(transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot | null>;
@@ -2353,6 +2354,7 @@ function converterSources(data: FileConverterSurfaceState, school: boolean): HTM
 
 function converterQueue(data: FileConverterSurfaceState): HTMLElement {
   const total = Object.values(data.queue.counts).reduce((sum, value) => sum + value, 0);
+  const retryableFailures = data.queue.items.filter((item) => item.state === 'failed' && item.retryCount < 3).length;
   return h('section', { class: 'converter-queue' },
     h('div', { class: 'converter-queue-summary' },
       h('div', {}, h('b', {}, converterText('Persistent paged queue', '可恢復分頁佇列')), h('span', {}, `${total} item(s) · ${data.queue.pageCount} page(s) · ${data.queue.state}`)),
@@ -2360,10 +2362,12 @@ function converterQueue(data: FileConverterSurfaceState): HTMLElement {
         h('button', { class: 'btn tonal', disabled: data.queue.state !== 'active', onclick: () => void converterAction(() => bridge().fileConverterPause()) }, converterText('Pause', '暫停')),
         h('button', { class: 'btn tonal', disabled: data.queue.state !== 'paused', onclick: () => void converterAction(() => bridge().fileConverterResume()) }, converterText('Resume', '繼續')),
         h('button', { class: 'btn outlined', disabled: data.queue.state === 'cancelled' || total === 0, onclick: () => void converterAction(() => bridge().fileConverterCancelAll()) }, converterText('Cancel all', '全部取消')),
+        h('button', { class: 'btn outlined', disabled: data.queue.state === 'cancelled' || retryableFailures === 0 || state.converter.busy, onclick: () => void converterAction(() => bridge().fileConverterRetryFailed()) }, converterText(`Retry persisted failures (${retryableFailures})`, `重試已儲存失敗 (${retryableFailures})`)),
         h('button', { class: 'btn text', disabled: total > 0 && data.queue.state !== 'cancelled', onclick: () => gate(converterText('Delete the local conversion queue metadata and create an empty queue', '刪除本機轉換佇列中繼資料並建立空白佇列'), undefined, undefined, () => void converterAction(() => bridge().fileConverterResetQueue())) }, converterText('New empty queue', '建立空白佇列')))),
     h('p', { class: 'converter-queue-note' }, converterText(`Metadata is stored in pages of at most ${data.limits.pageItems}; processing is capped at ${data.limits.maxConcurrency} concurrent items with byte backpressure. File bytes are never retained in queue metadata.`, `中繼資料每頁最多 ${data.limits.pageItems} 項；同時處理最多 ${data.limits.maxConcurrency} 項，並有位元組背壓。檔案內容唔會保存在佇列中繼資料。`)),
     h('div', { class: 'converter-results' }, ...(data.queue.items.length ? data.queue.items.map((item) => h('article', { class: `converter-result ${item.state}` },
-      h('b', {}, item.sourceName), h('span', {}, `${item.state} · ${item.adapterId}`), h('small', {}, item.outcome ?? converterText('No result yet.', '未有結果。')))) : [emptyState(converterText('The queue is empty. No converter can run until an offline adapter has packaged proof.', '佇列係空嘅。離線配接器未有封裝證明之前，冇轉換器可以執行。'))])));
+      h('b', {}, item.sourceName), h('span', {}, `${item.state} · ${item.adapterId}`), h('small', {}, item.outcome ?? converterText('No result yet.', '未有結果。')),
+      item.outputPath ? h('output', { class: 'field-value', 'aria-label': converterText('Validated output path', '已驗證輸出路徑') }, item.outputPath) : null)) : [emptyState(converterText('The queue is empty. No converter can run until an offline adapter has packaged proof.', '佇列係空嘅。離線配接器未有封裝證明之前，冇轉換器可以執行。'))])));
 }
 
 function docsPane(): HTMLElement {

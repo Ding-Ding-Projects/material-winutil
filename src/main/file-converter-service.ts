@@ -195,6 +195,7 @@ class JsonQueueStore implements ConversionQueueStore {
         id: item.id, sourceName: path.basename(item.sourcePath), sourceBytes: item.sourceBytes,
         estimatedOutputBytes: item.estimatedOutputBytes, adapterId: item.adapterId,
         state: item.state, retryCount: item.retryCount, outcome: item.outcome,
+        outputPath: item.state === 'succeeded' ? item.outputPath : undefined,
       });
     }
     return output;
@@ -268,6 +269,7 @@ export class FileConverterService {
     await service.store.writeIndex(service.queue.summary() as ConversionQueueIndex);
     await service.restoreSelectedSources();
     await service.restoreOutputDestination();
+    await service.recoverPersistedQueueState();
     return service;
   }
 
@@ -326,6 +328,16 @@ export class FileConverterService {
     }
     await this.queue.cancelAll();
     this.lastMessage = 'Queued work was cancelled; source files were not changed.';
+    return this.snapshot();
+  }
+  async retryFailed(): Promise<FileConverterSurfaceState> {
+    const retried = await this.queue.retryFailed();
+    if (!retried) {
+      this.lastMessage = 'No retryable persisted failures are available; terminal outcomes remain unchanged.';
+      return this.snapshot();
+    }
+    this.lastMessage = `${retried} persisted failed conversion(s) were queued for one bounded retry; source files remain unchanged until each validated write completes.`;
+    await this.runQueue();
     return this.snapshot();
   }
   async resetQueue(): Promise<FileConverterSurfaceState> {
@@ -576,7 +588,7 @@ export class FileConverterService {
         ? `Converted CSV to validated deterministic JSON in ${destinationLabel}.`
         : adapter.id === 'binary-to-lowercase-hex'
           ? `Converted binary bytes to validated canonical lowercase hexadecimal in ${destinationLabel}.`
-          : `Converted to validated UTF-8 plain text in ${destinationLabel}.`);
+          : `Converted to validated UTF-8 plain text in ${destinationLabel}.`, destination);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Local conversion failed safely.';
       await this.queue.fail(item.id, message);
@@ -597,9 +609,43 @@ export class FileConverterService {
     return 'The selected batch contains a source that is not a bounded, conflict-free text file for this adapter.';
   }
 
+  /** Reconcile persisted terminal records with the local filesystem at open.
+   * A missing or unsafe completed output never becomes a success merely
+   * because its old metadata says it once completed.
+   */
+  private async recoverPersistedQueueState(): Promise<void> {
+    const index = this.queue.summary();
+    const items = await this.store.pageViews(index.pageIds);
+    let missingOutputs = 0;
+    for (const item of items) {
+      if (item.state !== 'succeeded' || !item.outputPath) continue;
+      try {
+        await this.validateOutputDirectory(path.dirname(item.outputPath));
+        const outputInfo = await fs.lstat(item.outputPath);
+        if (!outputInfo.isFile() || outputInfo.isSymbolicLink() || outputInfo.size > item.estimatedOutputBytes) throw new Error('output path is unavailable');
+      } catch {
+        missingOutputs += 1;
+        await this.queue.invalidateCompleted(item.id, 'Previously completed output is no longer available at its validated local path; no completion is claimed after recovery.');
+      }
+    }
+    if (missingOutputs) {
+      this.lastMessage = `${missingOutputs} persisted completed output record(s) no longer resolve to safe local files and were changed to failed recovery results; no completion is claimed.`;
+    }
+  }
+
   async snapshot(): Promise<FileConverterSurfaceState> {
     const index = this.queue.summary();
     const items = await this.store.pageViews(index.pageIds);
+    for (const item of items) {
+      if (item.state !== 'succeeded' || !item.outputPath) continue;
+      try {
+        await this.validateOutputDirectory(path.dirname(item.outputPath));
+        const outputInfo = await fs.lstat(item.outputPath);
+        if (!outputInfo.isFile() || outputInfo.isSymbolicLink() || outputInfo.size < 0) item.outputPath = undefined;
+      } catch {
+        item.outputPath = undefined;
+      }
+    }
     const counts = { queued: 0, running: 0, succeeded: 0, failed: 0, cancelled: 0 };
     for (const item of items) counts[item.state] = (counts[item.state] ?? 0) + 1;
     const requiredBytes = this.selected.reduce((total, item) => total + item.bytes, 0);

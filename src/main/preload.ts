@@ -95,6 +95,7 @@ const bridge: Bridge = {
   fileConverterPause: () => ipcRenderer.invoke('file-converter:pause'),
   fileConverterResume: () => ipcRenderer.invoke('file-converter:resume'),
   fileConverterCancelAll: () => ipcRenderer.invoke('file-converter:cancel-all'),
+  fileConverterRetryFailed: () => ipcRenderer.invoke('file-converter:retry-failed'),
   fileConverterResetQueue: () => ipcRenderer.invoke('file-converter:reset-queue'),
   appLogoState: () => ipcRenderer.invoke('app-logo:state'),
   appLogoPickPng: (transform) => ipcRenderer.invoke('app-logo:pick-png', transform),

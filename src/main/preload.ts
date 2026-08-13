@@ -24,6 +24,7 @@ const bridge: Bridge = {
   notificationsAdd: (input) => ipcRenderer.invoke('notifications:add', input),
   notificationsReview: (ids, review) => ipcRenderer.invoke('notifications:review', ids, review),
   notificationsDelete: (ids) => ipcRenderer.invoke('notifications:delete', ids),
+  onNotificationsState: (callback) => { ipcRenderer.on('notifications:state', (_event, state) => callback(state)); },
   history: () => ipcRenderer.invoke('history:read'),
   appendHistory: (entry) => ipcRenderer.invoke('history:append', entry),
   historyAccess: () => ipcRenderer.invoke('history:access'),

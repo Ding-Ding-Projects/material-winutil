@@ -12,7 +12,7 @@ import type {
   ScheduledSettingsState, SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateRestartRequest, UpdateRestartResult, UpdateStatus, WinutilCatalog, DimSumStartupPresentation, FileConverterSurfaceState, AppLogoRuntimeSnapshot,
   AppearanceThemeApplication, AppearanceThemeDocument, AppearanceThemeImportResult,
 } from '../shared/types';
-import type { NotificationInput, NotificationReviewState } from '../shared/notifications';
+import type { NotificationInput, NotificationKind, NotificationReviewState } from '../shared/notifications';
 import type { OllamaCatalogSnapshot, OllamaChatAttachment, OllamaChatAttachmentPickResult, OllamaChatExportDocument, OllamaChatExportResult, OllamaChatExportSaveRequest, OllamaChatRequest, OllamaChatSessionCreateRequest, OllamaChatSessionCreateResult, OllamaChatSessionDeleteRequest, OllamaChatSessionDeleteResult, OllamaChatSessionGetRequest, OllamaChatSessionGetResult, OllamaChatSessionListRequest, OllamaChatSessionListResult, OllamaChatSessionRenameRequest, OllamaChatSessionRenameResult, OllamaChatSessionUpdateRequest, OllamaChatSessionUpdateResult, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress, OllamaHarnessPlan, OllamaHarnessPreflightRequest, OllamaHarnessProfileId, OllamaHarnessRestoreResult, OllamaHarnessLaunchResult, OllamaHarnessExecutable } from '../shared/ollama-suite';
 import { OLLAMA_LIMITS } from '../shared/ollama-suite';
 import { resolvePackageRequest, validateCatalog, wingetArgs } from './package-policy';
@@ -70,6 +70,8 @@ let ollamaHardwareService: OllamaHardwareService | null = null;
 let ollamaHarnessService: OllamaHarnessService | null = null;
 let appearanceThemeService: AppearanceThemeService | null = null;
 let notificationStore: NotificationStore | null = null;
+const scheduledNotificationFingerprints = new Map<string, string>();
+let updateNotificationFingerprint = '';
 interface EphemeralOllamaAttachment { descriptor: OllamaChatAttachment; base64: string; }
 const ollamaChatAttachments = new Map<string, EphemeralOllamaAttachment>();
 const OLLAMA_ATTACHMENT_ID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/iu;
@@ -215,7 +217,60 @@ function preferencesWithScheduledSettings(preferences: Preferences, scheduled: R
   return projectPreferences({ ...preferences, ...scheduled }) ?? preferences;
 }
 
+/**
+ * The main process owns durable records for outcomes that really occurred at
+ * an authority boundary.  Notification persistence is intentionally best
+ * effort: a history write issue never changes the truth of the operation that
+ * has already completed.
+ */
+function recordOperationNotification(kind: NotificationKind, title: string, detail: string): void {
+  void (notificationStore ??= new NotificationStore(USER_DIR())).addOperational({ kind, text: { title, detail } })
+    .then((state) => { if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('notifications:state', state); })
+    .catch(() => undefined);
+}
+
+function recordScheduledSourceFailures(snapshot: ScheduledSettingsState): void {
+  const current = new Set<string>();
+  for (const status of snapshot.sourceStatuses) {
+    if (status.state !== 'error' && status.state !== 'missing-token') continue;
+    const fingerprint = `${status.state}:${status.code ?? 'unspecified'}`;
+    current.add(status.ruleId);
+    if (scheduledNotificationFingerprints.get(status.ruleId) === fingerprint) continue;
+    scheduledNotificationFingerprints.set(status.ruleId, fingerprint);
+    recordOperationNotification(status.state === 'error' ? 'error' : 'warning', 'Scheduled source needs attention',
+      status.state === 'missing-token'
+        ? 'An external scheduled source has no configured local credential. Base settings remain active.'
+        : `An external scheduled source could not refresh (${status.code ?? 'source-unavailable'}). Base settings remain active.`);
+  }
+  for (const ruleId of scheduledNotificationFingerprints.keys()) {
+    if (!current.has(ruleId)) scheduledNotificationFingerprints.delete(ruleId);
+  }
+}
+
+function recordUpdateFailure(status: UpdateStatus): void {
+  if (status.state !== 'error' && status.state !== 'rolled-back') {
+    updateNotificationFingerprint = '';
+    return;
+  }
+  const fingerprint = `${status.state}:${status.updateVersion}`;
+  if (updateNotificationFingerprint === fingerprint) return;
+  updateNotificationFingerprint = fingerprint;
+  recordOperationNotification(status.state === 'error' ? 'error' : 'warning', 'Application update needs attention',
+    status.state === 'rolled-back'
+      ? 'The attempted update did not replace the current version; the previous version remains active.'
+      : 'The update check or download failed. The current installed version remains active.');
+}
+
+function recordConverterOutcome(action: string, snapshot: FileConverterSurfaceState): void {
+  const counts = snapshot.queue.counts;
+  const detail = `${counts.succeeded} succeeded, ${counts.failed} failed, and ${counts.cancelled} cancelled; source files remain unchanged.`;
+  const kind: NotificationKind = counts.failed > 0 ? 'error' : action === 'cancelled' ? 'warning' : 'success';
+  const title = counts.failed > 0 ? 'Local conversion completed with failures' : `Local conversion ${action}`;
+  recordOperationNotification(kind, title, detail);
+}
+
 function applyScheduledSnapshot(snapshot: ScheduledSettingsState): void {
+  recordScheduledSourceFailures(snapshot);
   if (basePreferences) {
     const effective = preferencesWithScheduledSettings(basePreferences, snapshot.effectiveSettings);
     currentNarratorPreferences = effective;
@@ -721,7 +776,11 @@ ipcMain.handle('winutil:run', async (e, kind: RunKind, ids: string[]): Promise<C
   packageMutationActive = true;
   try {
     const winget = await trustedWinget();
-    if (!winget) return { ok: false, code: 69, stdout: '', stderr: 'Windows Package Manager is unavailable. Use the explicit repair action before retrying.' };
+    if (!winget) {
+      const result = { ok: false, code: 69, stdout: '', stderr: 'Windows Package Manager is unavailable. Use the explicit repair action before retrying.' };
+      recordOperationNotification('error', 'Package operation could not start', 'Windows Package Manager is unavailable; no package action was started.');
+      return result;
+    }
     // Package operations are queued one at a time so progress is real and nothing prompts.
     if (kind === 'install' || kind === 'uninstall') {
       const out: string[] = [];
@@ -735,12 +794,23 @@ ipcMain.handle('winutil:run', async (e, kind: RunKind, ids: string[]): Promise<C
         if (res.code !== 0) worst = res.code;
       }
       e.sender.send('winutil:progress', { id: '', index: policy.packages.length, total: policy.packages.length, state: 'done', detail: '' });
-      return { ok: worst === 0, code: worst, stdout: out.join('\n'), stderr: '' };
+      const result = { ok: worst === 0, code: worst, stdout: out.join('\n'), stderr: '' };
+      recordOperationNotification(result.ok ? 'success' : 'error', result.ok ? 'Package operation completed' : 'Package operation completed with failures',
+        result.ok
+          ? `${policy.packages.length} requested ${kind} operation(s) completed.`
+          : `One or more requested ${kind} operation(s) failed with exit code ${result.code}.`);
+      return result;
     }
-    return await run(winget, [
+    const result = await run(winget, [
       'upgrade', '--all', '--silent', '--disable-interactivity',
       '--accept-package-agreements', '--accept-source-agreements',
     ]);
+    recordOperationNotification(result.ok ? 'success' : 'error', result.ok ? 'Package upgrade completed' : 'Package upgrade completed with failures',
+      result.ok ? 'The requested package upgrade action completed.' : `The requested package upgrade action failed with exit code ${result.code}.`);
+    return result;
+  } catch (error) {
+    recordOperationNotification('error', 'Package operation could not complete', 'The package action ended before a result was available. No success was recorded.');
+    throw error;
   } finally {
     packageMutationActive = false;
   }
@@ -835,9 +905,24 @@ ipcMain.handle('prefs:write', async (_e, prefs: Preferences): Promise<void> => {
 });
 
 ipcMain.handle('notifications:state', async (event) => { requireTrustedSender(event); return (notificationStore ??= new NotificationStore(USER_DIR())).load(); });
-ipcMain.handle('notifications:add', async (event, input: NotificationInput) => { requireTrustedSender(event); return (notificationStore ??= new NotificationStore(USER_DIR())).add(input); });
-ipcMain.handle('notifications:review', async (event, ids: string[], review: NotificationReviewState) => { requireTrustedSender(event); return (notificationStore ??= new NotificationStore(USER_DIR())).review(ids, review); });
-ipcMain.handle('notifications:delete', async (event, ids: string[]) => { requireTrustedSender(event); return (notificationStore ??= new NotificationStore(USER_DIR())).delete(ids); });
+ipcMain.handle('notifications:add', async (event, input: NotificationInput) => {
+  requireTrustedSender(event);
+  const state = await (notificationStore ??= new NotificationStore(USER_DIR())).add(input);
+  if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('notifications:state', state);
+  return state;
+});
+ipcMain.handle('notifications:review', async (event, ids: string[], review: NotificationReviewState) => {
+  requireTrustedSender(event);
+  const state = await (notificationStore ??= new NotificationStore(USER_DIR())).review(ids, review);
+  if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('notifications:state', state);
+  return state;
+});
+ipcMain.handle('notifications:delete', async (event, ids: string[]) => {
+  requireTrustedSender(event);
+  const state = await (notificationStore ??= new NotificationStore(USER_DIR())).delete(ids);
+  if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('notifications:state', state);
+  return state;
+});
 
 ipcMain.handle('scheduled-settings:state', (event): ScheduledSettingsState => {
   requireTrustedSender(event);
@@ -985,10 +1070,17 @@ ipcMain.handle('history:diff', async (event, left: string, right: string) => {
 
 ipcMain.handle('history:restore', async (event, revision: string) => {
   requireTrustedSender(event);
-  await requireHistoryAccess();
-  const snapshot = projectRedactedHistorySnapshot(await localHistory().snapshot(revision));
-  await replaceHistoryEntries(snapshot.entries);
-  return localHistory().restore(revision, redactedHistorySnapshot(snapshot.entries));
+  try {
+    await requireHistoryAccess();
+    const snapshot = projectRedactedHistorySnapshot(await localHistory().snapshot(revision));
+    await replaceHistoryEntries(snapshot.entries);
+    const restored = await localHistory().restore(revision, redactedHistorySnapshot(snapshot.entries));
+    recordOperationNotification('success', 'Local history restored', 'A redacted local history revision was restored successfully.');
+    return restored;
+  } catch (error) {
+    recordOperationNotification('error', 'Local history restore failed', 'The selected local history revision could not be restored. No restore success was recorded.');
+    throw error;
+  }
 });
 ipcMain.handle('history:label', async (event, revision: string, label: string) => {
   requireTrustedSender(event);
@@ -1248,19 +1340,26 @@ ipcMain.handle('file-converter:clear-selection', async (event): Promise<FileConv
 ipcMain.handle('file-converter:enqueue', async (event, adapterId: unknown): Promise<FileConverterSurfaceState> => {
   requireTrustedSender(event);
   if (typeof adapterId !== 'string') throw new Error('The converter adapter id is invalid.');
-  return converter().enqueue(adapterId);
+  try { const snapshot = await converter().enqueue(adapterId); recordConverterOutcome('completed', snapshot); return snapshot; }
+  catch (error) { recordOperationNotification('error', 'Local conversion could not start', 'The requested local conversion was not completed. Source files remain unchanged.'); throw error; }
 });
 ipcMain.handle('file-converter:pause', async (event): Promise<FileConverterSurfaceState> => {
   requireTrustedSender(event); return converter().pause();
 });
 ipcMain.handle('file-converter:resume', async (event): Promise<FileConverterSurfaceState> => {
-  requireTrustedSender(event); return converter().resume();
+  requireTrustedSender(event);
+  try { const snapshot = await converter().resume(); recordConverterOutcome('resumed', snapshot); return snapshot; }
+  catch (error) { recordOperationNotification('error', 'Local conversion resume failed', 'The persisted conversion queue could not resume. Source files remain unchanged.'); throw error; }
 });
 ipcMain.handle('file-converter:cancel-all', async (event): Promise<FileConverterSurfaceState> => {
-  requireTrustedSender(event); return converter().cancelAll();
+  requireTrustedSender(event);
+  try { const snapshot = await converter().cancelAll(); recordConverterOutcome('cancelled', snapshot); return snapshot; }
+  catch (error) { recordOperationNotification('error', 'Local conversion cancellation failed', 'The conversion queue could not be cancelled. No cancellation success was recorded.'); throw error; }
 });
 ipcMain.handle('file-converter:retry-failed', async (event): Promise<FileConverterSurfaceState> => {
-  requireTrustedSender(event); return converter().retryFailed();
+  requireTrustedSender(event);
+  try { const snapshot = await converter().retryFailed(); recordConverterOutcome('retried', snapshot); return snapshot; }
+  catch (error) { recordOperationNotification('error', 'Local conversion retry failed', 'Failed conversion records could not be retried. Source files remain unchanged.'); throw error; }
 });
 ipcMain.handle('file-converter:reset-queue', async (event): Promise<FileConverterSurfaceState> => {
   requireTrustedSender(event); return converter().resetQueue();
@@ -1671,7 +1770,7 @@ app.whenReady().then(async () => {
   settingsSurfaceService.startWatching(broadcastSettingsSurface);
   updateService = new UpdateService({
     adapter: autoUpdater, packaged: app.isPackaged, platform: process.platform, currentVersion: app.getVersion(), userDataDirectory: USER_DIR(),
-    onStatus: (status) => win?.webContents.send('update:status', status),
+    onStatus: (status) => { recordUpdateFailure(status); win?.webContents.send('update:status', status); },
   });
   await updateService.initialize();
 });

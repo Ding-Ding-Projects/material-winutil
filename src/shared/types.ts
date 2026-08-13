@@ -442,6 +442,7 @@ export interface Bridge {
   notificationsAdd(input: NotificationInput): Promise<NotificationState>;
   notificationsReview(ids: string[], review: Exclude<NotificationReviewState, 'dismissed'> | 'dismissed'): Promise<NotificationState>;
   notificationsDelete(ids: string[]): Promise<NotificationState>;
+  onNotificationsState(callback: (state: NotificationState) => void): void;
   history(): Promise<HistoryEntry[]>;
   appendHistory(entry: Omit<HistoryEntry, 'id' | 'at'>): Promise<HistoryEntry>;
   historyAccess(): Promise<HistoryAccessState>;

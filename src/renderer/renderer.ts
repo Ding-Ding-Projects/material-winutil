@@ -223,6 +223,7 @@ interface Bridge {
   notificationsAdd(input: { kind: NotificationKind; text: { title: string; detail: string } }): Promise<NotificationRuntimeState>;
   notificationsReview(ids: string[], review: NotificationReview): Promise<NotificationRuntimeState>;
   notificationsDelete(ids: string[]): Promise<NotificationRuntimeState>;
+  onNotificationsState(cb: (state: NotificationRuntimeState) => void): void;
   appearanceThemeList(): Promise<AppearanceThemeDocument>;
   appearanceThemeCreate(name: string, values: AppearanceThemeValues): Promise<AppearanceThemeDocument>;
   appearanceThemeApply(id: string): Promise<{ activeThemeId: string; preferences: Prefs }>;
@@ -5799,6 +5800,7 @@ async function boot(): Promise<void> {
   try { state.narration = { ...state.narration, ...await bridge().narrationState() }; } catch { state.narration.platformSpeechAvailable = false; }
   try { acceptNotifications(await bridge().notificationsState()); }
   catch (error) { snack(error instanceof Error ? `Notification history could not be loaded: ${error.message}` : 'Notification history could not be loaded.'); }
+  bridge().onNotificationsState((next) => { acceptNotifications(next); render(); });
   await loadPersonalVocabulary();
   try { state.profiles = JSON.parse(localStorage.getItem('winutil.profiles') ?? '[]'); } catch { state.profiles = []; }
   loadWorkspace();

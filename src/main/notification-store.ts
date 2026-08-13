@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import {
   addNotification,
   createNotificationState,
+  NOTIFICATION_LIMITS,
   parseNotificationStateJson,
   serializeNotificationState,
   setNotificationReview,
@@ -40,6 +41,21 @@ export class NotificationStore {
 
   public async add(input: NotificationInput): Promise<NotificationState> {
     return this.change((state) => addNotification(state, input, Date.now()));
+  }
+
+  /**
+   * Records a real main-process operation without letting a full notification
+   * history turn that already-completed operation into a false failure.  The
+   * newest operational fact wins; the oldest retained record is pruned only
+   * when the bounded store has reached its declared capacity.
+   */
+  public async addOperational(input: NotificationInput): Promise<NotificationState> {
+    return this.change((state) => {
+      const retained = state.entries.length < NOTIFICATION_LIMITS.maxEntries
+        ? state
+        : Object.freeze({ ...state, entries: Object.freeze(state.entries.slice(0, NOTIFICATION_LIMITS.maxEntries - 1)) });
+      return addNotification(retained, input, Date.now());
+    });
   }
 
   public async review(ids: readonly string[], review: NotificationReviewState): Promise<NotificationState> {

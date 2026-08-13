@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import squirrelStartup from 'electron-squirrel-startup';
 import type {
-  AuthenticatorBeginRequest, AuthenticatorCodes, AuthenticatorEntry, AuthenticatorRegistration,
+  AuthenticatorBeginRequest, AuthenticatorCodes, AuthenticatorCollection, AuthenticatorEntry, AuthenticatorOrganizationRequest, AuthenticatorRegistration,
   CommandResult, ExportFormat, HistoryBrowseResult, HistoryEntry, HistoryQuery, NarrationClientResult, NarrationEvent, NarrationRuntimeState,
   PersonalVocabularyState, PersonalVocabularyUploadResult, Preferences, RunKind, SchoolModeChangeResult,
   ScheduledSettingsState, SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateRestartRequest, UpdateRestartResult, UpdateStatus, WinutilCatalog, DimSumStartupPresentation, FileConverterSurfaceState, AppLogoRuntimeSnapshot,
@@ -1415,6 +1415,14 @@ ipcMain.handle('authenticator:cancel', async (event, registrationId: string): Pr
 ipcMain.handle('authenticator:list', async (event): Promise<AuthenticatorEntry[]> => {
   requireTrustedSender(event);
   return authenticator().list();
+});
+ipcMain.handle('authenticator:collection', async (event): Promise<AuthenticatorCollection> => {
+  requireTrustedSender(event);
+  return authenticator().collection();
+});
+ipcMain.handle('authenticator:organize', async (event, request: AuthenticatorOrganizationRequest): Promise<AuthenticatorCollection> => {
+  requireTrustedSender(event);
+  return authenticator().organize(request);
 });
 ipcMain.handle('authenticator:codes', async (event, id: string): Promise<AuthenticatorCodes> => {
   requireTrustedSender(event);

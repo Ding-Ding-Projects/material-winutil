@@ -358,6 +358,31 @@ export interface AuthenticatorCodes {
   digits: number;
 }
 
+/**
+ * Presentation-only metadata for one local authenticator collection. Neither
+ * this shape nor its bridge methods contain a secret, code, or otpauth URI.
+ */
+export interface AuthenticatorGroup {
+  id: string;
+  label: string;
+  entryIds: string[];
+}
+
+export interface AuthenticatorOrganization {
+  order: string[];
+  groups: AuthenticatorGroup[];
+}
+
+export interface AuthenticatorCollection {
+  entries: AuthenticatorEntry[];
+  organization: AuthenticatorOrganization;
+}
+
+export interface AuthenticatorOrganizationRequest {
+  order: string[];
+  groups: AuthenticatorGroup[];
+}
+
 export type PersonalVocabularyState =
   | { state: 'empty'; entryCount: 0; mappings: Record<string, never> }
   | { state: 'invalid'; entryCount: 0; mappings: Record<string, never> }
@@ -504,6 +529,8 @@ export interface Bridge {
   authenticatorConfirm(registrationId: string, code: string): Promise<AuthenticatorEntry>;
   authenticatorCancel(registrationId: string): Promise<boolean>;
   authenticatorList(): Promise<AuthenticatorEntry[]>;
+  authenticatorCollection(): Promise<AuthenticatorCollection>;
+  authenticatorOrganize(request: AuthenticatorOrganizationRequest): Promise<AuthenticatorCollection>;
   authenticatorCodes(id: string): Promise<AuthenticatorCodes>;
   authenticatorRemove(id: string): Promise<boolean>;
   lockState(surfaceId?: string): Promise<LockSurfaceState>;

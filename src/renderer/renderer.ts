@@ -146,6 +146,9 @@ interface AppearanceThemeDocument { schemaVersion: 1; themes: readonly Appearanc
 interface AppearanceThemeImportResult { status: 'imported' | 'cancelled'; document: AppearanceThemeDocument; imported: number; }
 type TotpAlgorithm = 'SHA1' | 'SHA256' | 'SHA512';
 interface AuthenticatorEntry { id: string; label: string; account: string; issuer?: string; algorithm: TotpAlgorithm; digits: number; period: number; createdAt: string; }
+interface AuthenticatorGroup { id: string; label: string; entryIds: string[]; }
+interface AuthenticatorOrganization { order: string[]; groups: AuthenticatorGroup[]; }
+interface AuthenticatorCollection { entries: AuthenticatorEntry[]; organization: AuthenticatorOrganization; }
 interface AuthenticatorRegistration { registrationId: string; entry: AuthenticatorEntry; manualSecret: string; uri: string; qrDataUrl: string; imported: boolean; expiresAt: string; }
 interface AuthenticatorCodes { id: string; current: string; next: string; secondsRemaining: number; period: number; digits: number; }
 type LockTargetKind = 'tab' | 'group' | 'appearance-property';
@@ -276,6 +279,8 @@ interface Bridge {
   authenticatorConfirm(registrationId: string, code: string): Promise<AuthenticatorEntry>;
   authenticatorCancel(registrationId: string): Promise<boolean>;
   authenticatorList(): Promise<AuthenticatorEntry[]>;
+  authenticatorCollection(): Promise<AuthenticatorCollection>;
+  authenticatorOrganize(request: AuthenticatorOrganization): Promise<AuthenticatorCollection>;
   authenticatorCodes(id: string): Promise<AuthenticatorCodes>;
   authenticatorRemove(id: string): Promise<boolean>;
   lockState(surfaceId?: string): Promise<LockSurfaceState>;
@@ -807,6 +812,7 @@ const state = {
   auth: {
     phase: 'list' as 'list' | 'generate' | 'import' | 'confirm', loading: false, error: '', status: '',
     entries: [] as AuthenticatorEntry[], selectedId: '', codes: null as AuthenticatorCodes | null,
+    organization: { order: [] as string[], groups: [] as AuthenticatorGroup[] }, groupDraft: '',
     registration: null as AuthenticatorRegistration | null, revealSecret: false,
     fixtureMode: false,
     draft: { issuer: 'Material System Utility', account: '', label: '', algorithm: 'SHA1' as TotpAlgorithm, digits: 6, period: 30, uri: '', code: '' },
@@ -5169,9 +5175,10 @@ async function loadAuthenticatorEntries(): Promise<void> {
   if (state.auth.loading) return;
   state.auth.loading = true; state.auth.error = ''; state.auth.status = authText('loading'); render();
   try {
-    const entries = await bridge().authenticatorList();
+    const collection = await bridge().authenticatorCollection();
     if (state.auth.fixtureMode) return;
-    state.auth.entries = entries;
+    state.auth.entries = collection.entries;
+    state.auth.organization = collection.organization;
     if (state.auth.selectedId && !state.auth.entries.some((entry) => entry.id === state.auth.selectedId)) {
       state.auth.selectedId = ''; state.auth.codes = null;
     }
@@ -5182,6 +5189,56 @@ async function loadAuthenticatorEntries(): Promise<void> {
     state.auth.loading = false; renderAuthenticatorFocus('[data-search="auth-entries"] input, .auth-create-actions button');
   }
   if (state.auth.selectedId) void refreshAuthenticatorCodes();
+}
+
+async function saveAuthenticatorOrganization(organization: AuthenticatorOrganization): Promise<void> {
+  if (state.auth.loading) return;
+  state.auth.loading = true; state.auth.error = '';
+  render();
+  try {
+    const collection = await bridge().authenticatorOrganize(organization);
+    if (state.auth.fixtureMode) return;
+    state.auth.entries = collection.entries;
+    state.auth.organization = collection.organization;
+  } catch (error) {
+    state.auth.error = authErrorText(error);
+  } finally {
+    state.auth.loading = false;
+    if (state.dialog === 'auth') renderAuthenticatorFocus('.auth-entry.selected, [data-search="auth-entries"] input');
+  }
+}
+
+function authenticatorGroupsByEntry(): Map<string, AuthenticatorGroup> {
+  const memberships = new Map<string, AuthenticatorGroup>();
+  state.auth.organization.groups.forEach((group) => group.entryIds.forEach((entryId) => memberships.set(entryId, group)));
+  return memberships;
+}
+
+function moveAuthenticatorEntry(entryId: string, direction: -1 | 1): void {
+  const order = [...state.auth.organization.order];
+  const index = order.indexOf(entryId);
+  const target = index + direction;
+  if (index < 0 || target < 0 || target >= order.length) return;
+  [order[index], order[target]] = [order[target], order[index]];
+  void saveAuthenticatorOrganization({ order, groups: state.auth.organization.groups.map((group) => ({ ...group, entryIds: [...group.entryIds] })) });
+}
+
+function createAuthenticatorGroup(): void {
+  const label = state.auth.groupDraft.trim().replace(/\s+/gu, ' ').slice(0, 96);
+  if (!label) { state.auth.error = 'Enter a group name before creating it.'; render(); return; }
+  const groups = [...state.auth.organization.groups, { id: crypto.randomUUID(), label, entryIds: [] }];
+  state.auth.groupDraft = '';
+  void saveAuthenticatorOrganization({ order: [...state.auth.organization.order], groups });
+}
+
+function setAuthenticatorEntryGroup(entryId: string, groupId: string): void {
+  const groups = state.auth.organization.groups.map((group) => ({ ...group, entryIds: group.entryIds.filter((id) => id !== entryId) }));
+  if (groupId) {
+    const group = groups.find((candidate) => candidate.id === groupId);
+    if (!group) return;
+    group.entryIds.push(entryId);
+  }
+  void saveAuthenticatorOrganization({ order: [...state.auth.organization.order], groups });
 }
 
 async function refreshAuthenticatorCodes(): Promise<void> {
@@ -5274,7 +5331,10 @@ async function confirmAuthenticatorRegistration(): Promise<void> {
   try {
     const entry = await bridge().authenticatorConfirm(registration.registrationId, code);
     if (generation !== authenticatorOperationGeneration || state.dialog !== 'auth') return;
-    state.auth.entries = [...state.auth.entries.filter((candidate) => candidate.id !== entry.id), entry];
+    const collection = await bridge().authenticatorCollection();
+    if (generation !== authenticatorOperationGeneration || state.dialog !== 'auth') return;
+    state.auth.entries = collection.entries;
+    state.auth.organization = collection.organization;
     state.auth.selectedId = entry.id; state.auth.registration = null; state.auth.revealSecret = false;
     stopAuthenticatorExpiry();
     state.auth.draft.code = ''; state.auth.draft.uri = ''; state.auth.phase = 'list'; state.auth.status = `“${entry.label}” ${authText('paired')}`;
@@ -5299,7 +5359,9 @@ function removeAuthenticatorEntry(entry: AuthenticatorEntry): void {
       try {
         const removed = await bridge().authenticatorRemove(entry.id);
         if (!removed) throw new Error(authText('removeFailed'));
-        state.auth.entries = state.auth.entries.filter((candidate) => candidate.id !== entry.id);
+        const collection = await bridge().authenticatorCollection();
+        state.auth.entries = collection.entries;
+        state.auth.organization = collection.organization;
         if (state.auth.selectedId === entry.id) { state.auth.selectedId = ''; state.auth.codes = null; stopAuthenticatorRefresh(); }
         state.auth.status = `${authText('removed')} “${entry.label}”.`; openDialog('auth');
       } catch (error) { state.auth.error = authErrorText(error); openDialog('auth'); }
@@ -5360,6 +5422,7 @@ function authDialog(): HTMLElement {
 
   const match = makeMatcher(sq('auth-entries'));
   const entries = a.entries.filter((entry) => match(`${entry.label} ${entry.account} ${entry.issuer ?? ''}`));
+  const groupsByEntry = authenticatorGroupsByEntry();
   const selected = a.entries.find((entry) => entry.id === a.selectedId);
   const code = (value: string): string => value.replace(/(\d{3,4})(?=\d)/g, '$1 ');
   return dialogShell(authText('eyebrow'), authText('title'), [
@@ -5370,15 +5433,27 @@ function authDialog(): HTMLElement {
       h('button', { class: 'btn outlined', disabled: a.loading, onclick: () => void importAuthenticatorPng('file') }, icon('image'), authText('importPng')),
       h('button', { class: 'btn outlined', disabled: a.loading, onclick: () => void importAuthenticatorPng('clipboard') }, icon('content_paste'), authText('importClipboard'))),
     h('p', { class: 'auth-hint' }, authText('cameraUnavailable')),
+    h('div', { class: 'auth-organization' },
+      h('label', { class: 'field' }, 'NEW GROUP', h('input', { maxlength: '96', value: a.groupDraft, placeholder: 'Personal', oninput: (event: Event) => { a.groupDraft = (event.target as HTMLInputElement).value; }, onkeydown: (event: KeyboardEvent) => { if (event.key === 'Enter') { event.preventDefault(); createAuthenticatorGroup(); } } })),
+      h('button', { class: 'btn outlined', disabled: a.loading, onclick: createAuthenticatorGroup }, icon('create_new_folder'), 'Create group'),
+      a.organization.groups.length ? h('div', { class: 'auth-group-summary', role: 'status' }, ...a.organization.groups.map((group) => h('span', { class: 'chip-inline' }, `${group.label} · ${group.entryIds.length}`))) : h('span', { class: 'auth-group-empty' }, 'No groups yet')),
     searchLine('auth-entries', authText('search')),
     a.loading ? h('div', { class: 'auth-state', role: 'status' }, authText('loading')) : null,
     h('div', { class: 'feedback bad', role: 'alert', 'data-auth-feedback': 'true', hidden: !a.error }, a.error),
     !a.loading && !entries.length ? h('div', { class: 'auth-state' }, emptyState(sq('auth-entries').text ? authText('noMatch') : authText('empty'))) : null,
-    entries.length ? h('div', { class: 'listbox auth-entry-list', 'aria-label': authText('entries') }, ...entries.map((entry) =>
-      h('button', {
-        class: `auth-entry${entry.id === a.selectedId ? ' selected' : ''}`, 'aria-pressed': entry.id === a.selectedId ? 'true' : 'false',
-        onclick: () => { a.selectedId = entry.id; a.codes = null; renderAuthenticatorFocus('.auth-entry.selected'); void refreshAuthenticatorCodes(); },
-      }, h('span', { class: 'lead' }, icon('pin')), h('span', { class: 'auth-entry-text' }, h('b', {}, entry.label), h('small', {}, `${entry.issuer || authText('noIssuer')} · ${entry.account}`)), h('span', { class: 'auth-entry-meta' }, `${entry.algorithm} · ${entry.digits}/${entry.period}`)))) : null,
+    entries.length ? h('div', { class: 'listbox auth-entry-list', 'aria-label': authText('entries') }, ...entries.map((entry) => {
+      const group = groupsByEntry.get(entry.id);
+      return h('div', { class: `auth-entry-row${entry.id === a.selectedId ? ' selected' : ''}` },
+        h('button', {
+          class: 'auth-entry', 'aria-pressed': entry.id === a.selectedId ? 'true' : 'false',
+          onclick: () => { a.selectedId = entry.id; a.codes = null; renderAuthenticatorFocus('.auth-entry.selected'); void refreshAuthenticatorCodes(); },
+        }, h('span', { class: 'lead' }, icon('pin')), h('span', { class: 'auth-entry-text' }, h('b', {}, entry.label), h('small', {}, `${entry.issuer || authText('noIssuer')} · ${entry.account}${group ? ` · ${group.label}` : ''}`)), h('span', { class: 'auth-entry-meta' }, `${entry.algorithm} · ${entry.digits}/${entry.period}`)),
+        h('div', { class: 'auth-entry-organize', 'aria-label': `Organize ${entry.label}` },
+          h('button', { class: 'icon-btn small', title: `Move ${entry.label} up`, disabled: a.loading || a.organization.order.indexOf(entry.id) <= 0, onclick: () => moveAuthenticatorEntry(entry.id, -1) }, icon('arrow_upward')),
+          h('button', { class: 'icon-btn small', title: `Move ${entry.label} down`, disabled: a.loading || a.organization.order.indexOf(entry.id) >= a.organization.order.length - 1, onclick: () => moveAuthenticatorEntry(entry.id, 1) }, icon('arrow_downward')),
+          h('label', { class: 'auth-entry-group' }, h('span', {}, 'Group'), h('select', { value: group?.id ?? '', onchange: (event: Event) => setAuthenticatorEntryGroup(entry.id, (event.target as HTMLSelectElement).value) },
+            h('option', { value: '' }, 'Ungrouped'), ...a.organization.groups.map((candidate) => h('option', { value: candidate.id }, candidate.label))))));
+    })) : null,
     selected ? h('section', { class: 'auth-codes', 'aria-label': `${authText('codesFor')} ${selected.label}` },
       h('div', { class: 'auth-code-card current' }, h('span', {}, authText('current')), h('strong', { 'data-auth-code': 'current' }, a.codes ? code(a.codes.current) : '—'),
         h('small', { 'data-auth-countdown': 'true' }, a.codes ? `${a.codes.secondsRemaining} ${authText('seconds')}` : authText('loadingCode')),

@@ -5,8 +5,9 @@ import QRCode from 'qrcode';
 import jsQR from 'jsqr';
 import { PNG } from 'pngjs';
 import type {
-  AuthenticatorBeginRequest, AuthenticatorCodes, AuthenticatorEntry,
-  AuthenticatorRegistration,
+  AuthenticatorBeginRequest, AuthenticatorCodes, AuthenticatorCollection,
+  AuthenticatorEntry, AuthenticatorGroup, AuthenticatorOrganization,
+  AuthenticatorOrganizationRequest, AuthenticatorRegistration,
 } from '../shared/types';
 import {
   base32Encode, buildTotpUri, generateTotp, parseTotpUri, verifyTotp,
@@ -16,8 +17,9 @@ import { deleteCredential, readCredential, writeCredential } from './credential-
 import { LocalHistory, type JsonValue } from './local-history';
 
 interface MetadataDocument {
-  schemaVersion: 1;
+  schemaVersion: 2;
   entries: AuthenticatorEntry[];
+  organization: AuthenticatorOrganization;
 }
 
 interface PendingRegistration {
@@ -49,6 +51,8 @@ export interface AuthenticatorServiceOptions {
 
 const METADATA_FILE = 'authenticator-metadata.json';
 const MAX_ENTRIES = 256;
+const MAX_GROUPS = 64;
+const MAX_GROUP_LABEL_LENGTH = 96;
 const MAX_PENDING = 16;
 const MAX_CONFIRM_ATTEMPTS = 5;
 const PENDING_LIFETIME_MS = 5 * 60 * 1000;
@@ -96,17 +100,58 @@ function projectEntry(value: unknown): AuthenticatorEntry {
   };
 }
 
+function defaultOrganization(entries: readonly AuthenticatorEntry[]): AuthenticatorOrganization {
+  return { order: entries.map((entry) => entry.id), groups: [] };
+}
+
+function projectOrganization(value: unknown, entries: readonly AuthenticatorEntry[]): AuthenticatorOrganization {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Authenticator organization metadata is invalid.');
+  const input = value as Record<string, unknown>;
+  if (Object.keys(input).sort().join(',') !== 'groups,order' || !Array.isArray(input.order) || !Array.isArray(input.groups)
+    || input.groups.length > MAX_GROUPS) throw new Error('Authenticator organization metadata is invalid.');
+  const entryIds = new Set(entries.map((entry) => entry.id));
+  const order = input.order.map((id) => boundedText(id, 'Authenticator organization order item', 64)!);
+  if (order.length !== entries.length || new Set(order).size !== order.length || order.some((id) => !entryIds.has(id))) {
+    throw new Error('Authenticator organization order is invalid.');
+  }
+  const groupIds = new Set<string>();
+  const membership = new Set<string>();
+  const groups: AuthenticatorGroup[] = input.groups.map((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Authenticator group metadata is invalid.');
+    const group = value as Record<string, unknown>;
+    if (Object.keys(group).sort().join(',') !== 'entryIds,id,label' || !Array.isArray(group.entryIds)) {
+      throw new Error('Authenticator group metadata is invalid.');
+    }
+    const id = boundedText(group.id, 'Authenticator group id', 64)!;
+    const label = boundedText(group.label, 'Authenticator group label', MAX_GROUP_LABEL_LENGTH)!;
+    if (!ID_PATTERN.test(id) || groupIds.has(id)) throw new Error('Authenticator group metadata is invalid.');
+    groupIds.add(id);
+    const ids = group.entryIds.map((entryId) => boundedText(entryId, 'Authenticator group entry id', 64)!);
+    if (new Set(ids).size !== ids.length || ids.some((entryId) => !entryIds.has(entryId) || membership.has(entryId))) {
+      throw new Error('Authenticator group membership is invalid.');
+    }
+    ids.forEach((entryId) => membership.add(entryId));
+    return { id, label, entryIds: ids };
+  });
+  return { order, groups };
+}
+
 function parseMetadata(text: string): MetadataDocument {
   const raw: unknown = JSON.parse(text);
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Authenticator metadata is invalid.');
   const input = raw as Record<string, unknown>;
-  if (Object.keys(input).sort().join(',') !== 'entries,schemaVersion' || input.schemaVersion !== 1
-    || !Array.isArray(input.entries) || input.entries.length > MAX_ENTRIES) {
+  if (!Array.isArray(input.entries) || input.entries.length > MAX_ENTRIES) {
     throw new Error('Authenticator metadata is invalid.');
   }
   const entries = input.entries.map(projectEntry);
   if (new Set(entries.map((entry) => entry.id)).size !== entries.length) throw new Error('Authenticator metadata contains duplicate entries.');
-  return { schemaVersion: 1, entries };
+  if (input.schemaVersion === 1 && Object.keys(input).sort().join(',') === 'entries,schemaVersion') {
+    return { schemaVersion: 2, entries, organization: defaultOrganization(entries) };
+  }
+  if (input.schemaVersion !== 2 || Object.keys(input).sort().join(',') !== 'entries,organization,schemaVersion') {
+    throw new Error('Authenticator metadata is invalid.');
+  }
+  return { schemaVersion: 2, entries, organization: projectOrganization(input.organization, entries) };
 }
 
 function vaultTarget(id: string): string {
@@ -169,7 +214,7 @@ export function decodeAuthenticatorQrPng(payload: Uint8Array): string {
   }
 }
 
-function redactedSnapshot(entries: readonly AuthenticatorEntry[], changedId: string): JsonValue {
+function redactedSnapshot(entries: readonly AuthenticatorEntry[], organization: AuthenticatorOrganization, changedId: string): JsonValue {
   return {
     schemaVersion: 1,
     changedId,
@@ -183,6 +228,10 @@ function redactedSnapshot(entries: readonly AuthenticatorEntry[], changedId: str
       period: entry.period,
       createdAt: entry.createdAt,
     })),
+    organization: {
+      order: [...organization.order],
+      groups: organization.groups.map((group) => ({ id: group.id, label: group.label, entryIds: [...group.entryIds] })),
+    },
     excluded: 'Authenticator secrets, current codes, registration URIs, and QR payloads are omitted.',
   };
 }
@@ -342,12 +391,16 @@ export class AuthenticatorService {
         if (document.entries.length >= MAX_ENTRIES) throw new Error('The authenticator entry limit has been reached.');
         if (document.entries.some((entry) => entry.id === pending.entry.id)) throw new Error('Authenticator metadata contains a duplicate entry.');
         next = [...document.entries, pending.entry];
+        const organization: AuthenticatorOrganization = {
+          order: [...document.organization.order, pending.entry.id],
+          groups: document.organization.groups.map((group) => ({ ...group, entryIds: [...group.entryIds] })),
+        };
         await this.dependencies.writeCredential(target, pending.entry.id, pending.secret);
         vaultWritten = true;
         refuseCancelled();
-        await this.writeMetadata(next);
+        await this.writeMetadata(next, organization);
         refuseCancelled();
-        await this.dependencies.recordHistory(pending.imported ? 'imported' : 'created', redactedSnapshot(next, pending.entry.id));
+        await this.dependencies.recordHistory(pending.imported ? 'imported' : 'created', redactedSnapshot(next, organization, pending.entry.id));
         refuseCancelled();
       } catch (error) {
         const rollbackFailures: string[] = [];
@@ -356,7 +409,7 @@ export class AuthenticatorService {
           catch { rollbackFailures.push('credential'); }
         }
         if (document && next) {
-          try { await this.writeMetadata(document.entries); }
+          try { await this.writeMetadata(document.entries, document.organization); }
           catch { rollbackFailures.push('metadata'); }
         }
         if (error instanceof Error && (error.message.includes('entry limit') || error.message.includes('duplicate entry'))) throw error;
@@ -385,7 +438,20 @@ export class AuthenticatorService {
   }
 
   async list(): Promise<AuthenticatorEntry[]> {
-    return this.enqueue(async () => (await this.readMetadata()).entries.map((entry) => ({ ...entry })));
+    return this.enqueue(async () => this.collectionFromDocument(await this.readMetadata()).entries);
+  }
+
+  async collection(): Promise<AuthenticatorCollection> {
+    return this.enqueue(async () => this.collectionFromDocument(await this.readMetadata()));
+  }
+
+  async organize(request: AuthenticatorOrganizationRequest): Promise<AuthenticatorCollection> {
+    return this.enqueue(async () => {
+      const document = await this.readMetadata();
+      const organization = projectOrganization(request, document.entries);
+      await this.writeMetadata(document.entries, organization);
+      return this.collectionFromDocument({ schemaVersion: 2, entries: document.entries, organization });
+    });
   }
 
   async codes(id: string): Promise<AuthenticatorCodes> {
@@ -422,12 +488,16 @@ export class AuthenticatorService {
       const secret = await this.dependencies.readCredential(target, id);
       if (!secret) throw new Error('The authenticator credential is unavailable; metadata was retained.');
       const next = document.entries.filter((candidate) => candidate.id !== id);
+      const organization: AuthenticatorOrganization = {
+        order: document.organization.order.filter((entryId) => entryId !== id),
+        groups: document.organization.groups.map((group) => ({ ...group, entryIds: group.entryIds.filter((entryId) => entryId !== id) })),
+      };
       let deleted = false;
       try {
         deleted = await this.dependencies.deleteCredential(target, id);
         if (!deleted) throw new Error('Credential deletion failed.');
-        await this.writeMetadata(next);
-        await this.dependencies.recordHistory('deleted', redactedSnapshot(next, id));
+        await this.writeMetadata(next, organization);
+        await this.dependencies.recordHistory('deleted', redactedSnapshot(next, organization, id));
         return true;
       } catch {
         const rollbackFailures: string[] = [];
@@ -435,7 +505,7 @@ export class AuthenticatorService {
           try { await this.dependencies.writeCredential(target, id, secret); }
           catch { rollbackFailures.push('credential'); }
         }
-        try { await this.writeMetadata(document.entries); }
+        try { await this.writeMetadata(document.entries, document.organization); }
         catch { rollbackFailures.push('metadata'); }
         if (rollbackFailures.length) throw new Error(`The authenticator entry could not be removed or rolled back automatically (${rollbackFailures.join(' and ')} recovery failed).`);
         throw new Error('The authenticator entry could not be removed safely.');
@@ -466,18 +536,30 @@ export class AuthenticatorService {
     try {
       return parseMetadata(await readFile(this.metadataPath, 'utf8'));
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { schemaVersion: 1, entries: [] };
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { schemaVersion: 2, entries: [], organization: defaultOrganization([]) };
       throw error;
     }
   }
 
-  private async writeMetadata(entries: readonly AuthenticatorEntry[]): Promise<void> {
+  private collectionFromDocument(document: MetadataDocument): AuthenticatorCollection {
+    const entriesById = new Map(document.entries.map((entry) => [entry.id, entry]));
+    return {
+      entries: document.organization.order.map((id) => ({ ...entriesById.get(id)! })),
+      organization: {
+        order: [...document.organization.order],
+        groups: document.organization.groups.map((group) => ({ id: group.id, label: group.label, entryIds: [...group.entryIds] })),
+      },
+    };
+  }
+
+  private async writeMetadata(entries: readonly AuthenticatorEntry[], organization: AuthenticatorOrganization): Promise<void> {
     if (entries.length > MAX_ENTRIES) throw new Error('The authenticator entry limit has been reached.');
     const projected = entries.map(projectEntry);
+    const projectedOrganization = projectOrganization(organization, projected);
     await mkdir(path.dirname(this.metadataPath), { recursive: true });
     const temporary = `${this.metadataPath}.${process.pid}.${this.dependencies.randomUUID()}.tmp`;
     try {
-      await writeFile(temporary, JSON.stringify({ schemaVersion: 1, entries: projected }, null, 2) + '\n', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      await writeFile(temporary, JSON.stringify({ schemaVersion: 2, entries: projected, organization: projectedOrganization }, null, 2) + '\n', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
       await rename(temporary, this.metadataPath);
     } finally {
       await rm(temporary, { force: true });

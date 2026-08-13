@@ -37,6 +37,7 @@ interface FileConverterSurfaceState {
   selected: Array<{ id: string; name: string; bytes: number; kind: string; confidence: string; conflict: boolean; reason: string }>;
   queue: { state: 'active' | 'paused' | 'cancelled'; pageCount: number; inFlightBytes: number; counts: Record<'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled', number>; items: Array<{ id: string; sourceName: string; sourceBytes: number; estimatedOutputBytes: number; adapterId: string; state: string; retryCount: number; outcome?: string }> };
   storage: { availableBytes: number; requiredBytes: number; reserveBytes: number; status: 'ready' | 'insufficient' | 'unavailable' };
+  outputDestination: { mode: 'user-selected' | 'application-data-fallback'; directory: string; validation: 'ready' | 'unavailable' };
   limits: { signatureBytes: number; pageItems: number; maxConcurrency: number };
   lastMessage: string;
 }
@@ -283,6 +284,8 @@ interface Bridge {
   dimSumStartup(): Promise<DimSumStartupPresentation | null>;
   fileConverterState(): Promise<FileConverterSurfaceState>;
   fileConverterPickSources(): Promise<FileConverterSurfaceState>;
+  fileConverterPickOutputDestination(): Promise<FileConverterSurfaceState>;
+  fileConverterClearOutputDestination(): Promise<FileConverterSurfaceState>;
   fileConverterClearSelection(): Promise<FileConverterSurfaceState>;
   fileConverterEnqueue(adapterId: string): Promise<FileConverterSurfaceState>;
   fileConverterPause(): Promise<FileConverterSurfaceState>;
@@ -2180,6 +2183,15 @@ function converterSources(data: FileConverterSurfaceState, school: boolean): HTM
     h('div', { class: 'btnrow' },
       h('button', { class: 'btn filled', disabled: state.converter.busy, onclick: () => void converterAction(() => bridge().fileConverterPickSources()) }, icon('folder_open'), converterText('Choose local files', '揀本機檔案')),
       h('button', { class: 'btn outlined', disabled: state.converter.busy || !data.selected.length, onclick: () => void converterAction(() => bridge().fileConverterClearSelection()) }, converterText('Clear source selection', '清除來源選擇'))),
+    h('div', { class: `storage-preflight ${data.outputDestination.validation}`, role: 'status' },
+      h('b', {}, converterText('Output destination', '輸出位置')),
+      h('span', {}, data.outputDestination.validation === 'ready'
+        ? converterText(data.outputDestination.mode === 'user-selected' ? 'Selected local folder is validated and will be rechecked before every output.' : 'No output folder is selected. Outputs use the explicit application-data fallback until you choose one.', data.outputDestination.mode === 'user-selected' ? '已驗證本機資料夾；每次輸出之前都會重新檢查。' : '未揀輸出資料夾。未揀之前會使用明確應用程式資料備用位置。')
+        : converterText('The saved output folder is unavailable or unsafe. Choose an existing local folder before queueing.', '已儲存輸出資料夾無法使用或者唔安全。請先揀現有本機資料夾再加入佇列。')),
+      h('output', { class: 'field-value', 'aria-label': converterText('Current output folder', '目前輸出資料夾') }, data.outputDestination.directory),
+      h('div', { class: 'btnrow' },
+        h('button', { class: 'btn tonal', disabled: state.converter.busy, onclick: () => void converterAction(() => bridge().fileConverterPickOutputDestination()) }, icon('folder_open'), converterText('Choose output folder', '揀輸出資料夾')),
+        h('button', { class: 'btn outlined', disabled: state.converter.busy || data.outputDestination.mode !== 'user-selected', onclick: () => void converterAction(() => bridge().fileConverterClearOutputDestination()) }, converterText('Use fallback folder', '用備用資料夾')))),
     h('div', { class: `storage-preflight ${data.storage.status}`, role: 'status' },
       h('b', {}, converterText('Storage preflight', '儲存空間預檢')),
       h('span', {}, data.storage.status === 'ready'

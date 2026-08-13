@@ -1133,6 +1133,18 @@ ipcMain.handle('file-converter:pick-sources', async (event): Promise<FileConvert
   if (choice.canceled) return converter().snapshot();
   return converter().pickLocalFiles(choice.filePaths);
 });
+ipcMain.handle('file-converter:pick-output-destination', async (event): Promise<FileConverterSurfaceState> => {
+  requireTrustedSender(event);
+  if (!win || win.isDestroyed()) throw new Error('The application window is unavailable.');
+  const choice = await dialog.showOpenDialog(win, {
+    title: 'Choose an existing local output folder', properties: ['openDirectory'],
+  });
+  if (choice.canceled || !choice.filePaths[0]) return converter().snapshot();
+  return converter().setOutputDestination(choice.filePaths[0]);
+});
+ipcMain.handle('file-converter:clear-output-destination', async (event): Promise<FileConverterSurfaceState> => {
+  requireTrustedSender(event); return converter().clearOutputDestination();
+});
 ipcMain.handle('file-converter:clear-selection', async (event): Promise<FileConverterSurfaceState> => {
   requireTrustedSender(event); return converter().clearSelection();
 });

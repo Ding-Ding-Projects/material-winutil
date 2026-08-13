@@ -22,6 +22,7 @@ const QUEUE_DIRECTORY = 'file-converter-queue-v1';
 const OUTPUT_DIRECTORY = 'file-converter-output-v1';
 const INDEX_FILE = 'index.json';
 const SELECTED_SOURCES_FILE = 'selected-sources.json';
+const OUTPUT_DESTINATION_FILE = 'output-destination.json';
 const SOURCE_LIMIT = 512;
 const RESERVE_BYTES = 256 * 1024 * 1024;
 
@@ -34,6 +35,11 @@ interface PersistedSelectedSource {
   confidence: FileConverterSelectedSource['confidence'];
   conflict: boolean;
   reason: string;
+}
+
+interface PersistedOutputDestination {
+  schemaVersion: 1;
+  directory: string;
 }
 
 async function atomicJson(filePath: string, value: unknown): Promise<void> {
@@ -62,6 +68,18 @@ function validatePersistedSelectedSource(value: unknown): PersistedSelectedSourc
     id: entry.id, name: entry.name, sourcePath: entry.sourcePath, bytes,
     kind: entry.kind as FileKind, confidence: entry.confidence, conflict: entry.conflict, reason: entry.reason,
   };
+}
+
+function validatePersistedOutputDestination(value: unknown): PersistedOutputDestination {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Persisted output destination is invalid.');
+  const entry = value as Record<string, unknown>;
+  const expectedKeys = ['schemaVersion', 'directory'];
+  if (Object.keys(entry).length !== expectedKeys.length || expectedKeys.some((key) => !(key in entry))) throw new Error('Persisted output destination has unexpected fields.');
+  if (entry.schemaVersion !== 1) throw new Error('Persisted output destination schema is unsupported.');
+  if (typeof entry.directory !== 'string' || entry.directory.length === 0 || entry.directory.includes('\0') || !path.isAbsolute(entry.directory) || Buffer.byteLength(entry.directory, 'utf8') > FILE_CONVERTER_LIMITS.itemPathBytes) {
+    throw new Error('Persisted output directory is invalid.');
+  }
+  return { schemaVersion: 1, directory: entry.directory };
 }
 
 /** Write a completed temporary file, then publish it with a same-volume hard link.
@@ -132,6 +150,7 @@ class JsonQueueStore implements ConversionQueueStore {
   private indexPath(): string { return path.join(this.directory, INDEX_FILE); }
   private pagePath(id: string): string { return path.join(this.directory, `page-${id}.json`); }
   private selectedSourcesPath(): string { return path.join(this.directory, SELECTED_SOURCES_FILE); }
+  private outputDestinationPath(): string { return path.join(this.directory, OUTPUT_DESTINATION_FILE); }
 
   async readIndex(): Promise<ConversionQueueIndex | undefined> {
     try { return JSON.parse(await fs.readFile(this.indexPath(), 'utf8')) as ConversionQueueIndex; }
@@ -159,6 +178,14 @@ class JsonQueueStore implements ConversionQueueStore {
     await atomicJson(this.selectedSourcesPath(), normalized);
   }
   async clearSelectedSources(): Promise<void> { await fs.rm(this.selectedSourcesPath(), { force: true }); }
+  async readOutputDestination(): Promise<PersistedOutputDestination | undefined> {
+    try { return validatePersistedOutputDestination(JSON.parse(await fs.readFile(this.outputDestinationPath(), 'utf8')) as unknown); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
+  }
+  async writeOutputDestination(destination: PersistedOutputDestination): Promise<void> {
+    await atomicJson(this.outputDestinationPath(), validatePersistedOutputDestination(destination));
+  }
+  async clearOutputDestination(): Promise<void> { await fs.rm(this.outputDestinationPath(), { force: true }); }
   async pageViews(pageIds: readonly string[]): Promise<FileConverterQueueItemView[]> {
     const output: FileConverterQueueItemView[] = [];
     for (const pageId of pageIds) {
@@ -195,6 +222,7 @@ export class FileConverterService {
   private queue!: PersistentConversionQueue;
   private selected: FileConverterSelectedSource[] = [];
   private selectedPaths = new Map<string, string>();
+  private outputDestination?: string;
   private lastMessage = 'No source files selected. The source stays unchanged.';
   private queueRun?: Promise<void>;
 
@@ -202,7 +230,35 @@ export class FileConverterService {
     this.store = new JsonQueueStore(path.join(appDataDirectory, QUEUE_DIRECTORY));
   }
 
-  private outputDirectory(): string { return path.join(this.appDataDirectory, OUTPUT_DIRECTORY); }
+  private fallbackOutputDirectory(): string { return path.join(this.appDataDirectory, OUTPUT_DIRECTORY); }
+
+  private async rejectLinkedPathComponents(resolved: string): Promise<void> {
+    const parsed = path.parse(resolved);
+    let current = parsed.root;
+    for (const segment of resolved.slice(parsed.root.length).split(path.sep).filter(Boolean)) {
+      current = path.join(current, segment);
+      const component = await fs.lstat(current);
+      if (component.isSymbolicLink()) throw new Error('The output folder cannot be inside a symbolic link or reparse point.');
+    }
+  }
+
+  private async validateOutputDirectory(candidate: string): Promise<string> {
+    if (typeof candidate !== 'string' || candidate.length === 0 || candidate.includes('\0') || !path.isAbsolute(candidate) || Buffer.byteLength(candidate, 'utf8') > FILE_CONVERTER_LIMITS.itemPathBytes) {
+      throw new Error('The output folder is invalid or not absolute.');
+    }
+    const resolved = path.resolve(candidate);
+    await this.rejectLinkedPathComponents(resolved);
+    const directory = await fs.lstat(resolved);
+    if (!directory.isDirectory() || directory.isSymbolicLink()) throw new Error('The output folder must be an existing non-link local directory.');
+    return resolved;
+  }
+
+  private async activeOutputDirectory(): Promise<{ directory: string; mode: 'user-selected' | 'application-data-fallback' }> {
+    if (this.outputDestination) return { directory: await this.validateOutputDirectory(this.outputDestination), mode: 'user-selected' };
+    const fallback = this.fallbackOutputDirectory();
+    await fs.mkdir(fallback, { recursive: true });
+    return { directory: await this.validateOutputDirectory(fallback), mode: 'application-data-fallback' };
+  }
 
   static async open(appDataDirectory: string): Promise<FileConverterService> {
     validateAdapterRegistry();
@@ -211,6 +267,7 @@ export class FileConverterService {
     service.queue = await PersistentConversionQueue.open(service.store);
     await service.store.writeIndex(service.queue.summary() as ConversionQueueIndex);
     await service.restoreSelectedSources();
+    await service.restoreOutputDestination();
     return service;
   }
 
@@ -240,6 +297,21 @@ export class FileConverterService {
     return this.snapshot();
   }
 
+  async setOutputDestination(directory: string): Promise<FileConverterSurfaceState> {
+    const validated = await this.validateOutputDirectory(directory);
+    this.outputDestination = validated;
+    await this.store.writeOutputDestination({ schemaVersion: 1, directory: validated });
+    this.lastMessage = 'The selected output folder was validated and will be rechecked before every output is written.';
+    return this.snapshot();
+  }
+
+  async clearOutputDestination(): Promise<FileConverterSurfaceState> {
+    this.outputDestination = undefined;
+    await this.store.clearOutputDestination();
+    this.lastMessage = 'The selected output folder was cleared. Future outputs use the explicit application-data fallback until another folder is chosen.';
+    return this.snapshot();
+  }
+
   async pause(): Promise<FileConverterSurfaceState> { await this.queue.pause(); this.lastMessage = 'The persistent conversion queue is paused.'; return this.snapshot(); }
   async resume(): Promise<FileConverterSurfaceState> {
     await this.queue.resume();
@@ -262,6 +334,7 @@ export class FileConverterService {
     await this.store.writeIndex(this.queue.summary() as ConversionQueueIndex);
     this.selected = [];
     this.selectedPaths.clear();
+    if (this.outputDestination) await this.store.writeOutputDestination({ schemaVersion: 1, directory: this.outputDestination });
     this.lastMessage = 'A new empty persistent queue is ready; saved source selection metadata was cleared.';
     return this.snapshot();
   }
@@ -278,8 +351,8 @@ export class FileConverterService {
         ? source.bytes * 2
       : source.bytes;
     const requiredBytes = this.selected.reduce((total, source) => total + estimatedOutputBytes(source), 0);
-    await fs.mkdir(this.outputDirectory(), { recursive: true });
-    const disk = await fs.statfs(this.outputDirectory());
+    const output = await this.activeOutputDirectory();
+    const disk = await fs.statfs(output.directory);
     const availableBytes = Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, disk.bavail * disk.bsize));
     if (availableBytes < requiredBytes + RESERVE_BYTES) throw new Error('The controlled local output location does not have enough free storage for this batch and its safety reserve.');
 
@@ -367,6 +440,24 @@ export class FileConverterService {
     this.lastMessage = unavailable
       ? `Recovered ${selected.length} local source file(s); ${unavailable} saved source file(s) are missing or changed and require selection again.`
       : `Recovered ${selected.length} validated local source file(s) for resumable conversion.`;
+  }
+
+  private async restoreOutputDestination(): Promise<void> {
+    let persisted: PersistedOutputDestination | undefined;
+    try { persisted = await this.store.readOutputDestination(); }
+    catch {
+      await this.store.clearOutputDestination();
+      this.lastMessage = 'Saved output destination metadata was invalid and was cleared safely; choose an existing local folder again.';
+      return;
+    }
+    if (!persisted) return;
+    try {
+      this.outputDestination = await this.validateOutputDirectory(persisted.directory);
+    } catch {
+      await this.store.clearOutputDestination();
+      this.outputDestination = undefined;
+      this.lastMessage = 'Saved output folder is unavailable or unsafe and was cleared; the explicit application-data fallback remains available.';
+    }
   }
 
   private async revalidateSelectedSources(): Promise<void> {
@@ -460,11 +551,13 @@ export class FileConverterService {
           : deterministicUtf8PlainText(sourceBytes);
       const outputBytes = Buffer.byteLength(content, adapter.id === 'binary-to-lowercase-hex' ? 'ascii' : 'utf8');
       if (outputBytes > adapter.limits.outputBytes) throw new Error('Deterministic output exceeds the adapter limit.');
-      const outputRoot = this.outputDirectory();
+      const output = await this.activeOutputDirectory();
+      const outputRoot = output.directory;
       const destination = path.resolve(outputRoot, outputName(item.sourcePath, adapter.id === 'csv-to-json' ? '.json' : adapter.id === 'binary-to-lowercase-hex' ? '.hex' : '.txt'));
       if (path.relative(outputRoot, destination).startsWith('..') || path.isAbsolute(path.relative(outputRoot, destination))) {
         throw new Error('Controlled output path escaped its application-data directory.');
       }
+      await this.validateOutputDirectory(outputRoot);
       await atomicUtf8Output(destination, content);
       const reopenedBytes = await fs.readFile(destination);
       if (!Buffer.from(reopenedBytes).equals(Buffer.from(content, adapter.id === 'binary-to-lowercase-hex' ? 'ascii' : 'utf8'))) throw new Error('Output validation failed after atomic publication.');
@@ -478,11 +571,12 @@ export class FileConverterService {
       if (adapter.id === 'binary-to-lowercase-hex' && !Buffer.from(reopenedBytes.toString('ascii'), 'hex').equals(sourceBytes)) {
         throw new Error('Binary hexadecimal output failed decoded-byte reopen validation.');
       }
+      const destinationLabel = output.mode === 'user-selected' ? 'the selected local output folder' : 'the explicit application-data fallback output folder';
       await this.queue.complete(item.id, adapter.id === 'csv-to-json'
-        ? 'Converted CSV to validated deterministic JSON in the controlled local output location.'
+        ? `Converted CSV to validated deterministic JSON in ${destinationLabel}.`
         : adapter.id === 'binary-to-lowercase-hex'
-          ? 'Converted binary bytes to validated canonical lowercase hexadecimal in the controlled local output location.'
-          : 'Converted to validated UTF-8 plain text in the controlled local output location.');
+          ? `Converted binary bytes to validated canonical lowercase hexadecimal in ${destinationLabel}.`
+          : `Converted to validated UTF-8 plain text in ${destinationLabel}.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Local conversion failed safely.';
       await this.queue.fail(item.id, message);
@@ -510,10 +604,15 @@ export class FileConverterService {
     for (const item of items) counts[item.state] = (counts[item.state] ?? 0) + 1;
     const requiredBytes = this.selected.reduce((total, item) => total + item.bytes, 0);
     let availableBytes = 0;
+    let outputDestination: FileConverterSurfaceState['outputDestination'];
     try {
-      const disk = await fs.statfs(this.appDataDirectory);
+      const output = await this.activeOutputDirectory();
+      const disk = await fs.statfs(output.directory);
       availableBytes = Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, disk.bavail * disk.bsize));
-    } catch { /* a visible unavailable preflight is safer than a guessed capacity */ }
+      outputDestination = { mode: output.mode, directory: output.directory, validation: 'ready' };
+    } catch {
+      outputDestination = { mode: this.outputDestination ? 'user-selected' : 'application-data-fallback', directory: this.outputDestination ?? this.fallbackOutputDirectory(), validation: 'unavailable' };
+    }
     const preflight = availableBytes > 0 && availableBytes >= requiredBytes + RESERVE_BYTES ? 'ready' : availableBytes > 0 ? 'insufficient' : 'unavailable';
     return {
       schemaVersion: 1,
@@ -521,6 +620,7 @@ export class FileConverterService {
       selected: this.selected.map((entry) => ({ ...entry })),
       queue: { state: index.state, pageCount: index.pageIds.length, inFlightBytes: index.inFlightBytes, counts, items },
       storage: { availableBytes, requiredBytes, reserveBytes: RESERVE_BYTES, status: preflight },
+      outputDestination,
       limits: { signatureBytes: FILE_CONVERTER_LIMITS.signatureBytes, pageItems: FILE_CONVERTER_LIMITS.pageItems, maxConcurrency: FILE_CONVERTER_LIMITS.maxConcurrency },
       lastMessage: this.lastMessage,
     };

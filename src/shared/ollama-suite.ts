@@ -15,6 +15,9 @@ export const OLLAMA_LIMITS = Object.freeze({
   installedEnrichmentResponseBytes: 512 * 1024,
   pullQueue: 128,
   pullConcurrency: 2,
+  chatSessions: 100,
+  chatSessionStoreBytes: 16 * 1024 * 1024,
+  chatSessionTitleBytes: 160,
   chatMessages: 64,
   chatMessageBytes: 32 * 1024,
   chatHistoryBytes: 512 * 1024,
@@ -222,6 +225,65 @@ export interface OllamaChatRequest {
 }
 
 /**
+ * A persisted session never carries attachment handles or image payloads.
+ * Those are deliberately one-request, privileged-process-only values.
+ */
+export interface OllamaPersistedChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface OllamaChatSessionSummary {
+  id: string;
+  title: string;
+  model: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+}
+
+export interface OllamaChatSessionDetail extends OllamaChatSessionSummary {
+  systemPrompt: string;
+  messages: OllamaPersistedChatMessage[];
+}
+
+export interface OllamaChatSessionCreateRequest {
+  model: string;
+  systemPrompt?: string;
+}
+
+export interface OllamaChatSessionListRequest {
+  limit?: number;
+}
+
+export interface OllamaChatSessionGetRequest {
+  id: string;
+}
+
+export interface OllamaChatSessionUpdateRequest {
+  id: string;
+  model?: string;
+  systemPrompt?: string | null;
+  messages?: OllamaPersistedChatMessage[];
+}
+
+export interface OllamaChatSessionRenameRequest {
+  id: string;
+  title: string;
+}
+
+export interface OllamaChatSessionDeleteRequest {
+  id: string;
+}
+
+export interface OllamaChatSessionCreateResult { session: OllamaChatSessionDetail; }
+export interface OllamaChatSessionListResult { sessions: OllamaChatSessionSummary[]; }
+export interface OllamaChatSessionGetResult { session: OllamaChatSessionDetail; }
+export interface OllamaChatSessionUpdateResult { session: OllamaChatSessionDetail; }
+export interface OllamaChatSessionRenameResult { session: OllamaChatSessionSummary; }
+export interface OllamaChatSessionDeleteResult { id: string; deleted: boolean; }
+
+/**
  * Redacted, portable chat transcript. Image payloads and the system prompt are
  * intentionally omitted before this shape crosses the application boundary.
  */
@@ -311,6 +373,7 @@ const CHAT_CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u;
 const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
+const CHAT_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 
 function record(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -325,6 +388,13 @@ function onlyKeys(value: Record<string, unknown>, expected: readonly string[], l
   }
 }
 
+function onlyAllowedKeys(value: Record<string, unknown>, expected: readonly string[], label: string): void {
+  const keys = Object.keys(value);
+  if (keys.some((key) => !expected.includes(key) || ['__proto__', 'prototype', 'constructor'].includes(key))) {
+    throw new Error(`${label} contains unknown fields.`);
+  }
+}
+
 function text(value: unknown, label: string, maximum = 512): string {
   if (typeof value !== 'string' || !value || value.length > maximum || CONTROL.test(value)) throw new Error(`${label} is invalid.`);
   return value;
@@ -333,6 +403,88 @@ function text(value: unknown, label: string, maximum = 512): string {
 function integer(value: unknown, label: string, maximum = Number.MAX_SAFE_INTEGER): number {
   if (!Number.isSafeInteger(value) || Number(value) < 0 || Number(value) > maximum) throw new Error(`${label} is invalid.`);
   return Number(value);
+}
+
+function byteText(value: unknown, label: string, maximumBytes: number, allowEmpty = false): string {
+  if (typeof value !== 'string' || (!allowEmpty && !value) || CHAT_CONTROL.test(value) || Buffer.byteLength(value, 'utf8') > maximumBytes) {
+    throw new Error(`${label} is invalid.`);
+  }
+  return value;
+}
+
+function validateChatSessionId(value: unknown): string {
+  const id = text(value, 'Chat session id', 128);
+  if (!CHAT_SESSION_ID.test(id)) throw new Error('Chat session id is invalid.');
+  return id;
+}
+
+function validatePersistedChatMessages(value: unknown): OllamaPersistedChatMessage[] {
+  if (!Array.isArray(value) || value.length > OLLAMA_LIMITS.chatMessages) throw new Error('Chat session message count is invalid.');
+  let totalBytes = 0;
+  const messages = value.map((message) => {
+    if (!record(message)) throw new Error('Chat session message is invalid.');
+    onlyKeys(message, ['role', 'content'], 'Chat session message');
+    if (message.role !== 'user' && message.role !== 'assistant') throw new Error('Chat session message role is invalid.');
+    const content = byteText(message.content, 'Chat session message content', OLLAMA_LIMITS.chatMessageBytes);
+    totalBytes += Buffer.byteLength(content, 'utf8');
+    return { role: message.role, content };
+  });
+  if (totalBytes > OLLAMA_LIMITS.chatHistoryBytes) throw new Error('Chat session history exceeds its byte limit.');
+  return messages;
+}
+
+/** Validates a new local-only chat-session request before it crosses IPC. */
+export function validateOllamaChatSessionCreate(value: unknown): OllamaChatSessionCreateRequest {
+  if (!record(value)) throw new Error('Chat session creation request is invalid.');
+  onlyAllowedKeys(value, ['model', 'systemPrompt'], 'Chat session creation request');
+  if (!Object.hasOwn(value, 'model')) throw new Error('Chat session creation request is missing the model.');
+  const request: OllamaChatSessionCreateRequest = { model: validateOllamaModelName(value.model) };
+  if (Object.hasOwn(value, 'systemPrompt')) request.systemPrompt = byteText(value.systemPrompt, 'Chat session system prompt', OLLAMA_LIMITS.systemPromptBytes, true);
+  return request;
+}
+
+/** Validates one atomic update; absent fields preserve their stored values. */
+export function validateOllamaChatSessionUpdate(value: unknown): OllamaChatSessionUpdateRequest {
+  if (!record(value)) throw new Error('Chat session update request is invalid.');
+  onlyAllowedKeys(value, ['id', 'model', 'systemPrompt', 'messages'], 'Chat session update request');
+  if (!Object.hasOwn(value, 'id') || Object.keys(value).length < 2) throw new Error('Chat session update request is incomplete.');
+  const request: OllamaChatSessionUpdateRequest = { id: validateChatSessionId(value.id) };
+  if (Object.hasOwn(value, 'model')) request.model = validateOllamaModelName(value.model);
+  if (Object.hasOwn(value, 'systemPrompt')) request.systemPrompt = value.systemPrompt === null
+    ? null
+    : byteText(value.systemPrompt, 'Chat session system prompt', OLLAMA_LIMITS.systemPromptBytes, true);
+  if (Object.hasOwn(value, 'messages')) request.messages = validatePersistedChatMessages(value.messages);
+  return request;
+}
+
+export function validateOllamaChatSessionRename(value: unknown): OllamaChatSessionRenameRequest {
+  if (!record(value)) throw new Error('Chat session rename request is invalid.');
+  onlyKeys(value, ['id', 'title'], 'Chat session rename request');
+  return {
+    id: validateChatSessionId(value.id),
+    title: byteText(value.title, 'Chat session title', OLLAMA_LIMITS.chatSessionTitleBytes),
+  };
+}
+
+export function validateOllamaChatSessionList(value: unknown): OllamaChatSessionListRequest {
+  if (!record(value)) throw new Error('Chat session list request is invalid.');
+  onlyAllowedKeys(value, ['limit'], 'Chat session list request');
+  if (!Object.hasOwn(value, 'limit')) return {};
+  const limit = integer(value.limit, 'Chat session list limit', OLLAMA_LIMITS.chatSessions);
+  if (limit < 1) throw new Error('Chat session list limit is invalid.');
+  return { limit };
+}
+
+export function validateOllamaChatSessionGet(value: unknown): OllamaChatSessionGetRequest {
+  if (!record(value)) throw new Error('Chat session lookup request is invalid.');
+  onlyKeys(value, ['id'], 'Chat session lookup request');
+  return { id: validateChatSessionId(value.id) };
+}
+
+export function validateOllamaChatSessionDelete(value: unknown): OllamaChatSessionDeleteRequest {
+  if (!record(value)) throw new Error('Chat session deletion request is invalid.');
+  onlyKeys(value, ['id'], 'Chat session deletion request');
+  return { id: validateChatSessionId(value.id) };
 }
 
 export function validateOllamaModelName(value: unknown): string {

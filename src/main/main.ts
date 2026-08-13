@@ -12,7 +12,7 @@ import type {
   ScheduledSettingsState, SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateRestartRequest, UpdateRestartResult, UpdateStatus, WinutilCatalog, DimSumStartupPresentation, FileConverterSurfaceState, AppLogoRuntimeSnapshot,
   AppearanceThemeDocument, AppearanceThemeImportResult, AppearanceThemeValues,
 } from '../shared/types';
-import type { OllamaCatalogSnapshot, OllamaChatAttachment, OllamaChatAttachmentPickResult, OllamaChatExportDocument, OllamaChatExportResult, OllamaChatExportSaveRequest, OllamaChatRequest, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress, OllamaHarnessPlan, OllamaHarnessPreflightRequest, OllamaHarnessProfileId, OllamaHarnessRestoreResult, OllamaHarnessLaunchResult, OllamaHarnessExecutable } from '../shared/ollama-suite';
+import type { OllamaCatalogSnapshot, OllamaChatAttachment, OllamaChatAttachmentPickResult, OllamaChatExportDocument, OllamaChatExportResult, OllamaChatExportSaveRequest, OllamaChatRequest, OllamaChatSessionCreateRequest, OllamaChatSessionCreateResult, OllamaChatSessionDeleteRequest, OllamaChatSessionDeleteResult, OllamaChatSessionGetRequest, OllamaChatSessionGetResult, OllamaChatSessionListRequest, OllamaChatSessionListResult, OllamaChatSessionRenameRequest, OllamaChatSessionRenameResult, OllamaChatSessionUpdateRequest, OllamaChatSessionUpdateResult, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress, OllamaHarnessPlan, OllamaHarnessPreflightRequest, OllamaHarnessProfileId, OllamaHarnessRestoreResult, OllamaHarnessLaunchResult, OllamaHarnessExecutable } from '../shared/ollama-suite';
 import { OLLAMA_LIMITS } from '../shared/ollama-suite';
 import { resolvePackageRequest, validateCatalog, wingetArgs } from './package-policy';
 import { AUTHENTICATOR_PNG_LIMITS, AuthenticatorService } from './authenticator-service';
@@ -35,6 +35,7 @@ import { FileConverterService } from './file-converter-service';
 import { AppLogoService } from './app-logo-service';
 import { APP_LOGO_LIMITS, validateAppLogoTransform, type AppLogoPresetId, type AppLogoTransform } from '../shared/app-logo';
 import { OllamaSuiteService } from './ollama-suite-service';
+import { OllamaChatSessionService } from './ollama-chat-session-service';
 import { OllamaHardwareService } from './ollama-hardware-service';
 import { OllamaHarnessService } from './ollama-harness-service';
 import { AppearanceThemeService } from './appearance-theme-service';
@@ -62,6 +63,7 @@ let offlineDocsCache: OfflineDocsBundle | null = null;
 let fileConverterService: FileConverterService | null = null;
 let appLogoService: AppLogoService | null = null;
 let ollamaSuiteService: OllamaSuiteService | null = null;
+let ollamaChatSessionService: OllamaChatSessionService | null = null;
 let ollamaHardwareService: OllamaHardwareService | null = null;
 let ollamaHarnessService: OllamaHarnessService | null = null;
 let appearanceThemeService: AppearanceThemeService | null = null;
@@ -1262,6 +1264,11 @@ function ollamaSuite(): OllamaSuiteService {
   return ollamaSuiteService;
 }
 
+function ollamaChatSessions(): OllamaChatSessionService {
+  if (!ollamaChatSessionService) throw new Error('The local chat-session store is unavailable.');
+  return ollamaChatSessionService;
+}
+
 function ollamaHardware(): OllamaHardwareService {
   if (!ollamaHardwareService) throw new Error('The local Ollama hardware evidence service is unavailable.');
   return ollamaHardwareService;
@@ -1419,6 +1426,24 @@ ipcMain.handle('ollama:cancel-chat', (event): boolean => { requireTrustedSender(
 ipcMain.handle('ollama:export-chat', async (event, request: unknown): Promise<OllamaChatExportResult> => {
   requireTrustedSender(event); return saveOllamaChatExport(request);
 });
+ipcMain.handle('ollama:chat-session-list', (event, request: unknown = {}): OllamaChatSessionListResult => {
+  requireTrustedSender(event); return { sessions: ollamaChatSessions().list(request as OllamaChatSessionListRequest) };
+});
+ipcMain.handle('ollama:chat-session-get', (event, request: unknown): OllamaChatSessionGetResult => {
+  requireTrustedSender(event); return { session: ollamaChatSessions().get(request as OllamaChatSessionGetRequest) };
+});
+ipcMain.handle('ollama:chat-session-create', async (event, request: unknown): Promise<OllamaChatSessionCreateResult> => {
+  requireTrustedSender(event); return { session: await ollamaChatSessions().create(request as OllamaChatSessionCreateRequest) };
+});
+ipcMain.handle('ollama:chat-session-update', async (event, request: unknown): Promise<OllamaChatSessionUpdateResult> => {
+  requireTrustedSender(event); return { session: await ollamaChatSessions().update(request as OllamaChatSessionUpdateRequest) };
+});
+ipcMain.handle('ollama:chat-session-rename', async (event, request: unknown): Promise<OllamaChatSessionRenameResult> => {
+  requireTrustedSender(event); return { session: await ollamaChatSessions().rename(request as OllamaChatSessionRenameRequest) };
+});
+ipcMain.handle('ollama:chat-session-delete', async (event, request: unknown): Promise<OllamaChatSessionDeleteResult> => {
+  requireTrustedSender(event); return { id: (request as OllamaChatSessionDeleteRequest).id, deleted: await ollamaChatSessions().delete(request as OllamaChatSessionDeleteRequest) };
+});
 ipcMain.handle('ollama:harness-executables', async (event, profileId: unknown): Promise<OllamaHarnessExecutable[]> => {
   requireTrustedSender(event); return ollamaHarness().detectedExecutables(profileId);
 });
@@ -1472,12 +1497,14 @@ app.whenReady().then(async () => {
       if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('ollama:pull-progress', progress);
     },
   });
+  ollamaChatSessionService = new OllamaChatSessionService({ userDataDirectory: USER_DIR() });
   ollamaHardwareService = new OllamaHardwareService();
   ollamaHarnessService = new OllamaHarnessService({
     resolveVariant: (model) => ollamaSuite().verifiedHarnessVariant(model),
     health: () => ollamaSuite().health(),
   });
   await ollamaSuiteService.load();
+  await ollamaChatSessionService.load();
   createWindow();
   win?.setTitle(initialSettings.displayName.displayName);
   settingsSurfaceService.startWatching(broadcastSettingsSurface);

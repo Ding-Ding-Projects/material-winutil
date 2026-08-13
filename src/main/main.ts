@@ -1,4 +1,4 @@
-import { app, autoUpdater, BrowserWindow, clipboard, ipcMain, dialog, nativeTheme, session, shell } from 'electron';
+import { app, autoUpdater, BrowserWindow, clipboard, ipcMain, dialog, nativeImage, nativeTheme, session, shell } from 'electron';
 import { execFile, spawn } from 'node:child_process';
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { promises as fs } from 'node:fs';
@@ -33,7 +33,7 @@ import { UpdateService } from './update-service';
 import { DimSumSurpriseService } from './dim-sum-surprise-service';
 import { FileConverterService } from './file-converter-service';
 import { AppLogoService } from './app-logo-service';
-import { APP_LOGO_LIMITS, validateAppLogoTransform, type AppLogoPresetId, type AppLogoTransform } from '../shared/app-logo';
+import { APP_LOGO_LIMITS, renderAppLogoPreset, validateAppLogoTransform, type AppLogoPresetId, type AppLogoTransform } from '../shared/app-logo';
 import { OllamaSuiteService } from './ollama-suite-service';
 import { OllamaChatSessionService } from './ollama-chat-session-service';
 import { OllamaHardwareService } from './ollama-hardware-service';
@@ -152,6 +152,8 @@ function createWindow(): void {
     },
   });
 
+  applyNativeAppLogo();
+
   win.once('ready-to-show', () => win?.show());
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (event, url) => {
@@ -230,6 +232,9 @@ function validatePasswordInput(password: unknown, optional = false): string | un
 }
 
 function broadcastSettingsSurface(state: SettingsSurfaceState): void {
+  // School mode hides personal presentation live, including native chrome
+  // outside the renderer. The stored personal selection remains untouched.
+  applyNativeAppLogo();
   if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
   win.setTitle(state.displayName.displayName);
   win.webContents.send('settings-surface:state', state);
@@ -1216,6 +1221,27 @@ function appLogo(): AppLogoService {
   return appLogoService;
 }
 
+function applyNativeAppLogo(snapshot: AppLogoRuntimeSnapshot = appLogo().snapshot()): void {
+  if (!win || win.isDestroyed()) return;
+  const school = settingsSurfaceService?.snapshot().schoolMode;
+  const assets = school?.status === 'ready' && school.effective.enabled
+    ? renderAppLogoPreset('material-blue')
+    : snapshot.assets;
+  const asset = assets.find((candidate) => candidate.id === 'app-256')
+    ?? assets.find((candidate) => candidate.id === 'app-128')
+    ?? assets.find((candidate) => candidate.id === 'app-64');
+  if (!asset) throw new Error('The derived app logo is missing a native window asset.');
+  const icon = nativeImage.createFromDataURL(asset.dataUrl);
+  if (icon.isEmpty()) throw new Error('The derived app logo could not be applied to the application window.');
+  win.setIcon(icon);
+}
+
+async function mutateAppLogo(mutation: () => Promise<AppLogoRuntimeSnapshot>): Promise<AppLogoRuntimeSnapshot> {
+  const snapshot = await mutation();
+  applyNativeAppLogo(snapshot);
+  return snapshot;
+}
+
 function requireLogoTransform(value: unknown): AppLogoTransform {
   const transform = validateAppLogoTransform(value);
   if (!transform) throw new TypeError('The app-logo transform is invalid.');
@@ -1241,21 +1267,21 @@ ipcMain.handle('app-logo:pick-png', async (event, transformValue: unknown): Prom
     throw new Error('The app logo must be a bounded PNG file no larger than 4 MiB.');
   }
   const bytes = await fs.readFile(filePath);
-  try { return await appLogo().selectCustomPng(bytes, transform); }
+  try { return await mutateAppLogo(() => appLogo().selectCustomPng(bytes, transform)); }
   finally { bytes.fill(0); }
 });
 ipcMain.handle('app-logo:select-preset', async (event, presetId: unknown, transformValue: unknown): Promise<AppLogoRuntimeSnapshot> => {
   requireTrustedSender(event);
   if (typeof presetId !== 'string') throw new TypeError('The app-logo preset id is invalid.');
-  return appLogo().selectPreset(presetId as AppLogoPresetId, requireLogoTransform(transformValue));
+  return mutateAppLogo(() => appLogo().selectPreset(presetId as AppLogoPresetId, requireLogoTransform(transformValue)));
 });
 ipcMain.handle('app-logo:update-transform', async (event, transformValue: unknown): Promise<AppLogoRuntimeSnapshot> => {
   requireTrustedSender(event);
-  return appLogo().updateTransform(requireLogoTransform(transformValue));
+  return mutateAppLogo(() => appLogo().updateTransform(requireLogoTransform(transformValue)));
 });
 ipcMain.handle('app-logo:reset', async (event): Promise<AppLogoRuntimeSnapshot> => {
   requireTrustedSender(event);
-  return appLogo().reset();
+  return mutateAppLogo(() => appLogo().reset());
 });
 
 function appearanceThemes(): AppearanceThemeService {

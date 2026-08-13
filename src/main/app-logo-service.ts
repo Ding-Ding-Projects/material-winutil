@@ -83,6 +83,12 @@ export class AppLogoService {
     let parsed: AppLogoPersistedState | null = null;
     try { parsed = parseAppLogoPersistedState(await fs.readFile(this.file)); } catch { parsed = null; }
     this.state = parsed ?? resetAppLogoState();
+    // A state can pass the serialized-shape boundary yet still fail the
+    // second local decode used to generate chrome-sized assets. Do that work
+    // before exposing the state so a corrupted derived cache never reaches a
+    // renderer or native window icon.
+    try { snapshot(this.state); }
+    catch { this.state = resetAppLogoState(); }
     await this.persist();
     return this.snapshot();
   }

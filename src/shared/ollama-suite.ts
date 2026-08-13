@@ -19,6 +19,9 @@ export const OLLAMA_LIMITS = Object.freeze({
   chatMessageBytes: 32 * 1024,
   chatHistoryBytes: 512 * 1024,
   attachmentBytes: 8 * 1024 * 1024,
+  attachmentDimension: 8_192,
+  attachmentPixels: 32_000_000,
+  chatAttachments: 4,
   modelNameLength: 240,
   systemPromptBytes: 32 * 1024,
 } as const);
@@ -179,8 +182,29 @@ export interface OllamaPullProgress {
 export interface OllamaChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
+  /** Renderer-side references to attachments held only by the main process. */
+  attachmentIds?: string[];
+  /** Main-process-only base64 material sent to the documented local API. */
   images?: string[];
 }
+
+export type OllamaChatAttachmentMediaType = 'image/png' | 'image/jpeg';
+
+/**
+ * A short-lived local image attachment descriptor. The image bytes remain in
+ * the privileged process and are consumed by the next accepted chat request.
+ */
+export interface OllamaChatAttachment {
+  id: string;
+  mediaType: OllamaChatAttachmentMediaType;
+  byteLength: number;
+  width: number;
+  height: number;
+}
+
+export type OllamaChatAttachmentPickResult =
+  | { status: 'selected'; attachment: OllamaChatAttachment }
+  | { status: 'cancelled' };
 
 export interface OllamaChatOptions {
   temperature?: number;
@@ -496,7 +520,7 @@ export function validateChatRequest(value: OllamaChatRequest, variant: OllamaCat
     const bytes = Buffer.byteLength(content, 'utf8'); total += bytes;
     if (!content || bytes > OLLAMA_LIMITS.chatMessageBytes || CHAT_CONTROL.test(content)) throw new Error('Chat message content is invalid.');
     const images = message.images ?? [];
-    if (!Array.isArray(images) || images.length > 4 || images.some((image) => typeof image !== 'string' || !image || !BASE64.test(image) || Buffer.byteLength(image, 'base64') > OLLAMA_LIMITS.attachmentBytes)) throw new Error('Chat attachments are invalid.');
+    if (!Array.isArray(images) || images.length > OLLAMA_LIMITS.chatAttachments || images.some((image) => typeof image !== 'string' || !image || !BASE64.test(image) || Buffer.byteLength(image, 'base64') > OLLAMA_LIMITS.attachmentBytes)) throw new Error('Chat attachments are invalid.');
     if (images.length && !variant.capabilities.includes('vision')) throw new Error('The selected variant does not support image attachments.');
     return { role: message.role, content, ...(images.length ? { images: [...images] } : {}) };
   });

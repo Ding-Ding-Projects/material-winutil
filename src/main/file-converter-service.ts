@@ -21,14 +21,46 @@ import type {
 const QUEUE_DIRECTORY = 'file-converter-queue-v1';
 const OUTPUT_DIRECTORY = 'file-converter-output-v1';
 const INDEX_FILE = 'index.json';
+const SELECTED_SOURCES_FILE = 'selected-sources.json';
 const SOURCE_LIMIT = 512;
 const RESERVE_BYTES = 256 * 1024 * 1024;
+
+interface PersistedSelectedSource {
+  id: string;
+  name: string;
+  sourcePath: string;
+  bytes: number;
+  kind: FileKind;
+  confidence: FileConverterSelectedSource['confidence'];
+  conflict: boolean;
+  reason: string;
+}
 
 async function atomicJson(filePath: string, value: unknown): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   const temporary = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
   await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
   await fs.rename(temporary, filePath);
+}
+
+function validatePersistedSelectedSource(value: unknown): PersistedSelectedSource {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Persisted source selection entry is invalid.');
+  const entry = value as Record<string, unknown>;
+  const expectedKeys = ['id', 'name', 'sourcePath', 'bytes', 'kind', 'confidence', 'conflict', 'reason'];
+  if (Object.keys(entry).length !== expectedKeys.length || expectedKeys.some((key) => !(key in entry))) throw new Error('Persisted source selection entry has unexpected fields.');
+  if (typeof entry.id !== 'string' || !/^[a-zA-Z0-9_-]{1,120}$/u.test(entry.id)) throw new Error('Persisted source id is invalid.');
+  if (typeof entry.sourcePath !== 'string' || entry.sourcePath.length === 0 || entry.sourcePath.includes('\0') || !path.isAbsolute(entry.sourcePath) || Buffer.byteLength(entry.sourcePath, 'utf8') > FILE_CONVERTER_LIMITS.itemPathBytes) throw new Error('Persisted source path is invalid.');
+  if (typeof entry.name !== 'string' || entry.name.length === 0 || entry.name.includes('\0') || entry.name !== path.basename(entry.name) || Buffer.byteLength(entry.name, 'utf8') > 512) throw new Error('Persisted source name is invalid.');
+  if (!Number.isSafeInteger(entry.bytes) || entry.bytes < 0 || entry.bytes > FILE_CONVERTER_LIMITS.maxItemBytes) throw new Error('Persisted source size is invalid.');
+  const fileKinds: readonly FileKind[] = ['pdf', 'png', 'jpeg', 'gif', 'webp', 'zip', 'seven-zip', 'wav', 'mp3', 'ogg', 'mp4', 'text', 'unknown'];
+  if (typeof entry.kind !== 'string' || !fileKinds.includes(entry.kind as FileKind)) throw new Error('Persisted source type is invalid.');
+  if (entry.confidence !== 'magic' && entry.confidence !== 'extension' && entry.confidence !== 'unknown') throw new Error('Persisted source confidence is invalid.');
+  if (typeof entry.conflict !== 'boolean') throw new Error('Persisted source conflict state is invalid.');
+  if (typeof entry.reason !== 'string' || Buffer.byteLength(entry.reason, 'utf8') > 2048) throw new Error('Persisted source reason is invalid.');
+  return {
+    id: entry.id, name: entry.name, sourcePath: entry.sourcePath, bytes: entry.bytes,
+    kind: entry.kind as FileKind, confidence: entry.confidence, conflict: entry.conflict, reason: entry.reason,
+  };
 }
 
 /** Write a completed temporary file, then publish it with a same-volume hard link.
@@ -98,6 +130,7 @@ class JsonQueueStore implements ConversionQueueStore {
   constructor(readonly directory: string) {}
   private indexPath(): string { return path.join(this.directory, INDEX_FILE); }
   private pagePath(id: string): string { return path.join(this.directory, `page-${id}.json`); }
+  private selectedSourcesPath(): string { return path.join(this.directory, SELECTED_SOURCES_FILE); }
 
   async readIndex(): Promise<ConversionQueueIndex | undefined> {
     try { return JSON.parse(await fs.readFile(this.indexPath(), 'utf8')) as ConversionQueueIndex; }
@@ -109,6 +142,22 @@ class JsonQueueStore implements ConversionQueueStore {
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
   }
   async writePage(page: ConversionQueuePage): Promise<void> { await atomicJson(this.pagePath(page.id), page); }
+  async readSelectedSources(): Promise<PersistedSelectedSource[] | undefined> {
+    try {
+      const parsed: unknown = JSON.parse(await fs.readFile(this.selectedSourcesPath(), 'utf8'));
+      if (!Array.isArray(parsed) || parsed.length > SOURCE_LIMIT) throw new Error('Persisted source selection is invalid.');
+      return parsed.map((entry) => validatePersistedSelectedSource(entry));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
+    }
+  }
+  async writeSelectedSources(sources: readonly PersistedSelectedSource[]): Promise<void> {
+    if (sources.length > SOURCE_LIMIT) throw new Error('Persisted source selection exceeds its bounded item limit.');
+    const normalized = sources.map((entry) => validatePersistedSelectedSource(entry));
+    await atomicJson(this.selectedSourcesPath(), normalized);
+  }
+  async clearSelectedSources(): Promise<void> { await fs.rm(this.selectedSourcesPath(), { force: true }); }
   async pageViews(pageIds: readonly string[]): Promise<FileConverterQueueItemView[]> {
     const output: FileConverterQueueItemView[] = [];
     for (const pageId of pageIds) {
@@ -160,6 +209,7 @@ export class FileConverterService {
     await fs.mkdir(service.store.directory, { recursive: true });
     service.queue = await PersistentConversionQueue.open(service.store);
     await service.store.writeIndex(service.queue.summary() as ConversionQueueIndex);
+    await service.restoreSelectedSources();
     return service;
   }
 
@@ -168,31 +218,24 @@ export class FileConverterService {
     const selected: FileConverterSelectedSource[] = [];
     const paths = new Map<string, string>();
     for (const candidate of filePaths) {
-      if (typeof candidate !== 'string' || candidate.length === 0 || candidate.includes('\0') || !path.isAbsolute(candidate)) {
-        throw new Error('The native file picker returned an invalid local path.');
-      }
-      const info = await fs.stat(candidate);
-      if (!info.isFile() || !Number.isSafeInteger(info.size) || info.size < 0 || info.size > FILE_CONVERTER_LIMITS.maxItemBytes) {
-        throw new Error('The selected source is not a bounded regular file.');
-      }
       const id = randomUUID();
-      const detection = detectFileType(await boundedPrefix(candidate), path.basename(candidate));
-      selected.push({
-        id, name: path.basename(candidate), bytes: info.size, kind: detection.kind,
-        confidence: detection.confidence, conflict: detection.conflict, reason: detection.reason,
-      });
-      paths.set(id, candidate);
+      const inspected = await this.inspectSource(candidate, id);
+      selected.push(inspected.selected);
+      paths.set(id, inspected.sourcePath);
     }
     this.selected = selected;
     this.selectedPaths = paths;
+    await this.persistSelectedSources();
     this.lastMessage = selected.length
       ? `${selected.length} local source file(s) inspected from at most ${FILE_CONVERTER_LIMITS.signatureBytes} bytes each.`
       : 'No source files selected. The source stays unchanged.';
     return this.snapshot();
   }
 
-  clearSelection(): Promise<FileConverterSurfaceState> {
-    this.selected = []; this.selectedPaths.clear(); this.lastMessage = 'Source selection cleared; no file was changed.';
+  async clearSelection(): Promise<FileConverterSurfaceState> {
+    this.selected = []; this.selectedPaths.clear();
+    await this.store.clearSelectedSources();
+    this.lastMessage = 'Source selection cleared from local recovery storage; no file was changed.';
     return this.snapshot();
   }
 
@@ -216,12 +259,15 @@ export class FileConverterService {
     await this.store.reset();
     this.queue = await PersistentConversionQueue.open(this.store);
     await this.store.writeIndex(this.queue.summary() as ConversionQueueIndex);
-    this.lastMessage = 'A new empty persistent queue is ready.';
+    this.selected = [];
+    this.selectedPaths.clear();
+    this.lastMessage = 'A new empty persistent queue is ready; saved source selection metadata was cleared.';
     return this.snapshot();
   }
 
   async enqueue(adapterId: string): Promise<FileConverterSurfaceState> {
     const adapter = this.executableAdapter(adapterId);
+    await this.revalidateSelectedSources();
     if (!this.selected.length) throw new Error('Choose at least one local source file before queueing.');
     const incompatible = this.selected.find((source) => !this.isSelectedSourceCompatible(adapter.id, source.kind, source.conflict, source.bytes, source.name));
     if (incompatible) throw new Error(this.compatibilityFailure(adapter.id));
@@ -263,6 +309,87 @@ export class FileConverterService {
     const sourcePath = this.selectedPaths.get(id);
     if (!sourcePath) throw new Error('Selected source metadata no longer has a local path.');
     return sourcePath;
+  }
+
+  private async inspectSource(candidate: string, id: string): Promise<{ selected: FileConverterSelectedSource; sourcePath: string }> {
+    if (typeof candidate !== 'string' || candidate.length === 0 || candidate.includes('\0') || !path.isAbsolute(candidate)) {
+      throw new Error('The local source path is invalid or not absolute.');
+    }
+    const resolved = path.resolve(candidate);
+    const linkInfo = await fs.lstat(resolved);
+    if (!linkInfo.isFile() || linkInfo.isSymbolicLink() || !Number.isSafeInteger(linkInfo.size) || linkInfo.size < 0 || linkInfo.size > FILE_CONVERTER_LIMITS.maxItemBytes) {
+      throw new Error('The selected source is not a bounded non-link regular file.');
+    }
+    const detection = detectFileType(await boundedPrefix(resolved), path.basename(resolved));
+    return {
+      sourcePath: resolved,
+      selected: {
+        id, name: path.basename(resolved), bytes: linkInfo.size, kind: detection.kind,
+        confidence: detection.confidence, conflict: detection.conflict, reason: detection.reason,
+      },
+    };
+  }
+
+  private async persistSelectedSources(): Promise<void> {
+    await this.store.writeSelectedSources(this.selected.map((selected) => ({
+      ...selected,
+      sourcePath: this.requiredSelectedPath(selected.id),
+    })));
+  }
+
+  private async restoreSelectedSources(): Promise<void> {
+    let persisted: PersistedSelectedSource[] | undefined;
+    try { persisted = await this.store.readSelectedSources(); }
+    catch {
+      await this.store.clearSelectedSources();
+      this.lastMessage = 'Saved source selection metadata was invalid and was cleared safely; choose local files again.';
+      return;
+    }
+    if (!persisted?.length) return;
+    const selected: FileConverterSelectedSource[] = [];
+    const paths = new Map<string, string>();
+    let unavailable = 0;
+    for (const source of persisted) {
+      try {
+        const inspected = await this.inspectSource(source.sourcePath, source.id);
+        if (inspected.selected.name !== source.name || inspected.selected.bytes !== source.bytes || inspected.selected.kind !== source.kind || inspected.selected.conflict !== source.conflict) {
+          unavailable += 1;
+          continue;
+        }
+        selected.push(inspected.selected);
+        paths.set(source.id, inspected.sourcePath);
+      } catch { unavailable += 1; }
+    }
+    this.selected = selected;
+    this.selectedPaths = paths;
+    await this.persistSelectedSources();
+    this.lastMessage = unavailable
+      ? `Recovered ${selected.length} local source file(s); ${unavailable} saved source file(s) are missing or changed and require selection again.`
+      : `Recovered ${selected.length} validated local source file(s) for resumable conversion.`;
+  }
+
+  private async revalidateSelectedSources(): Promise<void> {
+    if (!this.selected.length) return;
+    const selected: FileConverterSelectedSource[] = [];
+    const paths = new Map<string, string>();
+    let unavailable = 0;
+    for (const source of this.selected) {
+      const selectedPath = this.selectedPaths.get(source.id);
+      if (!selectedPath) { unavailable += 1; continue; }
+      try {
+        const inspected = await this.inspectSource(selectedPath, source.id);
+        if (inspected.selected.name !== source.name || inspected.selected.bytes !== source.bytes || inspected.selected.kind !== source.kind || inspected.selected.conflict !== source.conflict) {
+          unavailable += 1;
+          continue;
+        }
+        selected.push(inspected.selected);
+        paths.set(source.id, inspected.sourcePath);
+      } catch { unavailable += 1; }
+    }
+    this.selected = selected;
+    this.selectedPaths = paths;
+    await this.persistSelectedSources();
+    if (unavailable) this.lastMessage = `${unavailable} selected source file(s) are missing or changed and were removed before queueing; no fabricated conversion was created.`;
   }
 
   private executableAdapter(adapterId: string): (typeof FILE_CONVERTER_ADAPTERS)[number] {
@@ -309,13 +436,17 @@ export class FileConverterService {
       if (!path.isAbsolute(item.sourcePath) || item.sourcePath.includes('\0')) {
         throw new Error('Persisted conversion source path is not an absolute local path.');
       }
-      const sourceInfo = await fs.stat(item.sourcePath);
-      if (!sourceInfo.isFile() || !Number.isSafeInteger(sourceInfo.size) || sourceInfo.size !== item.sourceBytes || sourceInfo.size > adapter.limits.inputBytes) {
+      const sourceInfo = await fs.lstat(item.sourcePath);
+      if (!sourceInfo.isFile() || sourceInfo.isSymbolicLink() || !Number.isSafeInteger(sourceInfo.size) || sourceInfo.size !== item.sourceBytes || sourceInfo.size > adapter.limits.inputBytes) {
         throw new Error('Source changed after preflight or exceeds the adapter limit.');
       }
       const detection = detectFileType(await boundedPrefix(item.sourcePath), path.basename(item.sourcePath));
       if (!this.isSelectedSourceCompatible(adapter.id, detection.kind, detection.conflict, item.sourceBytes, path.basename(item.sourcePath))) {
         throw new Error('Persisted source is not compatible with its original bundled adapter.');
+      }
+      const beforeRead = await fs.lstat(item.sourcePath);
+      if (!beforeRead.isFile() || beforeRead.isSymbolicLink() || beforeRead.size !== item.sourceBytes) {
+        throw new Error('Source changed before read; no output was written.');
       }
       const sourceBytes = await fs.readFile(item.sourcePath);
       if (sourceBytes.byteLength !== item.sourceBytes || sourceBytes.byteLength > adapter.limits.inputBytes) {

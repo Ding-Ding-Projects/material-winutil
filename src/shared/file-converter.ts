@@ -94,14 +94,14 @@ export const FILE_CONVERTER_ADAPTERS: readonly ConverterAdapter[] = Object.freez
   adapter('video-transcode', 'Video', ['mp4'], 'MP4/WebM', 'Container and stream metadata can change.', 'lossy'),
   adapter('archive-repack', 'Archives', ['zip', 'seven-zip'], 'ZIP/7z', 'Entry order, timestamps, and encryption are disclosed before conversion.', 'opaque'),
   {
-    id: 'csv-to-json', category: 'Structured Data/Spreadsheets', sourceKinds: ['text'], targetFormat: 'CSV to canonical JSON',
-    metadataBehavior: 'A UTF-8 CSV table becomes a JSON array of text-cell rows. Column names, formulas, types, and source bytes are not inferred or changed.',
+    id: 'csv-to-json', category: 'Structured Data/Spreadsheets', sourceKinds: ['text'], targetFormat: 'CSV/TSV to canonical JSON',
+    metadataBehavior: 'A UTF-8 CSV or TSV table becomes a JSON array keyed by NFC-normalized unique headers in deterministic code-point order. Cells stay strings exactly as supplied: formula-looking cells are never evaluated, types are never guessed, and source bytes remain unchanged.',
     lossiness: 'lossless', sandbox: 'isolated-local',
     limits: { inputBytes: 16 * 1024 * 1024, outputBytes: 64 * 1024 * 1024, memoryBytes: 256 * 1024 * 1024, cpuMs: 30 * 1000, tempBytes: 64 * 1024 * 1024 },
-    outputValidator: 'Parses fatal UTF-8 RFC4180 CSV within fixed row, column, and cell bounds, then reopens and byte-validates deterministic JSON.',
+    outputValidator: 'Parses fatal UTF-8 RFC4180 CSV or quoted TSV within fixed row, column, and cell bounds, validates unique headers and row width, then reopens and byte-validates deterministic JSON.',
     availability: 'available', bundledProof: CSV_JSON_ADAPTER_PROOF,
   },
-  adapter('tabular-convert', 'Structured Data/Spreadsheets', ['text'], 'TSV/XLSX/ODS', 'Encoding, formulas, and cell types require a declared adapter policy.', 'opaque'),
+  adapter('tabular-convert', 'Structured Data/Spreadsheets', ['text'], 'XLSX/ODS', 'Encoding, formulas, and cell types require a declared adapter policy.', 'opaque'),
   {
     id: 'text-json-normalize', category: 'Code/Text', sourceKinds: ['text'], targetFormat: 'UTF-8 plain text',
     metadataBehavior: 'Valid UTF-8 text is normalized to LF line endings; JSON is parsed and serialized with sorted object keys. Source bytes are unchanged.',
@@ -229,10 +229,9 @@ function isUtf8Text(bytes: Uint8Array): boolean {
 }
 
 /**
- * Bounded CSV primitives for a future local structured-data adapter.  They do
- * not inspect paths, invoke tools, or write files.  Parsing accepts RFC4180
- * CRLF records and common LF records, while serialization always emits the
- * canonical RFC4180 CRLF form.
+ * Bounded local structured-data primitives. They do not inspect paths, invoke
+ * tools, or write files. Parsing accepts RFC4180 CRLF records and common LF
+ * records, while serialization always emits canonical deterministic output.
  */
 export interface CsvLimits {
   inputBytes: number;
@@ -269,9 +268,9 @@ function assertCsvCell(value: string, bytes: number, limits: CsvLimits): void {
   if (bytes > limits.cellBytes) throw new Error(`CSV cell exceeds the ${limits.cellBytes}-byte limit.`);
 }
 
-/** Parse fatal UTF-8 CSV without accepting malformed quotes or unlimited rows. */
-export function parseCsvUtf8(bytes: Uint8Array, overrides: Partial<CsvLimits> = {}): string[][] {
-  if (!(bytes instanceof Uint8Array)) throw new Error('CSV input must be UTF-8 bytes.');
+/** Parse fatal UTF-8 delimited text without accepting malformed quotes or unlimited rows. */
+function parseDelimitedUtf8(bytes: Uint8Array, delimiter: ',' | '\t', overrides: Partial<CsvLimits> = {}): string[][] {
+  if (!(bytes instanceof Uint8Array)) throw new Error('Delimited input must be UTF-8 bytes.');
   const limits = normalizedCsvLimits(overrides);
   if (bytes.byteLength > limits.inputBytes) throw new Error(`CSV input exceeds the ${limits.inputBytes}-byte limit.`);
 
@@ -342,7 +341,7 @@ export function parseCsvUtf8(bytes: Uint8Array, overrides: Partial<CsvLimits> = 
     }
 
     if (afterQuote) {
-      if (character === ',') {
+      if (character === delimiter) {
         finishCell();
         afterQuote = false;
       } else if (character === '\r' || character === '\n') {
@@ -358,7 +357,7 @@ export function parseCsvUtf8(bytes: Uint8Array, overrides: Partial<CsvLimits> = 
     if (character === '"') {
       if (cell.length !== 0) throw new Error('CSV quotes may only begin at the start of a cell.');
       quoted = true;
-    } else if (character === ',') {
+    } else if (character === delimiter) {
       finishCell();
     } else if (character === '\r' || character === '\n') {
       index = consumeRecordEnding(index);
@@ -374,6 +373,26 @@ export function parseCsvUtf8(bytes: Uint8Array, overrides: Partial<CsvLimits> = 
   if (quoted) throw new Error('CSV ended inside a quoted cell.');
   if (cell.length !== 0 || cellBytes !== 0 || row.length !== 0 || afterQuote) finishRow();
   return rows;
+}
+
+function compareUnicodeCodePoints(left: string, right: string): number {
+  const leftPoints = Array.from(left, (value) => value.codePointAt(0)!);
+  const rightPoints = Array.from(right, (value) => value.codePointAt(0)!);
+  const count = Math.min(leftPoints.length, rightPoints.length);
+  for (let index = 0; index < count; index += 1) {
+    if (leftPoints[index] !== rightPoints[index]) return leftPoints[index]! - rightPoints[index]!;
+  }
+  return leftPoints.length - rightPoints.length;
+}
+
+/** Parse fatal UTF-8 RFC4180 CSV without accepting malformed quotes or unlimited rows. */
+export function parseCsvUtf8(bytes: Uint8Array, overrides: Partial<CsvLimits> = {}): string[][] {
+  return parseDelimitedUtf8(bytes, ',', overrides);
+}
+
+/** Parse fatal UTF-8 TSV with the same quoted-cell and resource boundaries as CSV. */
+export function parseTsvUtf8(bytes: Uint8Array, overrides: Partial<CsvLimits> = {}): string[][] {
+  return parseDelimitedUtf8(bytes, '\t', overrides);
 }
 
 /** Serialize rows as canonical RFC4180 CSV with CRLF record endings. */
@@ -396,18 +415,37 @@ export function serializeCsvRows(rows: CsvRows, overrides: Partial<CsvLimits> = 
   return output;
 }
 
-/** Deterministic UTF-8 JSON for a CSV table, retaining every cell as text. */
+/** Deterministic UTF-8 JSON records for a delimited table, retaining every cell as text. */
 export function serializeCsvRowsAsJson(rows: CsvRows, overrides: Partial<CsvLimits> = {}): string {
   const limits = normalizedCsvLimits(overrides);
-  const normalized = rows.map((row) => {
+  if (!rows.length) throw new Error('Delimited input requires one non-empty header row.');
+  const header = rows[0];
+  if (!Array.isArray(header) || header.length === 0) throw new Error('Delimited input requires a non-empty header row.');
+  const headers = header.map((cell, index) => {
+    if (typeof cell !== 'string') throw new Error('Delimited headers must be strings.');
+    const normalized = cell.normalize('NFC');
+    if (!normalized.trim()) throw new Error('Delimited headers cannot be empty.');
+    assertCsvCell(normalized, new TextEncoder().encode(normalized).byteLength, limits);
+    return { key: normalized, index };
+  });
+  if (new Set(headers.map(({ key }) => key)).size !== headers.length) throw new Error('Delimited headers must be unique after NFC normalization.');
+  if (headers.some(({ key }) => key === '__proto__' || key === 'prototype' || key === 'constructor' || /^(?:0|[1-9]\d{0,9})$/u.test(key))) {
+    throw new Error('Delimited headers cannot use unsafe object keys.');
+  }
+  headers.sort((left, right) => compareUnicodeCodePoints(left.key, right.key));
+  const normalized = rows.slice(1).map((row) => {
     if (!Array.isArray(row) || row.length > limits.columns) throw new Error(`CSV rows must have at most ${limits.columns} cells.`);
-    return row.map((cell) => {
+    if (row.length !== headers.length) throw new Error('Delimited data rows must match the header column count exactly.');
+    const entry: Record<string, string> = Object.create(null) as Record<string, string>;
+    headers.forEach(({ key, index }) => {
+      const cell = row[index];
       if (typeof cell !== 'string') throw new Error('CSV cells must be strings.');
       assertCsvCell(cell, new TextEncoder().encode(cell).byteLength, limits);
-      return cell;
+      entry[key] = cell;
     });
+    return entry;
   });
-  if (normalized.length > limits.rows) throw new Error(`CSV JSON output exceeds the ${limits.rows}-row limit.`);
+  if (normalized.length + 1 > limits.rows) throw new Error(`CSV JSON output exceeds the ${limits.rows}-row limit.`);
   const output = `${JSON.stringify(normalized)}\n`;
   if (new TextEncoder().encode(output).byteLength > limits.inputBytes) throw new Error(`CSV JSON output exceeds the ${limits.inputBytes}-byte limit.`);
   return output;

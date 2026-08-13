@@ -7,6 +7,7 @@ import {
   PersistentConversionQueue,
   detectFileType,
   parseCsvUtf8,
+  parseTsvUtf8,
   serializeCsvRowsAsJson,
   validateAdapterRegistry,
   type FileKind,
@@ -556,8 +557,14 @@ export class FileConverterService {
       if (sourceBytes.byteLength !== item.sourceBytes || sourceBytes.byteLength > adapter.limits.inputBytes) {
         throw new Error('Source changed while it was being read; no output was written.');
       }
+      const sourceExtension = path.extname(item.sourcePath).toLocaleLowerCase('en-US');
       const content = adapter.id === 'csv-to-json'
-        ? serializeCsvRowsAsJson(parseCsvUtf8(sourceBytes, { inputBytes: adapter.limits.inputBytes }))
+        ? serializeCsvRowsAsJson(
+          sourceExtension === '.tsv'
+            ? parseTsvUtf8(sourceBytes, { inputBytes: adapter.limits.inputBytes })
+            : parseCsvUtf8(sourceBytes, { inputBytes: adapter.limits.inputBytes }),
+          { inputBytes: adapter.limits.outputBytes },
+        )
         : adapter.id === 'binary-to-lowercase-hex'
           ? canonicalLowercaseHex(sourceBytes)
           : deterministicUtf8PlainText(sourceBytes);
@@ -600,11 +607,11 @@ export class FileConverterService {
     if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > adapter.limits.inputBytes || !adapter.sourceKinds.includes(kind)) return false;
     if (adapterId === 'binary-to-lowercase-hex') return true;
     if (conflict || kind !== 'text') return false;
-    return adapterId !== 'csv-to-json' || path.extname(sourceName).toLocaleLowerCase('en-US') === '.csv';
+    return adapterId !== 'csv-to-json' || ['.csv', '.tsv'].includes(path.extname(sourceName).toLocaleLowerCase('en-US'));
   }
 
   private compatibilityFailure(adapterId: string): string {
-    if (adapterId === 'csv-to-json') return 'CSV-to-JSON accepts only bounded, conflict-free local .csv UTF-8 sources; malformed CSV is refused during full parsing.';
+    if (adapterId === 'csv-to-json') return 'CSV-to-JSON accepts only bounded, conflict-free local .csv or .tsv UTF-8 sources with one unique non-empty header row; malformed quoting, duplicate headers, and uneven rows are refused during full parsing.';
     if (adapterId === 'binary-to-lowercase-hex') return 'Binary-to-lowercase-hex accepts any bounded regular local file within its explicit byte limit; ambiguous polyglot signatures are refused during inspection.';
     return 'The selected batch contains a source that is not a bounded, conflict-free text file for this adapter.';
   }

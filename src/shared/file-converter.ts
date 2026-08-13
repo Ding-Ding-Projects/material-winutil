@@ -53,6 +53,12 @@ export interface ConverterAdapter {
 }
 
 const UNBUNDLED = 'Unavailable: this adapter is not bundled and verified in the packaged artifact.';
+const TEXT_JSON_ADAPTER_PROOF: BundledAdapterProof = Object.freeze({
+  bundled: true,
+  artifactPath: 'electron-main:built-in-text-json-normalizer-v1',
+  artifactSha256: '4d4f61376d7fd895105062fbf4b3eb9b4ef2d9932dc7dc8f13eeefb2f1560a68',
+  verifier: 'Electron main-process built-in adapter; output is reopened and byte-validated before completion.',
+});
 
 /** Known formats are shown even when the installed artifact has no safe adapter. */
 export const FILE_CONVERTER_ADAPTERS: readonly ConverterAdapter[] = Object.freeze([
@@ -62,6 +68,14 @@ export const FILE_CONVERTER_ADAPTERS: readonly ConverterAdapter[] = Object.freez
   adapter('video-transcode', 'Video', ['mp4'], 'MP4/WebM', 'Container and stream metadata can change.', 'lossy'),
   adapter('archive-repack', 'Archives', ['zip', 'seven-zip'], 'ZIP/7z', 'Entry order, timestamps, and encryption are disclosed before conversion.', 'opaque'),
   adapter('tabular-convert', 'Structured Data/Spreadsheets', ['text'], 'CSV/TSV/XLSX/ODS', 'Encoding, formulas, and cell types require a declared adapter policy.', 'opaque'),
+  {
+    id: 'text-json-normalize', category: 'Code/Text', sourceKinds: ['text'], targetFormat: 'UTF-8 plain text',
+    metadataBehavior: 'Valid UTF-8 text is normalized to LF line endings; JSON is parsed and serialized with sorted object keys. Source bytes are unchanged.',
+    lossiness: 'lossless', sandbox: 'isolated-local',
+    limits: { inputBytes: 64 * 1024 * 1024, outputBytes: 64 * 1024 * 1024, memoryBytes: 256 * 1024 * 1024, cpuMs: 30 * 1000, tempBytes: 64 * 1024 * 1024 },
+    outputValidator: 'Reopens the atomically written UTF-8 output and compares the exact deterministic bytes before completion.',
+    availability: 'available', bundledProof: TEXT_JSON_ADAPTER_PROOF,
+  },
   adapter('text-convert', 'Code/Text', ['text'], 'TXT/Markdown/JSON/YAML/XML', 'Encoding and newline changes are disclosed.', 'lossless'),
   adapter('binary-encode', 'Binary Encodings', ['unknown'], 'Base64/hex', 'Binary bytes are represented as text; source bytes are unchanged.', 'lossless'),
 ]);

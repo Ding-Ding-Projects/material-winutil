@@ -1193,7 +1193,9 @@ ipcMain.handle('ollama:harness-executables', async (event, profileId: unknown): 
 });
 ipcMain.handle('ollama:harness-pick-workspace', async (event): Promise<string | null> => {
   requireTrustedSender(event);
-  const result = await dialog.showOpenDialog(win ?? undefined, { title: 'Choose harness workspace folder', properties: ['openDirectory', 'createDirectory'] });
+  const currentWindow = win;
+  if (!currentWindow || currentWindow.isDestroyed()) throw new Error('The application window is unavailable.');
+  const result = await dialog.showOpenDialog(currentWindow, { title: 'Choose harness workspace folder', properties: ['openDirectory', 'createDirectory'] });
   return result.canceled ? null : result.filePaths[0] ?? null;
 });
 ipcMain.handle('ollama:harness-preflight', async (event, request: unknown): Promise<OllamaHarnessPlan> => {

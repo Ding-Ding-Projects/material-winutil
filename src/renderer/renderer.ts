@@ -30,6 +30,7 @@ interface AppearanceColorRuntime {
   contrastRatio(foreground: AppearanceColorValue, background: AppearanceColorValue): AppearanceContrastResult;
 }
 type ConverterCategory = 'Documents/PDF' | 'Images' | 'Audio' | 'Video' | 'Archives' | 'Structured Data/Spreadsheets' | 'Code/Text' | 'Binary Encodings';
+const CONVERTER_CATEGORIES: readonly ConverterCategory[] = ['Documents/PDF', 'Images', 'Audio', 'Video', 'Archives', 'Structured Data/Spreadsheets', 'Code/Text', 'Binary Encodings'];
 interface FileConverterSurfaceState {
   schemaVersion: 1;
   catalog: Array<{ id: string; category: ConverterCategory; sourceKinds: string[]; targetFormat: string; metadataBehavior: string; lossiness: 'lossless' | 'lossy' | 'opaque'; sandbox: 'isolated-local'; limits: { inputBytes: number; outputBytes: number; memoryBytes: number; cpuMs: number; tempBytes: number }; outputValidator: string; availability: 'available' | 'unavailable'; unavailableReason?: string }>;

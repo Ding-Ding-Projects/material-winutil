@@ -392,7 +392,7 @@ export type PersonalVocabularyUploadResult =
   | { ok: true; vocabulary: PersonalVocabularyState }
   | { ok: false; code: PersonalVocabularyErrorCode; message: 'Personal vocabulary data is invalid.' };
 
-export type RunKind = 'install' | 'upgrade' | 'uninstall' | 'tweak' | 'undo' | 'feature' | 'update-profile';
+export type RunKind = 'install' | 'upgrade' | 'uninstall' | 'tweak' | 'undo' | 'feature';
 
 export interface DimSumStartupPresentation {
   descriptor: DimSumSurpriseDescriptor;

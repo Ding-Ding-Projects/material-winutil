@@ -884,7 +884,7 @@ ipcMain.on('window:action', (_e, action: 'minimize' | 'maximize' | 'close') => {
 
 ipcMain.handle('winutil:run', async (e, kind: RunKind, ids: string[]): Promise<CommandResult> => {
   if (!trustedSender(e)) return { ok: false, code: 77, stdout: '', stderr: 'The request did not originate from the application renderer.' };
-  if (!['install', 'upgrade', 'uninstall', 'tweak', 'undo', 'feature', 'update-profile'].includes(kind)) {
+  if (!['install', 'upgrade', 'uninstall', 'tweak', 'undo', 'feature'].includes(kind)) {
     return { ok: false, code: 64, stdout: '', stderr: 'Unknown operation.' };
   }
   if (!['install', 'upgrade', 'uninstall'].includes(kind)) return unsupported(kind);

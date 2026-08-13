@@ -374,7 +374,7 @@ interface Bridge {
 
 /* ------------------------------------------------------------- constants -- */
 
-type RunKind = 'install' | 'upgrade' | 'uninstall' | 'tweak' | 'undo' | 'feature' | 'update-profile';
+type RunKind = 'install' | 'upgrade' | 'uninstall' | 'tweak' | 'undo' | 'feature';
 
 const NAV: Array<{ heading: string } | { id: ViewId; label: string; icon: string }> = [
   { heading: 'System' },
@@ -396,7 +396,7 @@ const VIEW_META: Record<ViewId, { title: string; search: string }> = {
   install: { title: 'Install', search: 'Search 227 applications, winget ids and descriptions' },
   tweaks: { title: 'Tweaks', search: 'Search tweaks, categories and registry effects' },
   config: { title: 'Config', search: 'Search features, fixes, legacy panels and remote access' },
-  updates: { title: 'Updates', search: 'Search update profiles' },
+  updates: { title: 'Updates', search: 'Search update capabilities and unavailable operations' },
   iso: { title: 'Win11 Creator', search: 'Search image customization steps' },
   converter: { title: 'File converter', search: 'Search converter categories, formats and unavailable reasons' },
   ollama: { title: 'Ollama suite', search: 'Search official variants, capabilities, sizes and local states' },
@@ -615,24 +615,6 @@ const EXPORT_FORMATS: Array<[string, string]> = [
   ['toml', 'TOML'], ['xml', 'XML'], ['csv', 'CSV'], ['tsv', 'TSV'], ['html', 'HTML'], ['sql', 'SQL'],
   ['ts', 'TypeScript'], ['js', 'JavaScript'], ['py', 'Python'], ['go', 'Go'], ['rs', 'Rust'], ['proto', 'Protobuf'],
   ['schema.json', 'JSON Schema'],
-];
-
-const UPDATE_PROFILES = [
-  {
-    key: 'security', title: 'Recommended', subtitle: 'Balanced security and stability', variant: 'filled', button: 'Apply Recommended',
-    bullets: ['Defers feature updates for 365 days', 'Defers quality updates for 4 days', 'Excludes drivers from quality updates', 'Prevents automatic restarts while a user is signed in'],
-    note: 'Available on Windows Pro, Enterprise, and Education editions.', danger: false,
-  },
-  {
-    key: 'default', title: 'Windows Default', subtitle: 'Return control to Windows', variant: 'tonal', button: 'Restore Defaults',
-    bullets: ['Removes Windows Update policies applied by WinUtil', 'Restores update service startup settings', 'Re-enables update scheduled tasks'],
-    note: 'Use this to undo the Recommended or Disable profile.', danger: false,
-  },
-  {
-    key: 'disable', title: 'Disable Updates', subtitle: 'Advanced use only', variant: 'danger', button: 'Disable Updates',
-    bullets: ['Disables automatic update policy', 'Stops update services and scheduled tasks', 'Clears downloaded update files'],
-    note: 'Security updates will not be installed while this profile is active.', danger: true,
-  },
 ];
 
 const ISO_STEPS = [
@@ -2737,29 +2719,25 @@ function updatesPane(): HTMLElement {
       u.canCancel ? h('button', { class: 'btn text', onclick: () => { void bridge().cancelUpdateCheck().then((status) => { state.update = status; render(); }); } }, 'Cancel check') : null,
       u.state === 'ready' ? h('button', { class: 'btn filled', onclick: () => { void restartReadyUpdate(); } }, 'Restart to install update') : null,
       u.state === 'ready' ? h('button', { class: 'btn text', disabled: u.deferred, onclick: () => { void bridge().deferUpdate().then((status) => { state.update = status; snack(status.message); render(); }); } }, u.deferred ? 'Later selected' : 'Later') : null)));
-  for (const p of UPDATE_PROFILES.filter((p) => match(`${p.title} ${p.subtitle} ${p.bullets.join(' ')}`))) {
-    cards.appendChild(h('article', { class: 'card', style: 'min-height:340px' },
+  const systemUpdateInventory = [
+    ['Windows Update policy profiles', 'No reviewed Windows Update adapter is bundled.'],
+    ['Update services and scheduled tasks', 'No system-service adapter is bundled.'],
+    ['Driver delivery and downloaded update files', 'No reviewed operating-system update adapter is bundled.'],
+  ] as const;
+  const unavailable = systemUpdateInventory.filter(([title, reason]) => match(`${title} ${reason}`));
+  if (unavailable.length) {
+    cards.appendChild(h('article', { class: 'card full unavailable-card' },
       h('div', { class: 'card-head' }, h('div', {},
-        h('h2', { style: `font-size:20px;${p.danger ? 'color:var(--md-sys-color-error)' : ''}` }, p.title),
-        h('p', { style: p.danger ? 'color:var(--md-sys-color-error);font-weight:500' : '' }, p.subtitle)),
-        h('button', { class: 'icon-btn small', title: 'Lock this profile', onclick: () => openLockWizard(`profile-${p.key}`, `Update profile · ${p.title}`) },
-          icon('lock_open'))),
-      h('ul', { style: 'margin:6px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px' },
-        ...p.bullets.map((b) => h('li', { style: 'display:flex;gap:9px;font-size:13px;line-height:1.45' },
-          icon('chevron_right', ''), h('span', {}, b)))),
-      h('p', { style: 'font-style:italic;font-size:11.5px' }, p.note),
-      h('div', { style: 'flex:1' }),
-      h('button', {
-        class: `btn ${p.variant}`, style: 'height:44px;justify-content:center', disabled: true,
-        title: 'Unavailable until the reviewed Windows Update adapter is installed',
-        'aria-describedby': `update-profile-note-${p.key}`,
-      }, p.button),
-      h('p', { id: `update-profile-note-${p.key}`, class: 'unavailable-note' }, 'Unavailable in this build: the reviewed Windows Update adapter is not installed.')));
+        h('p', { class: 'eyebrow' }, 'Operating system updates'),
+        h('h2', {}, 'Unavailable operations')),
+      ),
+      h('p', {}, 'This build does not modify Windows Update settings. The inventory stays visible so unavailable capabilities are explicit rather than imitated by inactive action buttons.'),
+      h('ul', { class: 'unavailable-inventory' }, ...unavailable.map(([title, reason]) => h('li', {},
+        h('strong', {}, title), h('span', {}, reason)))),
+      h('p', { class: 'unavailable-note' }, 'Next condition: a reviewed, bundled Windows Update adapter must be installed before an operating-system update operation can become available.')));
   }
-  cards.appendChild(h('div', { class: 'card full', style: 'text-align:center' },
-    h('p', {}, 'These profiles are documented previews. This build does not apply Windows Update policies.')));
   return h('div', { class: 'pane padded' },
-    h('div', { style: 'margin-bottom:16px;max-width:520px' }, searchLine('updates', 'Search update profiles and their effects')),
+    h('div', { style: 'margin-bottom:16px;max-width:520px' }, searchLine('updates', 'Search application update controls and unavailable operating-system operations')),
     cards);
 }
 

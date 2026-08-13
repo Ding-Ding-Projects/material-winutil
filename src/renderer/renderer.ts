@@ -2673,6 +2673,72 @@ async function refreshGitHistory(): Promise<void> {
   render();
 }
 
+function historyFailure(error: unknown, fallback: string): void {
+  state.historyMessage = error instanceof Error ? error.message : fallback;
+  render();
+}
+
+async function labelHistoryRevision(entry: GitHistoryEntry): Promise<void> {
+  const label = window.prompt('Revision label', entry.label ?? '');
+  if (label === null) return;
+  const value = label.trim();
+  if (!value) {
+    state.historyMessage = 'A revision label cannot be empty.';
+    render();
+    return;
+  }
+  try {
+    const updated = await bridge().historyLabel(entry.commit, value);
+    state.historyMessage = `Labeled ${updated.commit.slice(0, 12)} as “${updated.label ?? value}”.`;
+    await refreshGitHistory();
+  } catch (error) { historyFailure(error, 'The revision label could not be saved.'); }
+}
+
+async function restoreHistoryRevision(entry: GitHistoryEntry): Promise<void> {
+  try {
+    const restored = await bridge().historyRestore(entry.commit);
+    state.historySelected = [restored.commit];
+    state.historyMessage = `Restored ${entry.commit.slice(0, 12)} as new revision ${restored.commit.slice(0, 12)}.`;
+    await refreshGitHistory();
+  } catch (error) { historyFailure(error, 'The revision could not be restored.'); }
+}
+
+async function diffHistoryRevision(entry: GitHistoryEntry): Promise<void> {
+  const previous = state.historySelected.at(-1);
+  if (!previous || previous === entry.commit) {
+    state.historySelected = [entry.commit];
+    state.historyMessage = `Selected ${entry.commit.slice(0, 12)}. Choose a different revision to compare.`;
+    render();
+    return;
+  }
+  try {
+    const changes = await bridge().historyDiff(previous, entry.commit);
+    state.historySelected = [entry.commit];
+    state.historyMessage = `${changes.length} change${changes.length === 1 ? '' : 's'} between ${previous.slice(0, 12)} and ${entry.commit.slice(0, 12)}.`;
+    openDetail('Redacted revision diff', `${previous.slice(0, 12)} → ${entry.commit.slice(0, 12)}`, JSON.stringify(changes, null, 2));
+  } catch (error) { historyFailure(error, 'The selected revisions could not be compared.'); }
+}
+
+async function pruneHistory(keep: number): Promise<void> {
+  try {
+    const entry = await bridge().historyPrune(keep);
+    state.historyMessage = `Recorded retention decision in ${entry.commit.slice(0, 12)}: keep ${keep} revisions.`;
+    await refreshGitHistory();
+  } catch (error) { historyFailure(error, 'The retention decision could not be recorded.'); }
+}
+
+async function lockHistory(): Promise<void> {
+  try {
+    const access = await bridge().historyLock();
+    state.historyAccess = { ...access, password: '' };
+    state.gitHistory = [];
+    state.historyCounts = [];
+    state.historySelected = [];
+    state.historyMessage = 'Git-backed history is locked.';
+    render();
+  } catch (error) { historyFailure(error, 'Git-backed history could not be locked.'); }
+}
+
 async function refreshHistoryAccess(): Promise<void> {
   try { state.historyAccess = { ...state.historyAccess, ...await bridge().historyAccess(), password: '' }; }
   catch (error) { state.historyMessage = error instanceof Error ? error.message : 'History access is unavailable.'; }
@@ -2723,9 +2789,9 @@ function historyPane(): HTMLElement {
       meta: relTime(e.recordedAt), lead: 'commit',
       onOpen: () => openDetail(e.action, e.commit, `Recorded ${new Date(e.recordedAt).toLocaleString()}\nAction   ${e.action}\nCommit   ${e.commit}\nRecord   ${e.revisionId}`),
       actions: [
-        ['Label revision', 'Add a bounded local label', () => { const value = window.prompt('Revision label'); if (value) void bridge().historyLabel(e.commit, value).then(() => refreshGitHistory()).catch((error) => snack(String(error))); }],
-        ['Restore revision', 'Append the snapshot as a new revision', () => { void bridge().historyRestore(e.commit).then(() => refreshGitHistory()).catch((error) => snack(String(error))); }],
-        ['Diff revision', 'Compare with the previously selected revision', () => { const previous = state.historySelected.at(-1); if (!previous) { state.historySelected = [e.commit]; snack('Selected the first revision. Choose another revision to diff.'); } else void bridge().historyDiff(previous, e.commit).then((changes) => openDetail('Redacted revision diff', e.commit, JSON.stringify(changes, null, 2))).catch((error) => snack(String(error))); }],
+        ['Label revision', 'Add a bounded local label', () => { void labelHistoryRevision(e); }],
+        ['Restore revision', 'Append the snapshot as a new revision', () => { void restoreHistoryRevision(e); }],
+        ['Diff revision', 'Compare with the selected revision', () => { void diffHistoryRevision(e); }],
       ],
     }));
   }
@@ -2735,8 +2801,8 @@ function historyPane(): HTMLElement {
     h('div', { class: 'dialog-actions history-actions' },
       h('button', { class: 'btn outlined', onclick: () => void refreshGitHistory() }, 'Refresh'),
       h('button', { class: 'btn tonal', onclick: () => void bridge().historyExport(historyQuery()).then((result) => snack(result.status === 'saved' ? 'Redacted history export saved.' : 'Export cancelled.')) }, 'Export filtered metadata'),
-      h('button', { class: 'btn text', onclick: () => void bridge().historyPrune(100).then(() => refreshGitHistory()) }, 'Record retention: keep 100'),
-      h('button', { class: 'btn text', onclick: () => void bridge().historyLock().then((access) => { state.historyAccess = { ...access, password: '' }; state.gitHistory = []; render(); }) }, 'Lock history')),
+      h('button', { class: 'btn text', onclick: () => void pruneHistory(100) }, 'Record retention: keep 100'),
+      h('button', { class: 'btn text', onclick: () => void lockHistory() }, 'Lock history')),
     h('div', { style: 'padding:12px 20px' }, h('p', { class: state.historyMessage ? 'feedback error' : 'feedback', role: 'status' },
       state.historyMessage || 'Local Git-backed history is append-only. Browse, date/action filtering, redacted diff, restore-as-new-revision, labels, retention decisions, and redacted export are available. Snapshot contents and credentials are omitted from exports.')));
 }

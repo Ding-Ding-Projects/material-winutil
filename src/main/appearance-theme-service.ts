@@ -181,7 +181,7 @@ export class AppearanceThemeService {
       if (!isRecord(persisted) || !('schemaVersion' in persisted) || !('themes' in persisted)) {
         throw new Error('Appearance theme mutation did not return a theme document.');
       }
-      await this.write(persisted as AppearanceThemeDocument);
+      await this.write(validateAppearanceThemeDocument(persisted));
     });
     await this.writeQueue;
     return result;

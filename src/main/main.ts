@@ -715,7 +715,8 @@ async function saveExternalEditorPreferences(next: ExternalEditorPreferences): P
   return next;
 }
 
-async function detectedEditors(preferences = await loadExternalEditorPreferences()): Promise<readonly DetectedEditor[]> {
+async function detectedEditors(preferences?: ExternalEditorPreferences): Promise<readonly DetectedEditor[]> {
+  const resolvedPreferences = preferences ?? await loadExternalEditorPreferences();
   const isFile = async (candidate: string): Promise<boolean> => {
     try { return (await fs.stat(candidate)).isFile(); } catch { return false; }
   };
@@ -727,7 +728,7 @@ async function detectedEditors(preferences = await loadExternalEditorPreferences
     localAppData: process.env.LOCALAPPDATA,
     programFiles: process.env.ProgramFiles,
     programFilesX86: process.env['ProgramFiles(x86)'],
-    portableRoots: [], configuredEditors: preferences.configuredEditors,
+    portableRoots: [], configuredEditors: resolvedPreferences.configuredEditors,
   }, { isFile, findOnPath });
 }
 

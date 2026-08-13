@@ -41,10 +41,14 @@ export interface SelectionProfilesDocument {
   readonly profiles: readonly SelectionProfile[];
 }
 
-const VIEWS = new Set<SelectionProfileViewId>([
-  'install', 'tweaks', 'config', 'updates', 'iso', 'overview', 'sync', 'skills', 'memory',
-  'history', 'changelog', 'docs', 'settings',
-]);
+const VIEWS: readonly SelectionProfileViewId[] = [
+  'install', 'tweaks', 'config', 'updates', 'iso', 'converter', 'ollama', 'history',
+  'changelog', 'docs', 'settings',
+];
+
+function isSelectionProfileViewId(value: string): value is SelectionProfileViewId {
+  return VIEWS.some((view) => view === value);
+}
 
 function boundedText(value: unknown, label: string, maximum: number, allowEmpty = false): string {
   if (typeof value !== 'string') throw new TypeError(`${label} is invalid.`);
@@ -70,8 +74,8 @@ function profileColor(value: unknown): string {
 }
 
 function profileView(value: unknown): SelectionProfileViewId {
-  if (typeof value !== 'string' || !VIEWS.has(value as SelectionProfileViewId)) throw new TypeError('Selection profile view is invalid.');
-  return value as SelectionProfileViewId;
+  if (typeof value !== 'string' || !isSelectionProfileViewId(value)) throw new TypeError('Selection profile view is invalid.');
+  return value;
 }
 
 function profileIds(value: unknown): string[] {

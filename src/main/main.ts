@@ -12,7 +12,7 @@ import type {
   ScheduledSettingsState, SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateRestartRequest, UpdateRestartResult, UpdateStatus, WinutilCatalog, DimSumStartupPresentation, FileConverterSurfaceState, AppLogoRuntimeSnapshot,
   AppearanceThemeDocument, AppearanceThemeImportResult, AppearanceThemeValues,
 } from '../shared/types';
-import type { OllamaCatalogSnapshot, OllamaChatRequest, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress, OllamaHarnessPlan, OllamaHarnessPreflightRequest, OllamaHarnessProfileId, OllamaHarnessRestoreResult, OllamaHarnessLaunchResult, OllamaHarnessExecutable } from '../shared/ollama-suite';
+import type { OllamaCatalogSnapshot, OllamaChatExportDocument, OllamaChatExportResult, OllamaChatExportSaveRequest, OllamaChatRequest, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress, OllamaHarnessPlan, OllamaHarnessPreflightRequest, OllamaHarnessProfileId, OllamaHarnessRestoreResult, OllamaHarnessLaunchResult, OllamaHarnessExecutable } from '../shared/ollama-suite';
 import { resolvePackageRequest, validateCatalog, wingetArgs } from './package-policy';
 import { AUTHENTICATOR_PNG_LIMITS, AuthenticatorService } from './authenticator-service';
 import { PersonalVocabularyStore } from './personal-vocabulary-store';
@@ -316,6 +316,69 @@ async function atomicWrite(file: string, body: string): Promise<void> {
     await fs.rm(temporary, { force: true });
     throw error;
   }
+}
+
+function renderRedactedChatMarkdown(document: OllamaChatExportDocument): string {
+  return document.messages.map((message) => {
+    const role = message.role[0]?.toUpperCase() + message.role.slice(1);
+    const attachments = message.attachmentsOmitted === 0
+      ? ''
+      : `\n\nAttachments omitted: ${message.attachmentsOmitted}`;
+    return `## ${role}\n\n${message.content}${attachments}`;
+  }).join('\n\n');
+}
+
+async function atomicWriteNewFile(file: string, body: string): Promise<void> {
+  const directory = path.dirname(file);
+  const temporary = path.join(directory, `.${path.basename(file)}.${process.pid}.${randomUUID()}.tmp`);
+  await fs.writeFile(temporary, body, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+  try {
+    await fs.link(temporary, file);
+  } finally {
+    await fs.rm(temporary, { force: true });
+  }
+}
+
+function validateChatExportDestination(filePath: string, extension: 'md' | 'json'): string {
+  const resolved = path.resolve(filePath);
+  const name = path.basename(resolved);
+  if (path.extname(name).toLowerCase() !== `.${extension}` || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.(?:md|json)$/u.test(name)) {
+    throw new Error(`Choose a new filename ending in .${extension}.`);
+  }
+  return resolved;
+}
+
+async function saveOllamaChatExport(request: unknown): Promise<OllamaChatExportResult> {
+  if (!request || typeof request !== 'object' || Array.isArray(request)) throw new Error('The chat export request is invalid.');
+  const input = request as Partial<OllamaChatExportSaveRequest>;
+  if ((input.format !== 'markdown' && input.format !== 'json') || !input.chat) throw new Error('Choose Markdown or JSON before saving the redacted chat export.');
+  const document = await ollamaSuite().exportChat(input.chat);
+  const extension = input.format === 'markdown' ? 'md' : 'json';
+  const body = input.format === 'markdown'
+    ? renderRedactedChatMarkdown(document)
+    : `${JSON.stringify(document, null, 2)}\n`;
+  if (Buffer.byteLength(body, 'utf8') > MAX_TEXT_PAYLOAD) throw new Error('The redacted chat export exceeds the safe file-size limit.');
+  const currentWindow = win;
+  if (!currentWindow || currentWindow.isDestroyed()) throw new Error('The application window is unavailable.');
+  const choice = await dialog.showSaveDialog(currentWindow, {
+    title: 'Save redacted local chat export',
+    defaultPath: path.join(app.getPath('downloads'), `ollama-chat-redacted.${extension}`),
+    filters: [{ name: input.format === 'markdown' ? 'Markdown' : 'JSON', extensions: [extension] }],
+    properties: ['showOverwriteConfirmation'],
+  });
+  if (choice.canceled || !choice.filePath) return { status: 'cancelled', document };
+  const destination = validateChatExportDestination(choice.filePath, extension);
+  if (await fs.stat(destination).then(() => true).catch(() => false)) {
+    throw new Error('The selected export path already exists. Choose a new filename so no chat export is overwritten.');
+  }
+  try {
+    await atomicWriteNewFile(destination, body);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('The selected export path was created by another process. Choose a new filename so no chat export is overwritten.');
+    throw error;
+  }
+  lastExportPath = destination;
+  return { status: 'saved', filePath: destination, document };
 }
 
 function projectHistoryEntry(value: unknown): HistoryEntry | null {
@@ -1246,8 +1309,8 @@ ipcMain.handle('ollama:chat', async (event, request: unknown, variant: unknown):
   });
 });
 ipcMain.handle('ollama:cancel-chat', (event): boolean => { requireTrustedSender(event); return ollamaSuite().cancelChat(); });
-ipcMain.handle('ollama:export-chat', (event, request: unknown, variant: unknown) => {
-  requireTrustedSender(event); void variant; return ollamaSuite().exportChat(request as OllamaChatRequest);
+ipcMain.handle('ollama:export-chat', async (event, request: unknown): Promise<OllamaChatExportResult> => {
+  requireTrustedSender(event); return saveOllamaChatExport(request);
 });
 ipcMain.handle('ollama:harness-executables', async (event, profileId: unknown): Promise<OllamaHarnessExecutable[]> => {
   requireTrustedSender(event); return ollamaHarness().detectedExecutables(profileId);

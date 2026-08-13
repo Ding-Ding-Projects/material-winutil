@@ -197,6 +197,33 @@ export interface OllamaChatRequest {
   options: OllamaChatOptions;
 }
 
+/**
+ * Redacted, portable chat transcript. Image payloads and the system prompt are
+ * intentionally omitted before this shape crosses the application boundary.
+ */
+export interface OllamaChatExportDocument {
+  schemaVersion: 1;
+  messages: Array<{
+    role: OllamaChatMessage['role'];
+    content: string;
+    attachmentsOmitted: number;
+  }>;
+}
+
+/**
+ * User-selected local export format and chat content. The caller never chooses
+ * a destination path; the privileged process owns the save dialog and write.
+ */
+export interface OllamaChatExportSaveRequest {
+  chat: OllamaChatRequest;
+  format: 'markdown' | 'json';
+}
+
+/** The result of a user-mediated local chat export. */
+export type OllamaChatExportResult =
+  | { status: 'saved'; filePath: string; document: OllamaChatExportDocument }
+  | { status: 'cancelled'; document: OllamaChatExportDocument };
+
 export type OllamaHarnessProfileId = 'vscode-continue' | 'opencode-local' | 'open-webui-local';
 export interface OllamaHarnessProfile {
   id: OllamaHarnessProfileId;
@@ -493,7 +520,7 @@ export function validateChatRequest(value: OllamaChatRequest, variant: OllamaCat
   return { model, messages, options: Object.fromEntries(Object.entries(validated).filter(([, item]) => item !== undefined)) };
 }
 
-export function redactChatExport(messages: OllamaChatMessage[]): { schemaVersion: 1; messages: Array<{ role: string; content: string; attachmentsOmitted: number }> } {
+export function redactChatExport(messages: OllamaChatMessage[]): OllamaChatExportDocument {
   const secret = /(?:bearer\s+|api[_-]?key\s*[:=]\s*|token\s*[:=]\s*|password\s*[:=]\s*)[^\s,;]+/giu;
   return { schemaVersion: 1, messages: messages.map((message) => ({
     role: message.role,

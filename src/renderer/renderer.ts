@@ -67,6 +67,10 @@ interface OllamaFitAssessment { verdict: OllamaFitVerdict; reasons: string[]; ev
 interface OllamaPullProgress { model: string; state: 'queued' | 'pulling' | 'completed' | 'cancelled' | 'failed'; status: string; completedBytes: number | null; totalBytes: number | null; error: string | null; }
 interface OllamaChatMessage { role: 'system' | 'user' | 'assistant'; content: string; images?: string[]; }
 interface OllamaChatRequest { model: string; messages: OllamaChatMessage[]; options: { temperature?: number; topP?: number; topK?: number; seed?: number; numCtx?: number; numPredict?: number }; }
+interface OllamaChatExportDocument { schemaVersion: 1; messages: Array<{ role: OllamaChatMessage['role']; content: string; attachmentsOmitted: number }>; }
+type OllamaChatExportResult =
+  | { status: 'saved'; filePath: string; document: OllamaChatExportDocument }
+  | { status: 'cancelled'; document: OllamaChatExportDocument };
 type OllamaHarnessProfileId = 'vscode-continue' | 'opencode-local' | 'open-webui-local';
 interface OllamaHarnessConfiguration { model: string; contextLength?: number; workspaceFolder?: string; }
 interface OllamaHarnessExecutable { profileId: OllamaHarnessProfileId; executableId: string; path: string; label: string; }
@@ -285,7 +289,7 @@ interface Bridge {
   ollamaRetryPull(model: string): Promise<OllamaPullProgress[]>;
   ollamaChat(request: OllamaChatRequest, variant: OllamaModelVariant): Promise<OllamaChatRequest>;
   ollamaCancelChat(): Promise<boolean>;
-  ollamaExportChat(request: OllamaChatRequest, variant: OllamaModelVariant): Promise<{ schemaVersion: 1; messages: Array<{ role: string; content: string; attachmentsOmitted: number }> }>;
+  ollamaExportChat(request: { chat: OllamaChatRequest; format: 'markdown' | 'json' }): Promise<OllamaChatExportResult>;
   ollamaHarnessExecutables(profileId: OllamaHarnessProfileId): Promise<OllamaHarnessExecutable[]>;
   ollamaHarnessPickWorkspace(): Promise<string | null>;
   ollamaHarnessPreflight(request: { profileId: OllamaHarnessProfileId; model: string; configuration: OllamaHarnessConfiguration; executablePath: string }): Promise<OllamaHarnessPlan>;
@@ -770,7 +774,7 @@ const state = {
     queue: [] as OllamaPullProgress[],
     tab: 'store' as 'status' | 'store' | 'cart' | 'chat' | 'harness',
     busy: false, error: '', selectedModel: '', cart: new Set<string>(),
-    chat: { system: '', prompt: '', messages: [] as OllamaChatMessage[], output: '', busy: false, attachmentRequested: false,
+    chat: { system: '', prompt: '', messages: [] as OllamaChatMessage[], output: '', busy: false, attachmentRequested: false, lastExportPath: '',
       temperature: 0.4, contextLength: 4096 },
     harness: { profile: 'vscode-continue' as OllamaHarnessProfileId, workspaceFolder: '', executables: [] as OllamaHarnessExecutable[], executablePath: '', plan: null as OllamaHarnessPlan | null, busy: false, message: '' },
   },
@@ -1871,7 +1875,9 @@ function ollamaChat(): HTMLElement {
       : ollamaText('Attachments are unavailable because the selected variant does not report vision capability.', '揀選嘅模型版本未有報告影像能力，所以附件不可用。'))),
     h('div', { class: 'btnrow' }, h('button', { class: 'btn filled', disabled: !available || !chat.prompt.trim() || chat.busy, title: !available ? ollamaText('Select an installed verified model and start the local service.', '請揀已安裝已驗證模型，再啟動本機服務。') : '', onclick: () => void sendOllamaChat() }, ollamaText('Send locally', '本機傳送')),
       h('button', { class: 'btn outlined', disabled: !chat.busy, onclick: () => void bridge().ollamaCancelChat() }, ollamaText('Cancel response', '取消回應')),
-      h('button', { class: 'btn text', disabled: !chat.messages.length, onclick: async () => { if (variant) { await bridge().ollamaExportChat({ model: variant.qualifiedName, messages: chat.messages, options: {} }, variant); snack(ollamaText('Created a redacted export object. File save wiring is still unavailable.', '已建立遮蔽敏感資料嘅匯出物件；檔案儲存接線仍未提供。')); } } }, ollamaText('Prepare redacted export', '準備遮蔽匯出'))),
+      h('button', { class: 'btn text', disabled: !chat.messages.length || chat.busy, onclick: () => void exportOllamaChat('markdown') }, ollamaText('Save redacted Markdown', '儲存遮蔽 Markdown')),
+      h('button', { class: 'btn text', disabled: !chat.messages.length || chat.busy, onclick: () => void exportOllamaChat('json') }, ollamaText('Save redacted JSON', '儲存遮蔽 JSON')),
+      chat.lastExportPath ? h('button', { class: 'btn tonal', onclick: () => void bridge().openExportInVSCode(chat.lastExportPath).then((result) => snack(result.ok ? ollamaText('Opened the saved redacted export in Visual Studio Code.', '已喺 Visual Studio Code 開啟已儲存遮蔽匯出。') : result.error ?? ollamaText('Visual Studio Code could not open the saved export.', 'Visual Studio Code 無法開啟已儲存匯出。'))) }, ollamaText('Open saved export in VS Code', '喺 VS Code 開啟已儲存匯出')) : null),
     h('pre', { class: 'ollama-chat-output', role: 'log', 'aria-live': 'polite' }, chat.output || ollamaText('No local response yet.', '未有本機回應。')));
 }
 
@@ -1882,6 +1888,25 @@ async function sendOllamaChat(): Promise<void> {
   try { const validated = await bridge().ollamaChat({ model: variant.qualifiedName, messages, options: { temperature: chat.temperature, numCtx: chat.contextLength } }, variant); chat.messages = validated.messages; chat.prompt = ''; }
   catch (error) { state.ollama.error = error instanceof Error ? error.message : 'Local chat failed safely.'; }
   finally { chat.busy = false; render(); }
+}
+
+async function exportOllamaChat(format: 'markdown' | 'json'): Promise<void> {
+  const variant = ollamaVariant(); const chat = state.ollama.chat;
+  if (!variant || !chat.messages.length || chat.busy) return;
+  chat.busy = true; state.ollama.error = ''; render();
+  try {
+    const result = await bridge().ollamaExportChat({ chat: { model: variant.qualifiedName, messages: chat.messages, options: {} }, format });
+    if (result.status === 'cancelled') {
+      snack(ollamaText('Redacted chat export was not saved.', '遮蔽聊天匯出未有儲存。'));
+      return;
+    }
+    chat.lastExportPath = result.filePath;
+    snack(ollamaText(`Saved redacted chat export: ${result.filePath}`, `已儲存遮蔽聊天匯出：${result.filePath}`));
+  } catch (error) {
+    state.ollama.error = error instanceof Error ? error.message : ollamaText('The redacted chat export could not be saved.', '遮蔽聊天匯出無法儲存。');
+  } finally {
+    chat.busy = false; render();
+  }
 }
 
 function ollamaHarness(): HTMLElement {

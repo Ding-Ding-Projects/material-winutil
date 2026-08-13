@@ -208,15 +208,51 @@ export interface OllamaHarnessProfile {
   allowlistedEnvironmentKeys: string[];
 }
 
+export interface OllamaHarnessConfiguration {
+  model: string;
+  contextLength?: number;
+  workspaceFolder?: string;
+}
+
+export interface OllamaHarnessExecutable {
+  profileId: OllamaHarnessProfileId;
+  executableId: string;
+  path: string;
+  label: string;
+}
+
 export interface OllamaHarnessPlan {
   schemaVersion: 1;
   profileId: OllamaHarnessProfileId;
   model: string;
   executableId: string;
+  executablePath: string;
   arguments: string[];
   environment: Record<string, string>;
-  snapshot: { schemaVersion: 1; profileId: OllamaHarnessProfileId; createdAt: string; configuration: Record<string, unknown> };
+  snapshot: { schemaVersion: 1; profileId: OllamaHarnessProfileId; createdAt: string; configuration: OllamaHarnessConfiguration };
   rollbackRequiredOnFailure: true;
+}
+
+export interface OllamaHarnessLaunchResult {
+  schemaVersion: 1;
+  plan: OllamaHarnessPlan;
+  state: 'ready' | 'rolled-back';
+  readiness: { ollamaHealthy: boolean; processStarted: boolean; checkedAt: string; message: string };
+  restoredConfiguration: OllamaHarnessConfiguration | null;
+}
+
+export interface OllamaHarnessPreflightRequest {
+  profileId: OllamaHarnessProfileId;
+  model: string;
+  configuration: OllamaHarnessConfiguration;
+  executablePath: string;
+}
+
+export interface OllamaHarnessRestoreResult {
+  schemaVersion: 1;
+  restored: boolean;
+  configuration: OllamaHarnessConfiguration | null;
+  message: string;
 }
 
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/u;
@@ -472,23 +508,34 @@ export const OLLAMA_HARNESS_PROFILES: ReadonlyArray<OllamaHarnessProfile> = Obje
   Object.freeze<OllamaHarnessProfile>({ id: 'open-webui-local', label: 'Open WebUI local profile', executableId: 'open-webui', supportedCapabilities: ['text', 'vision'], semanticFields: ['model', 'contextLength'], allowlistedArguments: [], allowlistedEnvironmentKeys: ['OLLAMA_BASE_URL'] }),
 ]);
 
-export function createHarnessPlan(profileId: OllamaHarnessProfileId, variant: OllamaCatalogVariant, configuration: Record<string, unknown>, now = new Date()): OllamaHarnessPlan {
+export function createHarnessPlan(profileId: OllamaHarnessProfileId, variant: OllamaCatalogVariant, configuration: OllamaHarnessConfiguration, executable: OllamaHarnessExecutable, now = new Date()): OllamaHarnessPlan {
   const profile = OLLAMA_HARNESS_PROFILES.find(({ id }) => id === profileId);
   if (!profile) throw new Error('Harness profile is not allowlisted.');
-  if (Object.keys(configuration).some((key) => !profile.semanticFields.includes(key as never))) throw new Error('Harness configuration contains an unsupported field.');
+  if (!record(configuration) || Object.keys(configuration).some((key) => !profile.semanticFields.includes(key as never))) throw new Error('Harness configuration contains an unsupported field.');
   if (configuration.model !== variant.qualifiedName) throw new Error('Harness model must be selected from the verified catalog.');
-  return { schemaVersion: 1, profileId, model: variant.qualifiedName, executableId: profile.executableId,
+  if (configuration.contextLength !== undefined && (!Number.isSafeInteger(configuration.contextLength) || configuration.contextLength < 256 || configuration.contextLength > (variant.contextLength ?? 1_048_576))) {
+    throw new Error('Harness context length is invalid.');
+  }
+  if (configuration.workspaceFolder !== undefined && (!configuration.workspaceFolder || configuration.workspaceFolder.length > 4_096 || CONTROL.test(configuration.workspaceFolder))) {
+    throw new Error('Harness workspace folder is invalid.');
+  }
+  if (!record(executable) || executable.profileId !== profileId || executable.executableId !== profile.executableId
+    || !text(executable.path, 'Harness executable path', 4_096) || !text(executable.label, 'Harness executable label', 256)) {
+    throw new Error('Harness executable is not an allowlisted installed executable.');
+  }
+  return { schemaVersion: 1, profileId, model: variant.qualifiedName, executableId: profile.executableId, executablePath: executable.path,
     arguments: [...profile.allowlistedArguments], environment: profile.id === 'open-webui-local' ? { OLLAMA_BASE_URL: OLLAMA_LOCAL_ORIGIN } : { OLLAMA_HOST: OLLAMA_LOCAL_ORIGIN },
     snapshot: { schemaVersion: 1, profileId, createdAt: now.toISOString(), configuration: structuredClone(configuration) }, rollbackRequiredOnFailure: true };
 }
 
-export function restoreHarnessSnapshot(plan: OllamaHarnessPlan): Record<string, unknown> {
+export function restoreHarnessSnapshot(plan: OllamaHarnessPlan): OllamaHarnessConfiguration {
   if (!record(plan) || plan.schemaVersion !== 1 || plan.rollbackRequiredOnFailure !== true || !record(plan.snapshot)
     || plan.snapshot.schemaVersion !== 1 || plan.snapshot.profileId !== plan.profileId || !record(plan.snapshot.configuration)) {
     throw new Error('The harness rollback snapshot is invalid.');
   }
   const profile = OLLAMA_HARNESS_PROFILES.find(({ id }) => id === plan.profileId);
-  if (!profile || plan.executableId !== profile.executableId || Object.keys(plan.snapshot.configuration).some((key) => !profile.semanticFields.includes(key as never))) {
+  if (!profile || plan.executableId !== profile.executableId || !text(plan.executablePath, 'Harness executable path', 4_096)
+    || Object.keys(plan.snapshot.configuration).some((key) => !profile.semanticFields.includes(key as never))) {
     throw new Error('The harness rollback snapshot is not allowlisted.');
   }
   return structuredClone(plan.snapshot.configuration);

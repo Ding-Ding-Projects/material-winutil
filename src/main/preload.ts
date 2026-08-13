@@ -108,6 +108,11 @@ const bridge: Bridge = {
   ollamaChat: (request, variant) => ipcRenderer.invoke('ollama:chat', request, variant),
   ollamaCancelChat: () => ipcRenderer.invoke('ollama:cancel-chat'),
   ollamaExportChat: (request, variant) => ipcRenderer.invoke('ollama:export-chat', request, variant),
+  ollamaHarnessExecutables: (profileId) => ipcRenderer.invoke('ollama:harness-executables', profileId),
+  ollamaHarnessPickWorkspace: () => ipcRenderer.invoke('ollama:harness-pick-workspace'),
+  ollamaHarnessPreflight: (request) => ipcRenderer.invoke('ollama:harness-preflight', request),
+  ollamaHarnessLaunch: (plan) => ipcRenderer.invoke('ollama:harness-launch', plan),
+  ollamaHarnessRestore: (plan) => ipcRenderer.invoke('ollama:harness-restore', plan),
   onOllamaPullProgress: (cb) => { ipcRenderer.on('ollama:pull-progress', (_e, progress) => cb(progress)); },
   onOllamaChatChunk: (cb) => { ipcRenderer.on('ollama:chat-chunk', (_e, content) => cb(content)); },
 };

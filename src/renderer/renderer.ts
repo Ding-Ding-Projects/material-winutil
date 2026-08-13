@@ -67,6 +67,12 @@ interface OllamaFitAssessment { verdict: OllamaFitVerdict; reasons: string[]; ev
 interface OllamaPullProgress { model: string; state: 'queued' | 'pulling' | 'completed' | 'cancelled' | 'failed'; status: string; completedBytes: number | null; totalBytes: number | null; error: string | null; }
 interface OllamaChatMessage { role: 'system' | 'user' | 'assistant'; content: string; images?: string[]; }
 interface OllamaChatRequest { model: string; messages: OllamaChatMessage[]; options: { temperature?: number; topP?: number; topK?: number; seed?: number; numCtx?: number; numPredict?: number }; }
+type OllamaHarnessProfileId = 'vscode-continue' | 'opencode-local' | 'open-webui-local';
+interface OllamaHarnessConfiguration { model: string; contextLength?: number; workspaceFolder?: string; }
+interface OllamaHarnessExecutable { profileId: OllamaHarnessProfileId; executableId: string; path: string; label: string; }
+interface OllamaHarnessPlan { schemaVersion: 1; profileId: OllamaHarnessProfileId; model: string; executableId: string; executablePath: string; arguments: string[]; environment: Record<string, string>; snapshot: { schemaVersion: 1; profileId: OllamaHarnessProfileId; createdAt: string; configuration: OllamaHarnessConfiguration }; rollbackRequiredOnFailure: true; }
+interface OllamaHarnessLaunchResult { schemaVersion: 1; plan: OllamaHarnessPlan; state: 'ready' | 'rolled-back'; readiness: { ollamaHealthy: boolean; processStarted: boolean; checkedAt: string; message: string }; restoredConfiguration: OllamaHarnessConfiguration | null; }
+interface OllamaHarnessRestoreResult { schemaVersion: 1; restored: boolean; configuration: OllamaHarnessConfiguration | null; message: string; }
 type TabSearchKey = 'current' | 'groupNames' | 'master' | 'inGroup' | 'closeContaining' | 'closeNot';
 type DialogId =
   | 'palette' | 'regex' | 'tabs' | 'appearance' | 'lock' | 'auth'
@@ -270,6 +276,11 @@ interface Bridge {
   ollamaChat(request: OllamaChatRequest, variant: OllamaModelVariant): Promise<OllamaChatRequest>;
   ollamaCancelChat(): Promise<boolean>;
   ollamaExportChat(request: OllamaChatRequest, variant: OllamaModelVariant): Promise<{ schemaVersion: 1; messages: Array<{ role: string; content: string; attachmentsOmitted: number }> }>;
+  ollamaHarnessExecutables(profileId: OllamaHarnessProfileId): Promise<OllamaHarnessExecutable[]>;
+  ollamaHarnessPickWorkspace(): Promise<string | null>;
+  ollamaHarnessPreflight(request: { profileId: OllamaHarnessProfileId; model: string; configuration: OllamaHarnessConfiguration; executablePath: string }): Promise<OllamaHarnessPlan>;
+  ollamaHarnessLaunch(plan: OllamaHarnessPlan): Promise<OllamaHarnessLaunchResult>;
+  ollamaHarnessRestore(plan: OllamaHarnessPlan): Promise<OllamaHarnessRestoreResult>;
   onOllamaPullProgress(cb: (progress: OllamaPullProgress) => void): void;
   onOllamaChatChunk(cb: (content: string) => void): void;
 }
@@ -750,7 +761,7 @@ const state = {
     busy: false, error: '', selectedModel: '', cart: new Set<string>(),
     chat: { system: '', prompt: '', messages: [] as OllamaChatMessage[], output: '', busy: false, attachmentRequested: false,
       temperature: 0.4, contextLength: 4096 },
-    harness: { profile: 'vscode-continue', workspaceFolder: '', previewed: false, restored: false },
+    harness: { profile: 'vscode-continue' as OllamaHarnessProfileId, workspaceFolder: '', executables: [] as OllamaHarnessExecutable[], executablePath: '', plan: null as OllamaHarnessPlan | null, busy: false, message: '' },
   },
   snack: '',
   isoLog: '[00:00:00] Waiting for an ISO. Select an official Microsoft image to begin.',
@@ -1863,17 +1874,43 @@ async function sendOllamaChat(): Promise<void> {
 }
 
 function ollamaHarness(): HTMLElement {
-  const variant = ollamaVariant(); const hstate = state.ollama.harness; const profiles = ['vscode-continue', 'opencode-local', 'open-webui-local'];
+  const variant = ollamaVariant(); const hstate = state.ollama.harness; const profiles: OllamaHarnessProfileId[] = ['vscode-continue', 'opencode-local', 'open-webui-local'];
+  const loadExecutables = async (): Promise<void> => {
+    if (hstate.busy) return; hstate.busy = true; hstate.message = ''; render();
+    try { hstate.executables = await bridge().ollamaHarnessExecutables(hstate.profile); hstate.executablePath = hstate.executables[0]?.path ?? ''; }
+    catch (error) { hstate.executables = []; hstate.executablePath = ''; hstate.message = error instanceof Error ? error.message : 'Harness executable detection failed.'; }
+    finally { hstate.busy = false; render(); }
+  };
+  const preview = async (): Promise<void> => {
+    if (!variant || !hstate.executablePath || hstate.busy) return; hstate.busy = true; hstate.message = ''; render();
+    try { hstate.plan = await bridge().ollamaHarnessPreflight({ profileId: hstate.profile, model: variant.qualifiedName, executablePath: hstate.executablePath, configuration: { model: variant.qualifiedName, contextLength: state.ollama.chat.contextLength, ...(hstate.workspaceFolder ? { workspaceFolder: hstate.workspaceFolder } : {}) } }); }
+    catch (error) { hstate.plan = null; hstate.message = error instanceof Error ? error.message : 'Harness preflight failed.'; }
+    finally { hstate.busy = false; render(); }
+  };
+  const launch = async (): Promise<void> => {
+    if (!hstate.plan || hstate.busy) return; hstate.busy = true; hstate.message = ''; render();
+    try { const result = await bridge().ollamaHarnessLaunch(hstate.plan); hstate.message = result.readiness.message; if (result.state === 'rolled-back' && result.restoredConfiguration) { hstate.workspaceFolder = result.restoredConfiguration.workspaceFolder ?? ''; } }
+    catch (error) { hstate.message = error instanceof Error ? error.message : 'Harness launch failed.'; }
+    finally { hstate.busy = false; render(); }
+  };
+  const restore = async (): Promise<void> => {
+    if (!hstate.plan || hstate.busy) return; hstate.busy = true; render();
+    try { const result = await bridge().ollamaHarnessRestore(hstate.plan); hstate.workspaceFolder = result.configuration?.workspaceFolder ?? ''; hstate.message = result.message; }
+    catch (error) { hstate.message = error instanceof Error ? error.message : 'Harness restore failed.'; }
+    finally { hstate.busy = false; render(); }
+  };
   return h('section', { class: 'ollama-harness', 'aria-label': ollamaText('Allowlisted harness plans', '已允許工具啟動方案') },
     h('div', { class: 'ollama-proof-banner' }, icon('shield'), h('div', {}, h('b', {}, ollamaText('Prebuilt profiles only', '只限預建設定檔')), h('span', {}, ollamaText('This is not an arbitrary command launcher. Ollama does not natively launch these harnesses; the app prepares a reviewed local profile.', '呢個唔係任意指令啟動器。Ollama 本身唔會原生啟動呢啲工具；應用程式只會準備經審核本機設定檔。')))),
-    selectField(ollamaText('Harness profile', '工具設定檔'), profiles, hstate.profile, (value) => { hstate.profile = value; hstate.previewed = false; render(); }),
-    selectField(ollamaText('Model', '模型'), state.ollama.health?.installed.map(({ name }) => name) ?? [], state.ollama.selectedModel || ollamaText('No installed model', '冇已安裝模型'), (value) => { state.ollama.selectedModel = value; hstate.previewed = false; render(); }),
-    h('label', { class: 'field' }, ollamaText('Workspace folder', '工作區資料夾').toUpperCase(), h('input', { value: hstate.workspaceFolder, placeholder: ollamaText('Use the native folder browser in a future build', '未來版本會使用原生資料夾瀏覽器'), oninput: (event: Event) => { hstate.workspaceFolder = (event.target as HTMLInputElement).value; hstate.previewed = false; } })),
-    h('p', { class: 'unavailable-note' }, ollamaText('Native browse and executable detection are not wired, so launch remains disabled. Typing a path cannot turn this into an arbitrary executable field.', '未接好原生瀏覽同執行檔偵測，所以啟動保持停用。手動輸入路徑唔會令呢度變成任意執行檔欄位。')),
-    h('div', { class: 'btnrow' }, h('button', { class: 'btn tonal', disabled: !variant, onclick: () => { hstate.previewed = true; hstate.restored = false; render(); } }, ollamaText('Preview typed plan', '預覽類型化方案')),
-      h('button', { class: 'btn filled', disabled: true, title: ollamaText('Unavailable until installed executable detection and automatic failed-launch rollback are wired.', '要等已安裝執行檔偵測同失敗自動回復接好先可以用。') }, ollamaText('Launch unavailable', '啟動不可用')),
-      h('button', { class: 'btn outlined', disabled: !hstate.previewed, onclick: () => { hstate.restored = true; render(); } }, ollamaText('Restore snapshot', '還原快照'))),
-    h('pre', { class: 'ollama-plan' }, hstate.previewed ? JSON.stringify({ schemaVersion: 1, profileId: hstate.profile, model: variant?.qualifiedName ?? '', executableId: hstate.profile === 'vscode-continue' ? 'vscode' : hstate.profile === 'opencode-local' ? 'opencode' : 'open-webui', environment: hstate.profile === 'open-webui-local' ? { OLLAMA_BASE_URL: 'http://127.0.0.1:11434' } : { OLLAMA_HOST: 'http://127.0.0.1:11434' }, rollbackRequiredOnFailure: true, restored: hstate.restored }, null, 2) : ollamaText('Preview a profile to inspect its fixed executable identity, loopback environment, and rollback requirement.', '預覽設定檔即可檢查固定執行檔身份、loopback 環境同回復要求。')));
+    selectField(ollamaText('Harness profile', '工具設定檔'), profiles, hstate.profile, (value) => { hstate.profile = value as OllamaHarnessProfileId; hstate.executables = []; hstate.executablePath = ''; hstate.plan = null; hstate.message = ''; render(); }),
+    selectField(ollamaText('Model', '模型'), state.ollama.health?.installed.map(({ name }) => name) ?? [], state.ollama.selectedModel || ollamaText('No installed model', '冇已安裝模型'), (value) => { state.ollama.selectedModel = value; hstate.plan = null; render(); }),
+    h('div', { class: 'btnrow' }, h('button', { class: 'btn tonal', disabled: hstate.busy, onclick: () => void loadExecutables() }, ollamaText('Detect installed harnesses', '偵測已安裝工具')),
+      h('button', { class: 'btn tonal', disabled: !variant || !hstate.executablePath || hstate.busy, onclick: () => void preview() }, ollamaText('Preview reviewed plan', '預覽經審核方案')),
+      h('button', { class: 'btn filled', disabled: !hstate.plan || hstate.busy, onclick: () => void launch() }, ollamaText('Launch reviewed harness', '啟動經審核工具')),
+      h('button', { class: 'btn outlined', disabled: !hstate.plan || hstate.busy, onclick: () => void restore() }, ollamaText('Restore snapshot', '還原快照'))),
+    hstate.executables.length ? selectField(ollamaText('Detected executable', '已偵測執行檔'), hstate.executables.map(({ path }) => path), hstate.executablePath, (value) => { hstate.executablePath = value; hstate.plan = null; render(); }) : h('p', { class: 'unavailable-note' }, ollamaText('No allowlisted installed executable was detected for this profile. Install its supported desktop application, then detect again.', '呢個設定檔未偵測到已允許嘅安裝執行檔。請先安裝支援嘅桌面應用程式，再偵測一次。')),
+    h('div', { class: 'field' }, h('span', {}, ollamaText('Workspace folder', '工作區資料夾').toUpperCase()), h('div', { class: 'btnrow' }, h('output', { class: 'field-value' }, hstate.workspaceFolder || ollamaText('No workspace folder selected', '未揀工作資料夾')), h('button', { class: 'btn outlined', disabled: hstate.busy, onclick: async () => { const folder = await bridge().ollamaHarnessPickWorkspace(); if (folder !== null) { hstate.workspaceFolder = folder; hstate.plan = null; render(); } } }, ollamaText('Browse folder', '瀏覽資料夾')))),
+    hstate.message ? h('p', { class: 'unavailable-note', role: 'status' }, hstate.message) : null,
+    h('pre', { class: 'ollama-plan' }, hstate.plan ? JSON.stringify(hstate.plan, null, 2) : ollamaText('Detect a supported installed executable, then preview the fixed executable identity, loopback environment, exact arguments, and rollback snapshot.', '先偵測支援嘅已安裝執行檔，再預覽固定執行檔身份、loopback 環境、精確引數同回復快照。')));
 }
 
 function converterText(en: string, yue: string): string {

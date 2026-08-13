@@ -11,7 +11,7 @@ import type {
   PersonalVocabularyState, PersonalVocabularyUploadResult, Preferences, RunKind, SchoolModeChangeResult,
   ScheduledSettingsState, SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateRestartRequest, UpdateRestartResult, UpdateStatus, WinutilCatalog, DimSumStartupPresentation, FileConverterSurfaceState, AppLogoRuntimeSnapshot,
 } from '../shared/types';
-import type { OllamaCatalogSnapshot, OllamaChatRequest, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress } from '../shared/ollama-suite';
+import type { OllamaCatalogSnapshot, OllamaChatRequest, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress, OllamaHarnessPlan, OllamaHarnessPreflightRequest, OllamaHarnessProfileId, OllamaHarnessRestoreResult, OllamaHarnessLaunchResult, OllamaHarnessExecutable } from '../shared/ollama-suite';
 import { resolvePackageRequest, validateCatalog, wingetArgs } from './package-policy';
 import { AUTHENTICATOR_PNG_LIMITS, AuthenticatorService } from './authenticator-service';
 import { PersonalVocabularyStore } from './personal-vocabulary-store';
@@ -34,6 +34,7 @@ import { AppLogoService } from './app-logo-service';
 import { APP_LOGO_LIMITS, validateAppLogoTransform, type AppLogoPresetId, type AppLogoTransform } from '../shared/app-logo';
 import { OllamaSuiteService } from './ollama-suite-service';
 import { OllamaHardwareService } from './ollama-hardware-service';
+import { OllamaHarnessService } from './ollama-harness-service';
 
 const ROOT = path.join(__dirname, '..', '..');
 const CONFIG_DIR = path.join(__dirname, '..', 'config');
@@ -59,6 +60,7 @@ let fileConverterService: FileConverterService | null = null;
 let appLogoService: AppLogoService | null = null;
 let ollamaSuiteService: OllamaSuiteService | null = null;
 let ollamaHardwareService: OllamaHardwareService | null = null;
+let ollamaHarnessService: OllamaHarnessService | null = null;
 let lastExportPath = '';
 let historyUnlockedUntil = 0;
 const HISTORY_CREDENTIAL_TARGET = 'history-manager-primary';
@@ -1137,6 +1139,11 @@ function ollamaHardware(): OllamaHardwareService {
   return ollamaHardwareService;
 }
 
+function ollamaHarness(): OllamaHarnessService {
+  if (!ollamaHarnessService) throw new Error('The local Ollama harness service is unavailable.');
+  return ollamaHarnessService;
+}
+
 ipcMain.handle('ollama:health', async (event): Promise<OllamaHealthSnapshot> => {
   requireTrustedSender(event); return ollamaSuite().health();
 });
@@ -1181,6 +1188,23 @@ ipcMain.handle('ollama:cancel-chat', (event): boolean => { requireTrustedSender(
 ipcMain.handle('ollama:export-chat', (event, request: unknown, variant: unknown) => {
   requireTrustedSender(event); void variant; return ollamaSuite().exportChat(request as OllamaChatRequest);
 });
+ipcMain.handle('ollama:harness-executables', async (event, profileId: unknown): Promise<OllamaHarnessExecutable[]> => {
+  requireTrustedSender(event); return ollamaHarness().detectedExecutables(profileId);
+});
+ipcMain.handle('ollama:harness-pick-workspace', async (event): Promise<string | null> => {
+  requireTrustedSender(event);
+  const result = await dialog.showOpenDialog(win ?? undefined, { title: 'Choose harness workspace folder', properties: ['openDirectory', 'createDirectory'] });
+  return result.canceled ? null : result.filePaths[0] ?? null;
+});
+ipcMain.handle('ollama:harness-preflight', async (event, request: unknown): Promise<OllamaHarnessPlan> => {
+  requireTrustedSender(event); return ollamaHarness().preflight(request as OllamaHarnessPreflightRequest);
+});
+ipcMain.handle('ollama:harness-launch', async (event, plan: unknown): Promise<OllamaHarnessLaunchResult> => {
+  requireTrustedSender(event); return ollamaHarness().launch(plan);
+});
+ipcMain.handle('ollama:harness-restore', (event, plan: unknown): OllamaHarnessRestoreResult => {
+  requireTrustedSender(event); return ollamaHarness().restore(plan);
+});
 
 app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
@@ -1216,6 +1240,10 @@ app.whenReady().then(async () => {
     },
   });
   ollamaHardwareService = new OllamaHardwareService();
+  ollamaHarnessService = new OllamaHarnessService({
+    resolveVariant: (model) => ollamaSuite().verifiedHarnessVariant(model),
+    health: () => ollamaSuite().health(),
+  });
   await ollamaSuiteService.load();
   createWindow();
   win?.setTitle(initialSettings.displayName.displayName);

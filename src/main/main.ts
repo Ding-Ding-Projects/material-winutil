@@ -543,12 +543,26 @@ async function readHistoryBounded(): Promise<HistoryEntry[]> {
   }
 }
 
-interface RedactedHistorySnapshot {
-  entries: HistoryEntry[];
+interface RedactedHistoryEntry extends Record<string, JsonValue> {
+  id: string;
+  action: string;
+  detail: string;
+  at: string;
+}
+
+interface RedactedHistorySnapshot extends Record<string, JsonValue> {
+  entries: RedactedHistoryEntry[];
 }
 
 function redactedHistorySnapshot(entries: readonly HistoryEntry[]): RedactedHistorySnapshot {
-  return { entries: entries.map((entry) => ({ ...entry })) };
+  return {
+    entries: entries.map((entry) => ({
+      id: entry.id,
+      action: entry.action,
+      detail: entry.detail,
+      at: entry.at,
+    })),
+  };
 }
 
 function projectRedactedHistorySnapshot(value: unknown): RedactedHistorySnapshot {
@@ -557,9 +571,18 @@ function projectRedactedHistorySnapshot(value: unknown): RedactedHistorySnapshot
   if (Object.keys(record).length !== 1 || !Array.isArray(record.entries) || record.entries.length > MAX_HISTORY_ENTRIES) {
     throw new Error('The selected history revision has an invalid restorable state.');
   }
-  const entries = record.entries.map((entry) => projectHistoryEntry(entry));
-  if (entries.some((entry) => entry === null)) throw new Error('The selected history revision contains invalid redacted entries.');
-  return { entries: entries as HistoryEntry[] };
+  const entries: RedactedHistoryEntry[] = [];
+  for (const value of record.entries) {
+    const entry = projectHistoryEntry(value);
+    if (!entry) throw new Error('The selected history revision contains invalid redacted entries.');
+    entries.push({
+      id: entry.id,
+      action: entry.action,
+      detail: entry.detail,
+      at: entry.at,
+    });
+  }
+  return { entries };
 }
 
 async function replaceHistoryEntries(entries: readonly HistoryEntry[]): Promise<void> {

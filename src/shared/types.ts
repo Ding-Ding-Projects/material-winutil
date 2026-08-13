@@ -119,11 +119,11 @@ export interface WorkspaceTab {
 }
 
 export interface AppearanceOverride {
-  accent?: string;
-  font?: string;
-  radius?: number;
-  scale?: number;
-  weight?: number;
+  accent: string;
+  font: string;
+  radius: number;
+  scale: number;
+  weight: number;
 }
 
 export interface Preferences {
@@ -143,6 +143,7 @@ export interface Preferences {
   radius: number;
   reducedMotion: boolean;
   exportFormat: ExportFormat;
+  appearanceOverrides: Readonly<Record<string, AppearanceOverride>>;
 }
 
 export interface AppearanceThemeValues {

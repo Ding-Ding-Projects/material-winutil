@@ -289,6 +289,32 @@ function projectPreferences(value: unknown): Preferences | null {
   const input = value as Record<string, unknown>;
   const isNumber = (key: string, min: number, max: number): boolean =>
     typeof input[key] === 'number' && Number.isFinite(input[key]) && Number(input[key]) >= min && Number(input[key]) <= max;
+  const rawOverrides = input.appearanceOverrides;
+  const appearanceOverrides: Record<string, Preferences['appearanceOverrides'][string]> = {};
+  if (rawOverrides !== undefined) {
+    if (!rawOverrides || typeof rawOverrides !== 'object' || Array.isArray(rawOverrides)) return null;
+    const entries = Object.entries(rawOverrides as Record<string, unknown>);
+    if (entries.length > 256) return null;
+    for (const [id, value] of entries) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id)
+        || !value || typeof value !== 'object' || Array.isArray(value)) return null;
+      const override = value as Record<string, unknown>;
+      if (Object.keys(override).some((key) => !['accent', 'font', 'radius', 'scale', 'weight'].includes(key))
+        || typeof override.accent !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(override.accent)
+        || typeof override.font !== 'string' || override.font.length < 1 || override.font.length > 120
+        || /[\u0000-\u001F\u007F;{}<>"'\\]/.test(override.font)
+        || typeof override.radius !== 'number' || !Number.isFinite(override.radius) || override.radius < 0 || override.radius > 64
+        || typeof override.scale !== 'number' || !Number.isFinite(override.scale) || override.scale < 0.5 || override.scale > 3
+        || typeof override.weight !== 'number' || !Number.isFinite(override.weight) || override.weight < 100 || override.weight > 1000) return null;
+      appearanceOverrides[id] = {
+        accent: override.accent,
+        font: override.font,
+        radius: override.radius,
+        scale: override.scale,
+        weight: override.weight,
+      };
+    }
+  }
   if (!['light', 'dark'].includes(String(input.theme))
     || !['comfortable', 'compact'].includes(String(input.density))
     || !['English', 'Yue', 'Bilingual'].includes(String(input.language))
@@ -310,6 +336,7 @@ function projectPreferences(value: unknown): Preferences | null {
     enFunny: Number(input.enFunny), yueFunny: Number(input.yueFunny),
     accent: input.accent, font: input.font, scale: Number(input.scale), weight: Number(input.weight),
     radius: Number(input.radius), reducedMotion: input.reducedMotion, exportFormat: input.exportFormat as ExportFormat,
+    appearanceOverrides,
   };
 }
 
@@ -1485,7 +1512,7 @@ app.whenReady().then(async () => {
   basePreferences = persistedPreferences ?? {
     theme: 'dark', density: 'comfortable', language: 'English', narrator: 'English', narratorEnabled: false,
     narratorQuiet: false, narratorReducedSound: false, enFunny: 3, yueFunny: 4, accent: '#6750A4',
-    font: 'Segoe UI Variable', scale: 1, weight: 400, radius: 16, reducedMotion: false, exportFormat: 'md',
+    font: 'Segoe UI Variable', scale: 1, weight: 400, radius: 16, reducedMotion: false, exportFormat: 'md', appearanceOverrides: {},
   };
   settingsSurfaceService = new SettingsSurfaceService({
     userDataDirectory: USER_DIR(), sharedAppDataDirectory: sharedAppDataDirectory(),

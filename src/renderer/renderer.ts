@@ -12,6 +12,7 @@ type LanguageMode = 'English' | 'Yue' | 'Bilingual';
 type TabDock = 'left' | 'right' | 'top' | 'bottom';
 type AppearanceColorSpace = 'hex' | 'rgb' | 'hsl' | 'hsv' | 'hwb' | 'lab' | 'lch' | 'oklab' | 'oklch' | 'cmyk';
 type AppearanceColorValue = { space: AppearanceColorSpace; [channel: string]: string | number | undefined };
+interface AppearanceOverride { accent: string; font: string; radius: number; scale: number; weight: number; }
 interface AppearanceColorConversion {
   value: AppearanceColorValue;
   inGamut: boolean;
@@ -179,7 +180,7 @@ interface Prefs {
   narrator: 'English' | 'Yue' | 'Both'; narratorEnabled: boolean; narratorQuiet: boolean; narratorReducedSound: boolean;
   enFunny: number; yueFunny: number; accent: string; font: string;
   scale: number; weight: number; radius: number; reducedMotion: boolean; exportFormat: string;
-  tabDock: TabDock;
+  tabDock: TabDock; appearanceOverrides: Record<string, AppearanceOverride>;
 }
 interface SearchState { text: string; regex: boolean; flags: string; }
 type OfflineDocInlineNode =
@@ -690,6 +691,7 @@ const DEFAULT_PREFS: Prefs = {
   narratorQuiet: false, narratorReducedSound: false,
   enFunny: 3, yueFunny: 4, accent: '#6750A4', font: 'Segoe UI Variable', scale: 1, weight: 400, radius: 16,
   reducedMotion: false, exportFormat: 'md', tabDock: 'left',
+  appearanceOverrides: {},
 };
 
 const makeSearchState = (): SearchState => ({ text: '', regex: false, flags: 'iu' });
@@ -740,7 +742,8 @@ const state = {
   },
   dlgSelected: new Set<string>(),
   appearanceTarget: { id: 'app-root', label: 'Application root' },
-  appearanceOverrides: {} as Record<string, { accent: string; font: string; radius: number; scale: number; weight: number }>,
+  appearanceOverrides: {} as Record<string, AppearanceOverride>,
+  appearanceDraft: null as AppearanceOverride | null,
   appearanceThemes: { data: { schemaVersion: 1, themes: [] } as AppearanceThemeDocument, loading: false, error: '', draftName: '' },
   gate: { left: false, right: false, slider: 0, action: '', kind: null as RunKind | null, ids: null as string[] | null, after: null as null | (() => void) },
   queue: { active: false, index: 0, total: 0, current: '', log: [] as string[] },
@@ -1226,6 +1229,33 @@ function lighten(hex: string, amount = 0.55): string {
   return '#' + ch.map((c) => c.toString(16).padStart(2, '0')).join('');
 }
 
+function appearanceTargetId(targetId: string): string {
+  const normalized = targetId.replace(/[^A-Za-z0-9._:-]/gu, '-').replace(/-+/gu, '-').replace(/^-+|-+$/gu, '').slice(0, 128);
+  return /^[A-Za-z0-9]/u.test(normalized) ? normalized : `element-${normalized || 'target'}`;
+}
+
+function appearanceStyleFor(override: AppearanceOverride | undefined): string {
+  if (!override) return '';
+  return `--appearance-accent:${override.accent};--appearance-radius:${override.radius}px;--appearance-scale:${override.scale};--appearance-weight:${override.weight};--appearance-font:${JSON.stringify(override.font)}`;
+}
+
+function appearanceStyle(targetId: string): string { return appearanceStyleFor(state.appearanceOverrides[appearanceTargetId(targetId)]); }
+
+function applyAppearanceDraft(): void {
+  const targetId = state.appearanceTarget.id;
+  const style = appearanceStyleFor(state.appearanceDraft ?? undefined);
+  const element = targetId === 'app-root' ? $('#app') : document.querySelector<HTMLElement>(`[data-appearance-target="${targetId}"]`);
+  if (!element) return;
+  if (style) element.setAttribute('style', style);
+  else element.removeAttribute('style');
+}
+
+function appearanceAttrs(targetId: string, attrs: Record<string, unknown> = {}): Record<string, unknown> {
+  const safeTargetId = appearanceTargetId(targetId);
+  const style = appearanceStyle(targetId);
+  return { ...attrs, 'data-appearance-target': safeTargetId, ...(style ? { style: attrs.style ? `${String(attrs.style)};${style}` : style } : {}) };
+}
+
 function applyPrefs(persist = false): void {
   const r = document.documentElement;
   const p = state.prefs;
@@ -1238,7 +1268,8 @@ function applyPrefs(persist = false): void {
   r.style.setProperty('font-size', `${Math.round(14 * p.scale)}px`);
   document.body.style.fontFamily = `${p.font}, "Segoe UI", system-ui, sans-serif`;
   document.body.style.fontWeight = String(p.weight);
-  if (persist) void bridge().writePrefs(p);
+  state.appearanceOverrides = { ...p.appearanceOverrides };
+  if (persist) void bridge().writePrefs({ ...p, appearanceOverrides: { ...state.appearanceOverrides } });
   persistWorkspace();
   try { localStorage.setItem('winutil.profiles', JSON.stringify(state.profiles)); } catch { /* profiles stay in memory */ }
 }
@@ -1345,6 +1376,13 @@ function render(): void {
   applyPrefs(false);
   const root = $('#app');
   if (!root) return;
+  const rootStyle = appearanceStyle('app-root');
+  root.dataset.appearanceTarget = 'app-root';
+  if (rootStyle) {
+    root.setAttribute('style', rootStyle);
+  } else {
+    root.removeAttribute('style');
+  }
   root.replaceChildren(appBar(), h('div', { class: `body${state.drawerCollapsed ? ' drawer-collapsed' : ''}` }, drawer(), content(), sideRail()));
   if (state.dimSumStartup) root.appendChild(dimSumStartupCard(state.dimSumStartup));
   if (state.dialog) root.appendChild(dialogLayer());
@@ -1436,7 +1474,7 @@ function drawer(): HTMLElement {
     const label = viewTitle(item.id);
     if (!match(`${item.label} ${label}`)) continue;
     const count = countFor(item.id);
-    nodes.push(h('button', {
+    nodes.push(h('button', appearanceAttrs(`nav-${item.id}`, {
       class: `nav-item${state.view === item.id ? ' active' : ''}`, title: label, onclick: () => go(item.id),
       oncontextmenu: ctx(`nav-${item.id}`, () => [
         { icon: 'open_in_new', label: `Open ${item.label}`, act: () => go(item.id) },
@@ -1446,13 +1484,13 @@ function drawer(): HTMLElement {
         { icon: 'palette', label: 'Edit this destination’s appearance…', act: () => openAppearance(`nav-${item.id}`, item.label) },
         { icon: 'lock', label: `Lock ${item.label}…`, act: () => openLockWizard(`nav-${item.id}`, `Destination · ${item.label}`) },
       ], item.label),
-    }, icon(item.icon), h('b', {}, label), count ? h('span', { class: 'nav-count' }, count) : null));
+    }), icon(item.icon), h('b', {}, label), count ? h('span', { class: 'nav-count' }, count) : null));
   }
   return h('nav', { id: 'primary-navigation', class: 'drawer', 'aria-label': t('searchDestinations') }, ...nodes);
 }
 
 function content(): HTMLElement {
-  return h('section', { class: `content tab-dock-${state.prefs.tabDock}` },
+  return h('section', appearanceAttrs('workspace', { class: `content tab-dock-${state.prefs.tabDock}` }),
     tabStrip(), actionToolbar(), workspacePanels());
 }
 
@@ -1470,10 +1508,10 @@ function workspacePanels(): HTMLElement {
 
 function tabStrip(): HTMLElement {
   const vertical = state.prefs.tabDock === 'left' || state.prefs.tabDock === 'right';
-  const strip = h('div', {
+  const strip = h('div', appearanceAttrs('tabstrip', {
     class: 'tabstrip', role: 'tablist', 'aria-label': t('openWorkspaceTabs'),
     'aria-orientation': vertical ? 'vertical' : 'horizontal',
-  });
+  }));
   const activate = (tab: WorkspaceTab, focus = false): void => {
     if (tab.locked) { openLockWizard(`tab-${tab.id}`, `Tab · ${viewTitle(tab.view)}`, 'unlock'); return; }
     state.activeTab = tab.id;
@@ -1486,7 +1524,7 @@ function tabStrip(): HTMLElement {
   for (const tab of state.tabs) {
     const label = viewTitle(tab.view);
     const navItem = NAV.find((n) => 'id' in n && n.id === tab.view) as { icon: string } | undefined;
-    strip.appendChild(h('button', {
+    strip.appendChild(h('button', appearanceAttrs(`tab-${tab.id}`, {
       type: 'button', id: `workspace-tab-${tab.id}`, 'aria-controls': `workspace-panel-${tab.id}`,
       class: `wtab${state.activeTab === tab.id ? ' active' : ''}`, title: label,
       role: 'tab', tabindex: state.activeTab === tab.id ? '0' : '-1',
@@ -1506,7 +1544,7 @@ function tabStrip(): HTMLElement {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(tab); }
       },
       oncontextmenu: (e: MouseEvent) => { e.preventDefault(); tabMenu(tab, e.clientX, e.clientY); },
-    },
+    }),
       icon(navItem?.icon ?? 'tab'),
       tab.pinned ? icon('push_pin', 'pin') : null,
       tab.locked ? icon('lock', 'pin') : null,
@@ -1537,7 +1575,7 @@ function tabStrip(): HTMLElement {
 function actionToolbar(): HTMLElement {
   const left = h('div', { class: 'toolbar-left' });
   const right = h('div', { class: 'toolbar-right' });
-  const bar = h('div', {
+  const bar = h('div', appearanceAttrs('toolbar', {
     class: 'toolbar',
     oncontextmenu: ctx('toolbar', () => [
       ...bulkItems(allIdsInView(), 'row(s)'),
@@ -1547,7 +1585,7 @@ function actionToolbar(): HTMLElement {
       { icon: 'palette', label: 'Edit the toolbar appearance…', act: () => openAppearance('toolbar', 'Toolbar') },
       { icon: 'lock', label: 'Lock this toolbar…', act: () => openLockWizard('toolbar', 'Toolbar') },
     ], 'Toolbar'),
-  }, left, right);
+  }), left, right);
 
   if (state.reading) {
     left.appendChild(h('button', { class: 'icon-btn', title: 'Back to list', onclick: () => { state.reading = null; render(); } }, icon('arrow_back')));
@@ -1677,19 +1715,19 @@ function sideRail(): HTMLElement {
     ['pin', 'Authenticator', () => openDialog('auth'), state.dialog === 'auth'],
     ['inbox', 'Notification centre', () => openDialog('notifications'), state.dialog === 'notifications'],
   ];
-  const rail = h('aside', {
+  const rail = h('aside', appearanceAttrs('siderail', {
     class: 'siderail',
     oncontextmenu: ctx('siderail', () => items.map(([ic, title, act]) => ({ icon: ic, label: title, act })), 'Tools'),
-  });
+  }));
   items.forEach(([ic, title, act, active], i) => {
-    rail.appendChild(h('button', {
+    rail.appendChild(h('button', appearanceAttrs(`rail-${ic}`, {
       class: `icon-btn${active ? ' active' : ''}`, title, onclick: act,
       oncontextmenu: ctx(`rail-${ic}`, () => [
         { icon: ic, label: title, act },
         { icon: 'palette', label: 'Edit this button’s appearance…', act: () => openAppearance(`rail-${ic}`, title) },
         { icon: 'lock', label: `Lock ${title}…`, act: () => openLockWizard(`rail-${ic}`, title) },
       ], title),
-    }, icon(ic)));
+    }), icon(ic)));
     if (i === 2 || i === 5) rail.appendChild(h('div', { class: 'sep' }));
   });
   rail.appendChild(h('div', { style: 'flex:1' }));
@@ -2276,7 +2314,7 @@ function rowNode(opts: {
 }): HTMLElement {
   const on = state.selected.has(opts.id);
   const tint = on ? state.rowColors[opts.id] ?? state.selectionColor : '';
-  const row = h('div', {
+  const row = h('div', appearanceAttrs(`row-${opts.id}`, {
     class: `row${on ? ' selected' : ''}`,
     style: tint ? `--tint:${tint}` : '',
     role: 'group', tabindex: '0', 'aria-label': `${opts.primary}. ${opts.snippet}`,
@@ -2297,7 +2335,7 @@ function rowNode(opts: {
       { icon: 'lock', label: 'Lock this row…', act: () => openLockWizard(`row-${opts.id}`, opts.primary) },
       ...bulkItems(allIdsInView(), 'row(s)'),
     ], opts.primary),
-  });
+  }));
   if (opts.selectable !== false) {
     row.appendChild(h('span', {
       class: 'cb', role: 'checkbox', tabindex: '0', 'aria-label': `Select ${opts.primary}`,
@@ -2347,7 +2385,7 @@ function installPane(): HTMLElement {
     h('div', { class: 'pane-head' },
       searchLine('install-cats', t('searchCategories')),
       h('div', { class: 'chips' },
-        ...APP_CATS.filter(chipMatch).map((c) => h('button', {
+        ...APP_CATS.filter(chipMatch).map((c) => h('button', appearanceAttrs(`chip-${c}`, {
           class: `chip${state.chips.has(c) ? ' on' : ''}`,
           title: t('chipHint'),
           onclick: (e: MouseEvent) => toggleChip(c, e.ctrlKey || e.metaKey),
@@ -2360,7 +2398,7 @@ function installPane(): HTMLElement {
             { icon: 'palette', label: t('editChip'), act: () => openAppearance(`chip-${c}`, `Chip · ${c}`) },
             { icon: 'lock', label: t('lockFilter', { category: categoryLabel(c) }), act: () => openLockWizard(`chip-${c}`, `Filter chip · ${c}`) },
           ], c),
-        }, state.chips.has(c) ? icon('check') : null, categoryLabel(c))))),
+        }), state.chips.has(c) ? icon('check') : null, categoryLabel(c))))),
     list);
 }
 
@@ -2372,7 +2410,7 @@ function checklistPane(source: WinutilTweak[], showPresets: boolean): HTMLElemen
     const presetRow = h('div', { class: 'chips' });
     for (const name of Object.keys(state.catalog.presets)) {
       const size = (state.catalog.presets[name] ?? []).length;
-      presetRow.appendChild(h('button', {
+      presetRow.appendChild(h('button', appearanceAttrs(`preset-${name}`, {
         class: 'btn tonal', title: `${size} tweak(s)`,
         onclick: () => applyPreset(name),
         oncontextmenu: ctx(`preset-${name}`, () => [
@@ -2385,7 +2423,7 @@ function checklistPane(source: WinutilTweak[], showPresets: boolean): HTMLElemen
           { icon: 'lock', label: `Lock the ${name} preset…`, act: () => openLockWizard(`preset-${name}`, `Preset · ${name}`) },
           { icon: 'palette', label: 'Edit this button’s appearance…', act: () => openAppearance(`preset-${name}`, `Preset · ${name}`) },
         ], name),
-      }, icon('checklist'), h('span', {}, name),
+      }), icon('checklist'), h('span', {}, name),
         h('span', { class: 'chip-inline' }, String(size))));
     }
     presetRow.appendChild(h('button', {
@@ -2405,7 +2443,7 @@ function checklistPane(source: WinutilTweak[], showPresets: boolean): HTMLElemen
     const key = `group:${group.name}`;
     const inner = makeMatcher(sq(key));
     const items = group.items.filter((i) => inner(`${i.name} ${i.desc} ${i.id}`));
-    pane.appendChild(h('div', {
+    pane.appendChild(h('div', appearanceAttrs(`group-${group.name}`, {
       class: 'group-head',
       oncontextmenu: ctx(`grouphead-${group.name}`, () => [
         { icon: collapsed ? 'expand_more' : 'expand_less', label: collapsed ? 'Expand this category' : 'Collapse this category', act: () => { collapsed ? state.collapsedGroups.delete(group.name) : state.collapsedGroups.add(group.name); } },
@@ -2417,7 +2455,7 @@ function checklistPane(source: WinutilTweak[], showPresets: boolean): HTMLElemen
         { icon: 'lock', label: 'Lock this category…', act: () => openLockWizard(`group-${group.name}`, `Category · ${group.name.replace(/^z__/, '')}`) },
         { icon: 'download', label: 'Export this category', act: () => openDialog('export') },
       ], group.name.replace(/^z__/, '')),
-    },
+    }),
       h('button', {
         class: 'group-toggle',
         onclick: () => { collapsed ? state.collapsedGroups.delete(group.name) : state.collapsedGroups.add(group.name); render(); },
@@ -3123,7 +3161,7 @@ function offlineArticlePane(article: OfflineDocArticle): HTMLElement {
 /* --------------------------------------------------------- small pieces -- */
 
 function card(title: string, eyebrow: string, kids: Array<Node | null>, cls = ''): HTMLElement {
-  return h('article', {
+  return h('article', appearanceAttrs(`card-${title}`, {
     class: `card ${cls}`.trim(),
     oncontextmenu: ctx(`card-${title}`, () => [
       { icon: 'palette', label: 'Edit this card’s appearance…', act: () => openAppearance(`card-${title}`, title) },
@@ -3131,7 +3169,7 @@ function card(title: string, eyebrow: string, kids: Array<Node | null>, cls = ''
       { icon: 'download', label: 'Export this view', act: () => openDialog('export') },
       { icon: 'refresh', label: 'Refresh', act: () => void refresh() },
     ], title),
-  },
+  }),
     h('div', { class: 'card-head' },
       h('div', {}, eyebrow ? h('p', { class: 'eyebrow' }, eyebrow) : null, h('h2', {}, title)),
       h('button', {
@@ -3568,11 +3606,12 @@ const closeDialog = (): void => {
 };
 
 function openAppearance(id: string, label: string): void {
-  state.appearanceTarget = { id, label };
-  state.appearanceOverrides[id] = state.appearanceOverrides[id] ?? {
+  const targetId = appearanceTargetId(id);
+  state.appearanceTarget = { id: targetId, label };
+  state.appearanceDraft = { ...(state.appearanceOverrides[targetId] ?? {
     accent: state.prefs.accent, font: state.prefs.font, radius: state.prefs.radius,
     scale: state.prefs.scale, weight: state.prefs.weight,
-  };
+  }) };
   openDialog('appearance');
 }
 
@@ -4133,23 +4172,32 @@ function tabsDialog(): HTMLElement {
 
 function appearanceDialog(): HTMLElement {
   const target = state.appearanceTarget;
-  const o = state.appearanceOverrides[target.id];
+  const o = state.appearanceDraft;
+  if (!o) { closeDialog(); return h('div'); }
+  const update = (change: (draft: AppearanceOverride) => void): void => { change(o); applyAppearanceDraft(); };
   return dialogShell('Element appearance', 'Edit appearance', [
     h('p', { style: 'font-size:12.5px;color:var(--md-sys-color-on-surface-variant);margin-bottom:14px' },
       `Target: ${target.label} · id ${target.id}. Shift+right-click any tab or group header reaches this editor directly.`),
     h('div', { class: 'grid2' },
-      colorField('Accent color', o.accent, (v) => { o.accent = v; }),
-      selectField('Font family', ['Segoe UI Variable', 'Segoe UI', 'Arial', 'Consolas', 'Georgia'], o.font, (v) => { o.font = v; }),
-      rangeField('Corner radius', 8, 32, 1, o.radius, (v) => { o.radius = v; }),
-      rangeField('Font scale', 0.9, 1.3, 0.05, o.scale, (v) => { o.scale = v; }),
-      rangeField('Font weight', 300, 700, 100, o.weight, (v) => { o.weight = v; })),
+      colorField('Accent color', o.accent, (v) => update((draft) => { draft.accent = v; })),
+      selectField('Font family', ['Segoe UI Variable', 'Segoe UI', 'Arial', 'Consolas', 'Georgia'], o.font, (v) => update((draft) => { draft.font = v; })),
+      rangeField('Corner radius', 8, 32, 1, o.radius, (v) => update((draft) => { draft.radius = v; })),
+      rangeField('Font scale', 0.9, 1.3, 0.05, o.scale, (v) => update((draft) => { draft.scale = v; })),
+      rangeField('Font weight', 300, 700, 100, o.weight, (v) => update((draft) => { draft.weight = v; }))),
   ], [
-    h('button', { class: 'btn text', onclick: closeDialog }, 'Cancel'),
-    h('button', { class: 'btn outlined', onclick: () => { delete state.appearanceOverrides[target.id]; closeDialog(); snack('Element reset to the inherited appearance.'); } }, 'Reset element'),
+    h('button', { class: 'btn text', onclick: () => { state.appearanceDraft = null; render(); closeDialog(); } }, 'Cancel'),
+    h('button', { class: 'btn outlined', onclick: () => { delete state.appearanceOverrides[target.id]; state.appearanceDraft = null; state.prefs.appearanceOverrides = { ...state.appearanceOverrides }; savePrefs(); closeDialog(); snack('Element reset to the inherited appearance.'); } }, 'Reset element'),
     h('button', { class: 'btn tonal', onclick: () => openDialog('appearance-themes') }, 'Save named theme'),
     h('button', {
       class: 'btn filled',
-      onclick: () => { if (target.id === 'app-root') { state.prefs.accent = o.accent; state.prefs.font = o.font; state.prefs.radius = o.radius; state.prefs.scale = o.scale; state.prefs.weight = o.weight; savePrefs(); } closeDialog(); snack('Appearance applied and persisted.'); },
+      onclick: () => {
+        state.appearanceOverrides[target.id] = { ...o };
+        state.prefs.appearanceOverrides = { ...state.appearanceOverrides };
+        if (target.id === 'app-root') {
+          state.prefs.accent = o.accent; state.prefs.font = o.font; state.prefs.radius = o.radius; state.prefs.scale = o.scale; state.prefs.weight = o.weight;
+        }
+        state.appearanceDraft = null; savePrefs(); closeDialog(); snack('Appearance applied and persisted.');
+      },
     }, 'Apply appearance'),
   ]);
 }

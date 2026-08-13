@@ -107,6 +107,36 @@ code, pre, kbd, .mono { font-family: ui-monospace, Consolas, monospace; }
 /* ---------------------------------------------------------------- shell -- */
 #app { display: grid; grid-template-rows: 64px 1fr; height: 100vh; }
 
+/* Per-element values are emitted only by the validated renderer preference path.
+   These variables deliberately affect the real target, not a preview surrogate. */
+[data-appearance-target] {
+  --appearance-accent: var(--md-sys-color-primary);
+  --appearance-radius: var(--shape-l);
+  --appearance-scale: 1;
+  --appearance-weight: inherit;
+  --appearance-font: inherit;
+  font-family: var(--appearance-font), "Segoe UI", system-ui, sans-serif;
+  font-weight: var(--appearance-weight);
+}
+#app[data-appearance-target="app-root"] {
+  --md-sys-color-primary: var(--appearance-accent);
+  --shape-l: var(--appearance-radius);
+  font-size: calc(1em * var(--appearance-scale));
+}
+.nav-item[data-appearance-target], .wtab[data-appearance-target], .row[data-appearance-target],
+.chip[data-appearance-target], .card[data-appearance-target], .toolbar[data-appearance-target],
+.tabstrip[data-appearance-target], .siderail[data-appearance-target], .group-head[data-appearance-target] {
+  border-radius: var(--appearance-radius);
+  font-size: calc(1em * var(--appearance-scale));
+}
+.nav-item[data-appearance-target], .wtab[data-appearance-target], .chip[data-appearance-target],
+.toolbar[data-appearance-target], .tabstrip[data-appearance-target], .siderail[data-appearance-target] {
+  color: var(--appearance-accent);
+}
+.row[data-appearance-target], .card[data-appearance-target], .group-head[data-appearance-target] {
+  border-left: 3px solid var(--appearance-accent);
+}
+
 .appbar {
   display: flex; align-items: center; gap: 8px; padding: 0 8px 0 4px;
   background: var(--md-sys-color-surface); -webkit-app-region: drag;

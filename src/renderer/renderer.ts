@@ -1385,16 +1385,12 @@ function reapplyPersistedAppearanceOverrides(): void {
   for (const [targetId, element] of targets) {
     if (!element) continue;
     element.dataset.appearanceTarget = targetId;
-    const style = appearanceStyle(targetId);
-    if (style) element.setAttribute('style', style);
-    else element.removeAttribute('style');
+    setAppearanceVariables(element, state.appearanceOverrides[targetId]);
   }
   document.querySelectorAll<HTMLElement>('[data-appearance-target]').forEach((element) => {
     const targetId = element.getAttribute('data-appearance-target');
     if (!targetId || targetId === 'app-root') return;
-    const style = appearanceStyle(targetId);
-    if (style) element.setAttribute('style', style);
-    else element.removeAttribute('style');
+    setAppearanceVariables(element, state.appearanceOverrides[targetId]);
   });
 }
 
@@ -1540,13 +1536,8 @@ function render(): void {
   applyPrefs(false);
   const root = $('#app');
   if (!root) return;
-  const rootStyle = appearanceStyle('app-root');
   root.dataset.appearanceTarget = 'app-root';
-  if (rootStyle) {
-    root.setAttribute('style', rootStyle);
-  } else {
-    root.removeAttribute('style');
-  }
+  setAppearanceVariables(root, state.appearanceOverrides['app-root']);
   root.replaceChildren(appBar(), h('div', { class: `body${state.drawerCollapsed ? ' drawer-collapsed' : ''}` }, drawer(), content(), sideRail()));
   reapplyPersistedAppearanceOverrides();
   if (state.dimSumStartup) root.appendChild(dimSumStartupCard(state.dimSumStartup));

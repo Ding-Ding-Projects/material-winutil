@@ -421,17 +421,55 @@ export class OllamaSuiteService {
   private emit(item: OllamaPullProgress): void { this.dependencies.onPullProgress?.(structuredClone(item)); }
   private persistPulls(): Promise<void> { return this.atomicWrite(this.pullsFile, { schemaVersion: 1, items: this.pulls } satisfies PersistedPullState); }
 
-  private verifiedVariant(model: unknown): OllamaCatalogVariant {
+  private localInstalledVariant(qualifiedName: string, enrichment: OllamaInstalledEnrichment): OllamaCatalogVariant {
+    const separator = qualifiedName.lastIndexOf(':');
+    if (separator <= 0 || separator === qualifiedName.length - 1) {
+      throw new Error('The verified local model must include its installed tag.');
+    }
+    return {
+      model: qualifiedName.slice(0, separator),
+      tag: qualifiedName.slice(separator + 1),
+      qualifiedName,
+      digest: enrichment.digest,
+      blobSizeBytes: enrichment.sizeBytes,
+      parameterCount: null,
+      quantization: enrichment.quantization,
+      contextLength: null,
+      capabilities: [...enrichment.capabilities],
+      publishedAt: null,
+      sourceUrl: validateOllamaLocalUrl(new URL(OLLAMA_DOCUMENTED_ROUTES.show.path, `${OLLAMA_LOCAL_ORIGIN}/`).href, 'show').href,
+    };
+  }
+
+  private async verifiedVariant(model: unknown): Promise<OllamaCatalogVariant> {
     const qualifiedName = validateOllamaModelName(model);
-    if (!this.catalog?.complete) throw new Error('Chat and export require a complete verified official catalog.');
-    const variant = this.catalog.variants.find((candidate) => candidate.qualifiedName === qualifiedName);
-    if (!variant) throw new Error('The requested model is not in the current verified official catalog.');
-    return structuredClone(variant);
+    const health = await this.health();
+    if (health.state !== 'healthy' || !health.version) throw new Error('Chat and export require a healthy current local Ollama API.');
+
+    if (this.catalog?.complete) {
+      const variant = this.catalog.variants.find((candidate) => candidate.qualifiedName === qualifiedName);
+      if (!variant) throw new Error('The requested model is not in the current verified official catalog.');
+      return structuredClone(variant);
+    }
+
+    const snapshot = this.installedEnrichment;
+    if (!snapshot || !snapshot.complete || snapshot.stale || snapshot.skippedCount !== 0) {
+      throw new Error('Chat and export require a current complete installed-model enrichment when the official catalog is unavailable.');
+    }
+    if (snapshot.version !== health.version || snapshot.inventoryRevision !== this.installedRevision(health.version, health.installed)) {
+      throw new Error('The installed-model enrichment no longer matches the current local Ollama inventory. Refresh it before chatting or exporting.');
+    }
+    const installed = health.installed.find((candidate) => candidate.name === qualifiedName);
+    const enrichment = snapshot.models.find((candidate) => candidate.name === qualifiedName);
+    if (!installed || !enrichment || installed.digest !== enrichment.digest || installed.sizeBytes !== enrichment.sizeBytes) {
+      throw new Error('The selected local model is not verified against the current installed inventory. Refresh enrichment before chatting or exporting.');
+    }
+    return this.localInstalledVariant(qualifiedName, enrichment);
   }
 
   async chat(request: OllamaChatRequest, onChunk: (content: string) => void): Promise<OllamaChatRequest> {
     if (this.chatController) throw new Error('A chat request is already active.');
-    const variant = this.verifiedVariant(request?.model);
+    const variant = await this.verifiedVariant(request?.model);
     const validated = validateChatRequest(request, variant); const controller = new AbortController(); const deadline = Date.now() + this.timeouts.chat; this.chatController = controller;
     let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
     try {
@@ -465,7 +503,7 @@ export class OllamaSuiteService {
     }
   }
   cancelChat(): boolean { if (!this.chatController) return false; this.chatController.abort(new UserCancelledError('Chat cancelled by the user.')); return true; }
-  exportChat(request: OllamaChatRequest): ReturnType<typeof redactChatExport> {
-    return redactChatExport(validateChatRequest(request, this.verifiedVariant(request?.model)).messages);
+  async exportChat(request: OllamaChatRequest): Promise<ReturnType<typeof redactChatExport>> {
+    return redactChatExport(validateChatRequest(request, await this.verifiedVariant(request?.model)).messages);
   }
 }

@@ -1241,13 +1241,30 @@ function appearanceStyleFor(override: AppearanceOverride | undefined): string {
 
 function appearanceStyle(targetId: string): string { return appearanceStyleFor(state.appearanceOverrides[appearanceTargetId(targetId)]); }
 
+const APPEARANCE_STYLE_PROPERTIES = ['--appearance-accent', '--appearance-radius', '--appearance-scale', '--appearance-weight', '--appearance-font'] as const;
+
+function setAppearanceVariables(element: HTMLElement, override: AppearanceOverride | undefined): void {
+  if (!override) {
+    for (const property of APPEARANCE_STYLE_PROPERTIES) element.style.removeProperty(property);
+    return;
+  }
+  element.style.setProperty('--appearance-accent', override.accent);
+  element.style.setProperty('--appearance-radius', `${override.radius}px`);
+  element.style.setProperty('--appearance-scale', String(override.scale));
+  element.style.setProperty('--appearance-weight', String(override.weight));
+  element.style.setProperty('--appearance-font', JSON.stringify(override.font));
+}
+
 function applyAppearanceDraft(): void {
   const targetId = state.appearanceTarget.id;
-  const style = appearanceStyleFor(state.appearanceDraft ?? undefined);
   const element = targetId === 'app-root' ? $('#app') : document.querySelector<HTMLElement>(`[data-appearance-target="${targetId}"]`);
   if (!element) return;
-  if (style) element.setAttribute('style', style);
-  else element.removeAttribute('style');
+  setAppearanceVariables(element, state.appearanceDraft ?? undefined);
+}
+
+async function persistAppearanceOverrides(): Promise<void> {
+  state.prefs.appearanceOverrides = { ...state.appearanceOverrides };
+  await bridge().writePrefs({ ...state.prefs, appearanceOverrides: { ...state.appearanceOverrides } });
 }
 
 function appearanceAttrs(targetId: string, attrs: Record<string, unknown> = {}): Record<string, unknown> {
@@ -4186,17 +4203,48 @@ function appearanceDialog(): HTMLElement {
       rangeField('Font weight', 300, 700, 100, o.weight, (v) => update((draft) => { draft.weight = v; }))),
   ], [
     h('button', { class: 'btn text', onclick: () => { state.appearanceDraft = null; render(); closeDialog(); } }, 'Cancel'),
-    h('button', { class: 'btn outlined', onclick: () => { delete state.appearanceOverrides[target.id]; state.appearanceDraft = null; state.prefs.appearanceOverrides = { ...state.appearanceOverrides }; savePrefs(); closeDialog(); snack('Element reset to the inherited appearance.'); } }, 'Reset element'),
+    h('button', {
+      class: 'btn outlined',
+      onclick: async () => {
+        const previous = state.appearanceOverrides[target.id];
+        const previousPrefs = { ...state.prefs };
+        delete state.appearanceOverrides[target.id];
+        try {
+          await persistAppearanceOverrides();
+          state.appearanceDraft = null;
+          closeDialog();
+          snack('Element reset to the inherited appearance.');
+        } catch (error) {
+          if (previous) state.appearanceOverrides[target.id] = previous;
+          else delete state.appearanceOverrides[target.id];
+          state.prefs = previousPrefs;
+          applyAppearanceDraft();
+          snack(error instanceof Error ? error.message : 'Element appearance could not be reset.');
+        }
+      },
+    }, 'Reset element'),
     h('button', { class: 'btn tonal', onclick: () => openDialog('appearance-themes') }, 'Save named theme'),
     h('button', {
       class: 'btn filled',
-      onclick: () => {
+      onclick: async () => {
+        const previous = state.appearanceOverrides[target.id];
+        const previousPrefs = { ...state.prefs };
         state.appearanceOverrides[target.id] = { ...o };
-        state.prefs.appearanceOverrides = { ...state.appearanceOverrides };
         if (target.id === 'app-root') {
           state.prefs.accent = o.accent; state.prefs.font = o.font; state.prefs.radius = o.radius; state.prefs.scale = o.scale; state.prefs.weight = o.weight;
         }
-        state.appearanceDraft = null; savePrefs(); closeDialog(); snack('Appearance applied and persisted.');
+        try {
+          await persistAppearanceOverrides();
+          state.appearanceDraft = null;
+          closeDialog();
+          snack('Appearance applied and persisted.');
+        } catch (error) {
+          if (previous) state.appearanceOverrides[target.id] = previous;
+          else delete state.appearanceOverrides[target.id];
+          state.prefs = previousPrefs;
+          applyAppearanceDraft();
+          snack(error instanceof Error ? error.message : 'Element appearance could not be saved.');
+        }
       },
     }, 'Apply appearance'),
   ]);
@@ -5492,7 +5540,9 @@ function bindShortcuts(): void {
     const tab = (e.target as HTMLElement).closest('.wtab');
     if (!tab) return;
     e.preventDefault();
-    openAppearance('tab-direct', 'Tab (Shift+right-click)');
+    const targetId = tab.getAttribute('data-appearance-target');
+    if (!targetId) return;
+    openAppearance(targetId, 'Tab (Shift+right-click)');
   });
 }
 

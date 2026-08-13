@@ -658,6 +658,11 @@ input[type="range"].gradient::-webkit-slider-thumb { -webkit-appearance: none; a
 .ollama-model p { margin: 0; overflow-wrap: anywhere; }
 .ollama-queue-list { display: grid; gap: 10px; }
 .ollama-chat textarea { min-height: 92px; resize: vertical; }
+.ollama-session-panel, .ollama-session-editor { display: grid; gap: 12px; padding: 14px; border-radius: var(--shape-l); background: var(--md-sys-color-surface-container-low); }
+.ollama-session-list { display: grid; gap: 8px; max-height: 260px; overflow: auto; }
+.ollama-session { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: var(--shape-m); }
+.ollama-session.selected { border-color: var(--md-sys-color-primary); background: var(--md-sys-color-secondary-container); }
+.ollama-session small { display: block; color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
 .ollama-chat-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .ollama-chat-output, .ollama-plan { min-height: 120px; max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 14px; border-radius: var(--shape-l); background: var(--md-sys-color-surface-container-lowest); }
 

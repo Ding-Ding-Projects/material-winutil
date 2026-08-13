@@ -17,7 +17,7 @@ import type { DimSumSurpriseDescriptor } from './dim-sum-surprise';
 import type { ConverterAdapter, FileKind, QueueItemState, QueueState } from './file-converter';
 import type { AppLogoExportMetadata, AppLogoPersistedState, AppLogoPresetId, AppLogoTransform, AppLogoDerivedAsset } from './app-logo';
 import type {
-  OllamaCatalogSnapshot, OllamaCatalogVariant, OllamaChatAttachmentPickResult, OllamaChatExportResult, OllamaChatExportSaveRequest, OllamaChatRequest, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress,
+  OllamaCatalogSnapshot, OllamaCatalogVariant, OllamaChatAttachmentPickResult, OllamaChatExportResult, OllamaChatExportSaveRequest, OllamaChatRequest, OllamaChatSessionCreateRequest, OllamaChatSessionCreateResult, OllamaChatSessionDeleteRequest, OllamaChatSessionDeleteResult, OllamaChatSessionDetail, OllamaChatSessionGetRequest, OllamaChatSessionGetResult, OllamaChatSessionListRequest, OllamaChatSessionListResult, OllamaChatSessionRenameRequest, OllamaChatSessionRenameResult, OllamaChatSessionUpdateRequest, OllamaChatSessionUpdateResult, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress,
   OllamaHarnessExecutable, OllamaHarnessLaunchResult, OllamaHarnessPlan, OllamaHarnessPreflightRequest, OllamaHarnessProfileId, OllamaHarnessRestoreResult,
 } from './ollama-suite';
 
@@ -518,6 +518,12 @@ export interface Bridge {
   ollamaChat(request: OllamaChatRequest, variant: OllamaCatalogVariant): Promise<OllamaChatRequest>;
   ollamaCancelChat(): Promise<boolean>;
   ollamaExportChat(request: OllamaChatExportSaveRequest): Promise<OllamaChatExportResult>;
+  ollamaChatSessionList(request?: OllamaChatSessionListRequest): Promise<OllamaChatSessionListResult>;
+  ollamaChatSessionGet(request: OllamaChatSessionGetRequest): Promise<OllamaChatSessionGetResult>;
+  ollamaChatSessionCreate(request: OllamaChatSessionCreateRequest): Promise<OllamaChatSessionCreateResult>;
+  ollamaChatSessionUpdate(request: OllamaChatSessionUpdateRequest): Promise<OllamaChatSessionUpdateResult>;
+  ollamaChatSessionRename(request: OllamaChatSessionRenameRequest): Promise<OllamaChatSessionRenameResult>;
+  ollamaChatSessionDelete(request: OllamaChatSessionDeleteRequest): Promise<OllamaChatSessionDeleteResult>;
   ollamaHarnessExecutables(profileId: OllamaHarnessProfileId): Promise<OllamaHarnessExecutable[]>;
   ollamaHarnessPickWorkspace(): Promise<string | null>;
   ollamaHarnessPreflight(request: OllamaHarnessPreflightRequest): Promise<OllamaHarnessPlan>;

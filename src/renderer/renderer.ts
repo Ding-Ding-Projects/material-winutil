@@ -69,6 +69,21 @@ interface OllamaChatMessage { role: 'system' | 'user' | 'assistant'; content: st
 interface OllamaChatAttachment { id: string; mediaType: 'image/png' | 'image/jpeg'; byteLength: number; width: number; height: number; }
 type OllamaChatAttachmentPickResult = { status: 'selected'; attachment: OllamaChatAttachment } | { status: 'cancelled' };
 interface OllamaChatRequest { model: string; messages: OllamaChatMessage[]; options: { temperature?: number; topP?: number; topK?: number; seed?: number; numCtx?: number; numPredict?: number }; }
+interface OllamaPersistedChatMessage { role: 'user' | 'assistant'; content: string; }
+interface OllamaChatSessionSummary { id: string; title: string; model: string; createdAt: string; updatedAt: string; messageCount: number; }
+interface OllamaChatSessionDetail extends OllamaChatSessionSummary { systemPrompt: string; messages: OllamaPersistedChatMessage[]; }
+interface OllamaChatSessionCreateRequest { model: string; systemPrompt?: string; }
+interface OllamaChatSessionGetRequest { id: string; }
+interface OllamaChatSessionListRequest { limit?: number; }
+interface OllamaChatSessionRenameRequest { id: string; title: string; }
+interface OllamaChatSessionUpdateRequest { id: string; model?: string; systemPrompt?: string | null; messages?: OllamaPersistedChatMessage[]; }
+interface OllamaChatSessionDeleteRequest { id: string; }
+interface OllamaChatSessionCreateResult { session: OllamaChatSessionDetail; }
+interface OllamaChatSessionGetResult { session: OllamaChatSessionDetail; }
+interface OllamaChatSessionListResult { sessions: OllamaChatSessionSummary[]; }
+interface OllamaChatSessionRenameResult { session: OllamaChatSessionSummary; }
+interface OllamaChatSessionUpdateResult { session: OllamaChatSessionDetail; }
+interface OllamaChatSessionDeleteResult { id: string; deleted: boolean; }
 interface OllamaChatExportDocument { schemaVersion: 1; messages: Array<{ role: OllamaChatMessage['role']; content: string; attachmentsOmitted: number }>; }
 type OllamaChatExportResult =
   | { status: 'saved'; filePath: string; document: OllamaChatExportDocument }
@@ -294,6 +309,12 @@ interface Bridge {
   ollamaChat(request: OllamaChatRequest, variant: OllamaModelVariant): Promise<OllamaChatRequest>;
   ollamaCancelChat(): Promise<boolean>;
   ollamaExportChat(request: { chat: OllamaChatRequest; format: 'markdown' | 'json' }): Promise<OllamaChatExportResult>;
+  ollamaChatSessionList(request?: OllamaChatSessionListRequest): Promise<OllamaChatSessionListResult>;
+  ollamaChatSessionGet(request: OllamaChatSessionGetRequest): Promise<OllamaChatSessionGetResult>;
+  ollamaChatSessionCreate(request: OllamaChatSessionCreateRequest): Promise<OllamaChatSessionCreateResult>;
+  ollamaChatSessionUpdate(request: OllamaChatSessionUpdateRequest): Promise<OllamaChatSessionUpdateResult>;
+  ollamaChatSessionRename(request: OllamaChatSessionRenameRequest): Promise<OllamaChatSessionRenameResult>;
+  ollamaChatSessionDelete(request: OllamaChatSessionDeleteRequest): Promise<OllamaChatSessionDeleteResult>;
   ollamaHarnessExecutables(profileId: OllamaHarnessProfileId): Promise<OllamaHarnessExecutable[]>;
   ollamaHarnessPickWorkspace(): Promise<string | null>;
   ollamaHarnessPreflight(request: { profileId: OllamaHarnessProfileId; model: string; configuration: OllamaHarnessConfiguration; executablePath: string }): Promise<OllamaHarnessPlan>;
@@ -779,6 +800,7 @@ const state = {
     tab: 'store' as 'status' | 'store' | 'cart' | 'chat' | 'harness',
     busy: false, error: '', selectedModel: '', cart: new Set<string>(),
     chat: { system: '', prompt: '', messages: [] as OllamaChatMessage[], output: '', busy: false, attachment: null as OllamaChatAttachment | null, lastExportPath: '',
+      sessions: [] as OllamaChatSessionSummary[], selectedSessionId: '', sessionTitleDraft: '', sessionLoading: false,
       temperature: 0.4, contextLength: 4096 },
     harness: { profile: 'vscode-continue' as OllamaHarnessProfileId, workspaceFolder: '', executables: [] as OllamaHarnessExecutable[], executablePath: '', plan: null as OllamaHarnessPlan | null, busy: false, message: '' },
   },
@@ -1870,7 +1892,25 @@ function ollamaChat(): HTMLElement {
   const variant = ollamaVariant(); const localVariants = installedOllamaVariants(); const installed = new Set(localVariants.map(({ qualifiedName }) => qualifiedName)); const available = !!variant && installed.has(variant.qualifiedName) && state.ollama.health?.state === 'healthy';
   const chat = state.ollama.chat; const canAttach = !!variant?.capabilities.includes('vision') && available;
   const attachment = chat.attachment;
+  const selectedSession = chat.sessions.find(({ id }) => id === chat.selectedSessionId);
+  const sessionRows = chat.sessions.length
+    ? chat.sessions.map((session) => h('article', { class: `ollama-session${session.id === chat.selectedSessionId ? ' selected' : ''}` },
+      h('div', {}, h('b', {}, session.title), h('small', {}, `${session.model} · ${session.messageCount} ${ollamaText('messages', '個訊息')}`)),
+      h('div', { class: 'btnrow' },
+        h('button', { class: 'btn text', disabled: chat.sessionLoading || session.id === chat.selectedSessionId, onclick: () => void selectOllamaChatSession(session.id) }, session.id === chat.selectedSessionId ? ollamaText('Current', '目前') : ollamaText('Open', '開啟')),
+      )))
+    : [emptyState(ollamaText('No local chat sessions yet. Create one before sending a message.', '未有本機聊天記錄。傳送訊息之前先建立一個。'))];
   return h('section', { class: 'ollama-chat', 'aria-label': ollamaText('Local Ollama chat', '本機 Ollama 聊天') },
+    h('div', { class: 'ollama-session-panel' },
+      h('div', { class: 'pane-head' }, h('div', {}, h('h3', {}, ollamaText('Local chat sessions', '本機聊天記錄')), h('p', {}, ollamaText('Messages are saved only on this device. Attachments, images, and system prompts are never stored.', '訊息只會儲存喺呢部裝置。附件、圖片同系統提示永遠唔會儲存。'))),
+        h('button', { class: 'btn tonal', disabled: !variant || chat.sessionLoading || chat.busy, onclick: () => void createOllamaChatSession() }, ollamaText('New session', '新增聊天'))),
+      h('div', { class: 'ollama-session-list', role: 'list' }, ...sessionRows),
+      selectedSession ? h('div', { class: 'ollama-session-editor' },
+        h('label', { class: 'field' }, ollamaText('Session name', '聊天名稱').toUpperCase(), h('input', { maxlength: '160', value: chat.sessionTitleDraft, oninput: (event: Event) => { chat.sessionTitleDraft = (event.target as HTMLInputElement).value; } })),
+        h('div', { class: 'btnrow' },
+          h('button', { class: 'btn outlined', disabled: chat.sessionLoading || !chat.sessionTitleDraft.trim() || chat.sessionTitleDraft === selectedSession.title, onclick: () => void renameOllamaChatSession() }, ollamaText('Save name', '儲存名稱')),
+          h('button', { class: 'btn danger', disabled: chat.sessionLoading || chat.busy, onclick: () => gate(ollamaText(`Delete local chat session “${selectedSession.title}”`, `刪除本機聊天「${selectedSession.title}」`), undefined, undefined, () => { void deleteOllamaChatSession(selectedSession.id); }) }, ollamaText('Delete session', '刪除聊天')),
+        )) : null),
     selectField(ollamaText('Verified installed model', '已驗證已安裝模型'), localVariants.map(({ qualifiedName }) => qualifiedName), state.ollama.selectedModel || ollamaText('No verified installed model', '冇已驗證已安裝模型'), (value) => { state.ollama.selectedModel = value; render(); }),
     h('label', { class: 'field' }, ollamaText('System prompt', '系統提示').toUpperCase(), h('textarea', { maxlength: '32768', value: chat.system, oninput: (event: Event) => { chat.system = (event.target as HTMLTextAreaElement).value; } })),
     h('label', { class: 'field' }, ollamaText('Message', '訊息').toUpperCase(), h('textarea', { maxlength: '32768', value: chat.prompt, oninput: (event: Event) => { chat.prompt = (event.target as HTMLTextAreaElement).value; } })),
@@ -1881,7 +1921,7 @@ function ollamaChat(): HTMLElement {
         ? ollamaText('This verified local model reports vision capability. Choose one PNG or JPEG image; its bytes remain in the local main process and are consumed after this chat request.', '呢個已驗證本機模型支援影像。可以揀一張 PNG 或 JPEG；圖片位元只會留喺本機主程序，今次聊天後就會清除。')
         : ollamaText('Attachments are unavailable until a healthy, verified installed model reports vision capability.', '要等健康而且已驗證嘅已安裝模型報告支援影像，附件先可用。')),
       attachment ? h('button', { class: 'btn text', disabled: chat.busy, onclick: () => void clearOllamaChatAttachment() }, ollamaText('Remove image', '移除圖片')) : null),
-    h('div', { class: 'btnrow' }, h('button', { class: 'btn filled', disabled: !available || !chat.prompt.trim() || chat.busy, title: !available ? ollamaText('Select an installed verified model and start the local service.', '請揀已安裝已驗證模型，再啟動本機服務。') : '', onclick: () => void sendOllamaChat() }, ollamaText('Send locally', '本機傳送')),
+    h('div', { class: 'btnrow' }, h('button', { class: 'btn filled', disabled: !available || !chat.selectedSessionId || !chat.prompt.trim() || chat.busy, title: !chat.selectedSessionId ? ollamaText('Create or open a local chat session before sending.', '傳送之前先建立或者開啟本機聊天。') : !available ? ollamaText('Select an installed verified model and start the local service.', '請揀已安裝已驗證模型，再啟動本機服務。') : '', onclick: () => void sendOllamaChat() }, ollamaText('Send locally', '本機傳送')),
       h('button', { class: 'btn outlined', disabled: !canAttach || chat.busy || !!attachment, title: !canAttach ? ollamaText('Choose a healthy verified vision model before adding an image.', '請先揀健康而且已驗證嘅影像模型先可以加入圖片。') : '', onclick: () => void pickOllamaChatAttachment() }, ollamaText('Attach local image', '加入本機圖片')),
       h('button', { class: 'btn outlined', disabled: !chat.busy, onclick: () => void bridge().ollamaCancelChat() }, ollamaText('Cancel response', '取消回應')),
       h('button', { class: 'btn text', disabled: !chat.messages.length || chat.busy, onclick: () => void exportOllamaChat('markdown') }, ollamaText('Save redacted Markdown', '儲存遮蔽 Markdown')),
@@ -1890,11 +1930,99 @@ function ollamaChat(): HTMLElement {
     h('pre', { class: 'ollama-chat-output', role: 'log', 'aria-live': 'polite' }, chat.output || ollamaText('No local response yet.', '未有本機回應。')));
 }
 
+async function refreshOllamaChatSessions(): Promise<void> {
+  const chat = state.ollama.chat;
+  chat.sessionLoading = true;
+  try {
+    chat.sessions = (await bridge().ollamaChatSessionList()).sessions;
+    if (chat.selectedSessionId && !chat.sessions.some(({ id }) => id === chat.selectedSessionId)) {
+      chat.selectedSessionId = ''; chat.sessionTitleDraft = ''; chat.messages = []; chat.system = ''; chat.output = '';
+    }
+  } catch (error) {
+    state.ollama.error = error instanceof Error ? error.message : ollamaText('Local chat sessions could not be loaded.', '無法讀取本機聊天記錄。');
+  } finally { chat.sessionLoading = false; }
+}
+
+async function createOllamaChatSession(): Promise<void> {
+  const variant = ollamaVariant(); const chat = state.ollama.chat;
+  if (!variant || chat.sessionLoading || chat.busy) return;
+  chat.sessionLoading = true; state.ollama.error = ''; render();
+  try {
+    const result = await bridge().ollamaChatSessionCreate({ model: variant.qualifiedName });
+    chat.selectedSessionId = result.session.id;
+    chat.sessionTitleDraft = result.session.title;
+    chat.messages = []; chat.system = ''; chat.output = ''; chat.attachment = null;
+    await refreshOllamaChatSessions();
+  } catch (error) {
+    state.ollama.error = error instanceof Error ? error.message : ollamaText('A local chat session could not be created.', '無法建立本機聊天。');
+  } finally { chat.sessionLoading = false; render(); }
+}
+
+async function selectOllamaChatSession(id: string): Promise<void> {
+  const chat = state.ollama.chat;
+  if (chat.sessionLoading || chat.busy) return;
+  chat.sessionLoading = true; state.ollama.error = ''; render();
+  try {
+    const { session } = await bridge().ollamaChatSessionGet({ id });
+    chat.selectedSessionId = session.id;
+    chat.sessionTitleDraft = session.title;
+    chat.messages = session.messages.map(({ role, content }) => ({ role, content }));
+    chat.system = ''; chat.output = ''; chat.attachment = null;
+    state.ollama.selectedModel = session.model;
+    await refreshOllamaChatSessions();
+  } catch (error) {
+    state.ollama.error = error instanceof Error ? error.message : ollamaText('The local chat session could not be opened.', '無法開啟本機聊天。');
+  } finally { chat.sessionLoading = false; render(); }
+}
+
+async function renameOllamaChatSession(): Promise<void> {
+  const chat = state.ollama.chat;
+  if (!chat.selectedSessionId || chat.sessionLoading) return;
+  chat.sessionLoading = true; state.ollama.error = ''; render();
+  try {
+    const { session } = await bridge().ollamaChatSessionRename({ id: chat.selectedSessionId, title: chat.sessionTitleDraft.trim() });
+    chat.sessionTitleDraft = session.title;
+    await refreshOllamaChatSessions();
+  } catch (error) {
+    state.ollama.error = error instanceof Error ? error.message : ollamaText('The local chat name could not be saved.', '無法儲存本機聊天名稱。');
+  } finally { chat.sessionLoading = false; render(); }
+}
+
+async function deleteOllamaChatSession(id: string): Promise<void> {
+  const chat = state.ollama.chat;
+  if (chat.sessionLoading || chat.busy) return;
+  chat.sessionLoading = true; state.ollama.error = ''; render();
+  try {
+    const result = await bridge().ollamaChatSessionDelete({ id });
+    if (!result.deleted) throw new Error('The local chat session no longer exists.');
+    if (chat.selectedSessionId === id) {
+      chat.selectedSessionId = ''; chat.sessionTitleDraft = ''; chat.messages = []; chat.system = ''; chat.output = ''; chat.attachment = null;
+    }
+    await refreshOllamaChatSessions();
+  } catch (error) {
+    state.ollama.error = error instanceof Error ? error.message : ollamaText('The local chat session could not be deleted.', '無法刪除本機聊天。');
+  } finally { chat.sessionLoading = false; render(); }
+}
+
+async function persistActiveOllamaChatSession(): Promise<void> {
+  const chat = state.ollama.chat;
+  if (!chat.selectedSessionId) throw new Error('Create or open a local chat session before sending.');
+  const messages = chat.messages.filter((message): message is OllamaPersistedChatMessage => message.role === 'user' || message.role === 'assistant')
+    .map(({ role, content }) => ({ role, content }));
+  await bridge().ollamaChatSessionUpdate({ id: chat.selectedSessionId, model: state.ollama.selectedModel, messages });
+  await refreshOllamaChatSessions();
+}
+
 async function sendOllamaChat(): Promise<void> {
   const variant = ollamaVariant(); const chat = state.ollama.chat; if (!variant || chat.busy || !chat.prompt.trim()) return;
   const messages: OllamaChatMessage[] = [...chat.messages]; if (chat.system.trim() && !messages.some(({ role }) => role === 'system')) messages.unshift({ role: 'system', content: chat.system.trim() });
   const attachment = chat.attachment; messages.push({ role: 'user', content: chat.prompt.trim(), ...(attachment ? { attachmentIds: [attachment.id] } : {}) }); chat.output = ''; chat.busy = true; state.ollama.error = ''; render();
-  try { const validated = await bridge().ollamaChat({ model: variant.qualifiedName, messages, options: { temperature: chat.temperature, numCtx: chat.contextLength } }, variant); chat.messages = validated.messages; chat.prompt = ''; }
+  try {
+    const validated = await bridge().ollamaChat({ model: variant.qualifiedName, messages, options: { temperature: chat.temperature, numCtx: chat.contextLength } }, variant);
+    chat.messages = validated.messages; chat.prompt = '';
+    try { await persistActiveOllamaChatSession(); }
+    catch (error) { state.ollama.error = error instanceof Error ? error.message : ollamaText('The local response was not saved to this device.', '本機回應無法儲存喺呢部裝置。'); }
+  }
   catch (error) { state.ollama.error = error instanceof Error ? error.message : 'Local chat failed safely.'; }
   finally { if (attachment?.id) void bridge().ollamaClearChatAttachment(attachment.id); if (chat.attachment?.id === attachment?.id) chat.attachment = null; chat.busy = false; render(); }
 }
@@ -5367,6 +5495,7 @@ async function boot(): Promise<void> {
   try { state.appLogo.data = await bridge().appLogoState(); }
   catch (error) { state.appLogo.error = error instanceof Error ? error.message : 'The local app-logo state could not be loaded.'; }
   await refreshOllama(false);
+  await refreshOllamaChatSessions();
   try { state.history = (await bridge().history()).reverse(); } catch { state.history = []; }
   await refreshHistoryAccess();
   if (state.historyAccess.unlocked) await refreshGitHistory();

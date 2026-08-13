@@ -8,6 +8,11 @@ export const OLLAMA_LIMITS = Object.freeze({
   catalogVariants: 100_000,
   catalogCacheBytes: 32 * 1024 * 1024,
   catalogFreshMs: 24 * 60 * 60 * 1000,
+  installedEnrichmentModels: 128,
+  installedEnrichmentConcurrency: 2,
+  installedEnrichmentCacheBytes: 2 * 1024 * 1024,
+  installedEnrichmentFreshMs: 24 * 60 * 60 * 1000,
+  installedEnrichmentResponseBytes: 512 * 1024,
   pullQueue: 128,
   pullConcurrency: 2,
   chatMessages: 64,
@@ -21,6 +26,7 @@ export const OLLAMA_LIMITS = Object.freeze({
 export const OLLAMA_DOCUMENTED_ROUTES = Object.freeze({
   version: Object.freeze({ method: 'GET', path: '/api/version' }),
   installed: Object.freeze({ method: 'GET', path: '/api/tags' }),
+  show: Object.freeze({ method: 'POST', path: '/api/show' }),
   running: Object.freeze({ method: 'GET', path: '/api/ps' }),
   pull: Object.freeze({ method: 'POST', path: '/api/pull' }),
   chat: Object.freeze({ method: 'POST', path: '/api/chat' }),
@@ -59,6 +65,31 @@ export interface OllamaHealthSnapshot {
   version: string | null;
   installed: OllamaInstalledModel[];
   running: OllamaRunningModel[];
+  message: string;
+}
+
+/** A deliberately small, local-only projection of a documented /api/show response. */
+export interface OllamaInstalledEnrichment {
+  name: string;
+  digest: string;
+  sizeBytes: number;
+  family: string;
+  parameterSize: string;
+  quantization: string;
+  capabilities: OllamaCapability[];
+}
+
+export interface OllamaInstalledEnrichmentSnapshot {
+  schemaVersion: 1;
+  source: 'local-ollama-installed-enrichment';
+  sourceRevision: string;
+  inventoryRevision: string;
+  fetchedAt: string;
+  version: string;
+  complete: boolean;
+  skippedCount: number;
+  stale: boolean;
+  models: OllamaInstalledEnrichment[];
   message: string;
 }
 
@@ -281,6 +312,27 @@ export function parseOllamaInstalled(value: unknown): OllamaInstalledModel[] {
   const result = value.models.map(parseInstalled);
   if (new Set(result.map(({ name }) => name)).size !== result.length) throw new Error('Installed model inventory contains duplicates.');
   return result;
+}
+
+export function parseOllamaInstalledEnrichment(value: unknown, installed: OllamaInstalledModel): OllamaInstalledEnrichment {
+  if (!record(value)) throw new Error('Installed model enrichment is invalid.');
+  const capabilities = value.capabilities === undefined ? [] : value.capabilities;
+  if (!Array.isArray(capabilities) || capabilities.length > 16 || capabilities.some((item) => typeof item !== 'string')) {
+    throw new Error('Installed model capabilities are invalid.');
+  }
+  const mapped = new Set<OllamaCapability>();
+  for (const capability of capabilities) {
+    if (capability === 'completion') mapped.add('text');
+    else if (capability === 'vision') mapped.add('vision');
+    else if (capability === 'tools') mapped.add('tools');
+    else if (capability === 'embedding') mapped.add('embedding');
+    else throw new Error('Installed model capabilities are invalid.');
+  }
+  return {
+    name: installed.name, digest: installed.digest, sizeBytes: installed.sizeBytes,
+    family: installed.details.family, parameterSize: installed.details.parameterSize,
+    quantization: installed.details.quantization, capabilities: [...mapped].sort(),
+  };
 }
 
 export function parseOllamaRunning(value: unknown): OllamaRunningModel[] {

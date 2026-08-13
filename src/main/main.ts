@@ -11,7 +11,7 @@ import type {
   PersonalVocabularyState, PersonalVocabularyUploadResult, Preferences, RunKind, SchoolModeChangeResult,
   ScheduledSettingsState, SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateRestartRequest, UpdateRestartResult, UpdateStatus, WinutilCatalog, DimSumStartupPresentation, FileConverterSurfaceState, AppLogoRuntimeSnapshot,
 } from '../shared/types';
-import type { OllamaCatalogSnapshot, OllamaChatRequest, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaPullProgress } from '../shared/ollama-suite';
+import type { OllamaCatalogSnapshot, OllamaChatRequest, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress } from '../shared/ollama-suite';
 import { resolvePackageRequest, validateCatalog, wingetArgs } from './package-policy';
 import { AUTHENTICATOR_PNG_LIMITS, AuthenticatorService } from './authenticator-service';
 import { PersonalVocabularyStore } from './personal-vocabulary-store';
@@ -1139,6 +1139,12 @@ function ollamaHardware(): OllamaHardwareService {
 
 ipcMain.handle('ollama:health', async (event): Promise<OllamaHealthSnapshot> => {
   requireTrustedSender(event); return ollamaSuite().health();
+});
+ipcMain.handle('ollama:installed-enrichment', (event): OllamaInstalledEnrichmentSnapshot | null => {
+  requireTrustedSender(event); return ollamaSuite().installedEnrichmentSnapshot();
+});
+ipcMain.handle('ollama:refresh-installed-enrichment', async (event): Promise<OllamaInstalledEnrichmentSnapshot> => {
+  requireTrustedSender(event); return ollamaSuite().refreshInstalledEnrichment();
 });
 ipcMain.handle('ollama:hardware', async (event): Promise<OllamaHardwareEvidence> => {
   requireTrustedSender(event); return ollamaHardware().detect();

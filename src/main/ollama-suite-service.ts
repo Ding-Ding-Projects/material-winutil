@@ -4,9 +4,10 @@ import * as path from 'node:path';
 import {
   OLLAMA_DOCUMENTED_ROUTES, OLLAMA_LIMITS, OLLAMA_LOCAL_ORIGIN,
   parseOllamaInstalled, parseOllamaRunning, parseOllamaVersion, redactChatExport,
+  parseOllamaInstalledEnrichment,
   validateCatalogPage, validateChatRequest, validateOfficialCatalogUrl, validateOllamaLocalUrl, validateOllamaModelName,
   type OllamaCatalogPage, type OllamaCatalogSnapshot, type OllamaCatalogVariant, type OllamaChatRequest,
-  type OllamaHealthSnapshot, type OllamaPullProgress,
+  type OllamaHealthSnapshot, type OllamaInstalledEnrichment, type OllamaInstalledEnrichmentSnapshot, type OllamaInstalledModel, type OllamaPullProgress,
 } from '../shared/ollama-suite';
 
 type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
@@ -84,31 +85,53 @@ async function withDeadline<T>(operation: Promise<T>, controller: AbortControlle
 
 function remaining(deadline: number, maximum: number): number { return Math.min(maximum, Math.max(0, deadline - Date.now())); }
 
-async function boundedJson(response: Response): Promise<unknown> {
+async function boundedJson(response: Response, maximumBytes = OLLAMA_LIMITS.responseBytes): Promise<unknown> {
   const length = Number(response.headers.get('content-length') ?? '0');
-  if (Number.isFinite(length) && length > OLLAMA_LIMITS.responseBytes) throw new Error('Ollama response exceeds 8 MiB.');
+  if (Number.isFinite(length) && length > maximumBytes) throw new Error(`Ollama response exceeds the ${maximumBytes}-byte safety limit.`);
   const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > OLLAMA_LIMITS.responseBytes) throw new Error('Ollama response exceeds 8 MiB.');
+  if (bytes.byteLength > maximumBytes) throw new Error(`Ollama response exceeds the ${maximumBytes}-byte safety limit.`);
   return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
 }
+
+function plainRecord(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const actual = Object.keys(value);
+  return actual.length === keys.length && actual.every((key) => keys.includes(key));
+}
+
+function isoTimestamp(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= 40 && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+}
+
+const SHA256 = /^[0-9a-f]{64}$/u;
+const CAPABILITIES = new Set(['text', 'vision', 'tools', 'embedding']);
 
 export class OllamaSuiteService {
   private readonly fetchLocal: FetchLike;
   private readonly now: () => Date;
   private readonly catalogFile: string;
+  private readonly installedEnrichmentFile: string;
   private readonly pullsFile: string;
   private catalog: OllamaCatalogSnapshot | null = null;
+  private installedEnrichment: OllamaInstalledEnrichmentSnapshot | null = null;
   private pulls: OllamaPullProgress[] = [];
   private activePulls = new Map<string, AbortController>();
   private pullWorkers = 0;
   private chatController: AbortController | null = null;
   private catalogRefreshPromise: Promise<OllamaCatalogSnapshot> | null = null;
+  private installedEnrichmentRefreshPromise: Promise<OllamaInstalledEnrichmentSnapshot> | null = null;
   private readonly timeouts: Readonly<TimeoutSettings>;
 
   constructor(private readonly dependencies: OllamaSuiteServiceDependencies) {
     this.fetchLocal = dependencies.fetchLocal ?? ((input, init) => fetch(input, init));
     this.now = dependencies.now ?? (() => new Date());
     this.catalogFile = path.join(dependencies.userDataDirectory, 'ollama-catalog-cache.v1.json');
+    this.installedEnrichmentFile = path.join(dependencies.userDataDirectory, 'ollama-installed-enrichment.v1.json');
     this.pullsFile = path.join(dependencies.userDataDirectory, 'ollama-pull-queue.v1.json');
     this.timeouts = Object.freeze({
       request: timeoutValue(dependencies.requestTimeoutMs, DEFAULT_TIMEOUTS.request),
@@ -130,12 +153,13 @@ export class OllamaSuiteService {
     return response;
   }
 
-  private async localJson(route: 'version' | 'installed' | 'running', parent?: AbortSignal): Promise<unknown> {
+  private async localJson(route: 'version' | 'installed' | 'running' | 'show', body?: unknown, parent?: AbortSignal): Promise<unknown> {
     const linked = linkedController(parent);
     try {
       const deadline = Date.now() + this.timeouts.request;
-      const response = await this.local(route, undefined, linked.controller, remaining(deadline, this.timeouts.request));
-      return await withDeadline(boundedJson(response), linked.controller, remaining(deadline, this.timeouts.request), `The local Ollama ${route} response timed out.`);
+      const response = await this.local(route, body, linked.controller, remaining(deadline, this.timeouts.request));
+      const maximumBytes = route === 'show' ? OLLAMA_LIMITS.installedEnrichmentResponseBytes : OLLAMA_LIMITS.responseBytes;
+      return await withDeadline(boundedJson(response, maximumBytes), linked.controller, remaining(deadline, this.timeouts.request), `The local Ollama ${route} response timed out.`);
     } finally { linked.dispose(); }
   }
 
@@ -144,9 +168,9 @@ export class OllamaSuiteService {
     const linked = linkedController(signal);
     try {
       const [version, installed, running] = await Promise.all([
-        this.localJson('version', linked.controller.signal).then(parseOllamaVersion),
-        this.localJson('installed', linked.controller.signal).then(parseOllamaInstalled),
-        this.localJson('running', linked.controller.signal).then(parseOllamaRunning),
+        this.localJson('version', undefined, linked.controller.signal).then(parseOllamaVersion),
+        this.localJson('installed', undefined, linked.controller.signal).then(parseOllamaInstalled),
+        this.localJson('running', undefined, linked.controller.signal).then(parseOllamaRunning),
       ]);
       return { state: 'healthy', checkedAt, version, installed, running, message: `Ollama ${version} is available on the local loopback API.` };
     } catch (error) {
@@ -176,6 +200,31 @@ export class OllamaSuiteService {
       this.catalog = parsed;
     } catch { this.catalog = null; }
     try {
+      const raw = await fs.readFile(this.installedEnrichmentFile, 'utf8');
+      if (Buffer.byteLength(raw) > OLLAMA_LIMITS.installedEnrichmentCacheBytes) throw new Error('installed enrichment cache oversized');
+      const parsed = JSON.parse(raw) as unknown;
+      if (!plainRecord(parsed) || !exactKeys(parsed, ['schemaVersion', 'source', 'sourceRevision', 'inventoryRevision', 'fetchedAt', 'version', 'complete', 'skippedCount', 'stale', 'models', 'message'])
+        || parsed.schemaVersion !== 1 || parsed.source !== 'local-ollama-installed-enrichment' || !Array.isArray(parsed.models)
+        || parsed.models.length > OLLAMA_LIMITS.installedEnrichmentModels || typeof parsed.sourceRevision !== 'string'
+        || !SHA256.test(parsed.sourceRevision) || typeof parsed.inventoryRevision !== 'string' || !SHA256.test(parsed.inventoryRevision)
+        || !isoTimestamp(parsed.fetchedAt) || typeof parsed.complete !== 'boolean' || !Number.isSafeInteger(parsed.skippedCount) || Number(parsed.skippedCount) < 0
+        || typeof parsed.stale !== 'boolean' || typeof parsed.message !== 'string' || parsed.message.length > 500 || !parseOllamaVersion({ version: parsed.version })) throw new Error('installed enrichment cache invalid');
+      const models = parsed.models.map((item) => {
+        if (!plainRecord(item) || !exactKeys(item, ['name', 'digest', 'sizeBytes', 'family', 'parameterSize', 'quantization', 'capabilities']) || !Array.isArray(item.capabilities)) throw new Error('installed enrichment model invalid');
+        return { name: validateOllamaModelName(item.name), digest: item.digest, sizeBytes: item.sizeBytes, family: item.family, parameterSize: item.parameterSize, quantization: item.quantization, capabilities: [...item.capabilities] };
+      });
+      if (models.some((model) => !SHA256.test(model.digest) || !Number.isSafeInteger(model.sizeBytes) || model.sizeBytes < 0
+        || typeof model.family !== 'string' || !model.family || model.family.length > 120 || typeof model.parameterSize !== 'string' || !model.parameterSize || model.parameterSize.length > 64 || typeof model.quantization !== 'string' || !model.quantization || model.quantization.length > 64
+        || model.capabilities.some((capability) => typeof capability !== 'string' || !CAPABILITIES.has(capability)))) throw new Error('installed enrichment model invalid');
+      if (models.some((model) => new Set(model.capabilities).size !== model.capabilities.length) || new Set(models.map(({ name }) => name)).size !== models.length || parsed.skippedCount !== 0 || parsed.complete !== true) throw new Error('installed enrichment cache is incomplete');
+      const canonicalModels = [...models].sort((left, right) => left.name.localeCompare(right.name));
+      if (canonicalModels.some((model, index) => model !== models[index])) throw new Error('installed enrichment cache ordering is invalid');
+      const version = parseOllamaVersion({ version: parsed.version });
+      const typedModels = models as OllamaInstalledEnrichment[];
+      if (parsed.inventoryRevision !== this.installedRevision(version, typedModels) || parsed.sourceRevision !== this.enrichmentRevision(version, parsed.inventoryRevision, typedModels)) throw new Error('installed enrichment cache identity is invalid');
+      this.installedEnrichment = { schemaVersion: 1, source: 'local-ollama-installed-enrichment', sourceRevision: parsed.sourceRevision, inventoryRevision: parsed.inventoryRevision, fetchedAt: parsed.fetchedAt, version, complete: true, skippedCount: 0, stale: parsed.stale || this.now().getTime() - Date.parse(parsed.fetchedAt) > OLLAMA_LIMITS.installedEnrichmentFreshMs, models: typedModels, message: parsed.message };
+    } catch { this.installedEnrichment = null; }
+    try {
       const raw = await fs.readFile(this.pullsFile, 'utf8');
       if (Buffer.byteLength(raw) > 512 * 1024) throw new Error('pull state oversized');
       const parsed = JSON.parse(raw) as PersistedPullState;
@@ -186,6 +235,62 @@ export class OllamaSuiteService {
   }
 
   catalogSnapshot(): OllamaCatalogSnapshot | null { return this.catalog ? structuredClone(this.catalog) : null; }
+
+  installedEnrichmentSnapshot(): OllamaInstalledEnrichmentSnapshot | null { return this.installedEnrichment ? structuredClone(this.installedEnrichment) : null; }
+
+  private installedRevision(version: string, models: Array<Pick<OllamaInstalledModel, 'name' | 'digest' | 'sizeBytes'> | OllamaInstalledEnrichment>): string {
+    const canonical = models.map((model) => ({ name: model.name, digest: model.digest, sizeBytes: model.sizeBytes })).sort((a, b) => a.name.localeCompare(b.name));
+    return createHash('sha256').update(JSON.stringify({ version, models: canonical })).digest('hex');
+  }
+
+  async refreshInstalledEnrichment(): Promise<OllamaInstalledEnrichmentSnapshot> {
+    if (this.installedEnrichmentRefreshPromise) return this.installedEnrichmentRefreshPromise;
+    this.installedEnrichmentRefreshPromise = this.performInstalledEnrichmentRefresh().finally(() => { this.installedEnrichmentRefreshPromise = null; });
+    return this.installedEnrichmentRefreshPromise;
+  }
+
+  private enrichmentRevision(version: string, inventoryRevision: string, models: OllamaInstalledEnrichment[]): string {
+    const canonical = models.map((model) => ({ ...model, capabilities: [...model.capabilities].sort() })).sort((left, right) => left.name.localeCompare(right.name));
+    return createHash('sha256').update(JSON.stringify({ version, inventoryRevision, models: canonical })).digest('hex');
+  }
+
+  private async performInstalledEnrichmentRefresh(): Promise<OllamaInstalledEnrichmentSnapshot> {
+    const linked = linkedController();
+    try {
+      const [version, installed] = await Promise.all([
+        this.localJson('version', undefined, linked.controller.signal).then(parseOllamaVersion),
+        this.localJson('installed', undefined, linked.controller.signal).then(parseOllamaInstalled),
+      ]);
+      if (installed.length > OLLAMA_LIMITS.installedEnrichmentModels) throw new Error(`Installed model enrichment is limited to ${OLLAMA_LIMITS.installedEnrichmentModels} models.`);
+      const inventoryRevision = this.installedRevision(version, installed);
+      if (this.installedEnrichment?.inventoryRevision === inventoryRevision && this.installedEnrichment.complete && !this.installedEnrichment.stale) return structuredClone(this.installedEnrichment);
+      const byName = new Map(installed.map((model) => [model.name, model]));
+      const ordered = [...byName.keys()].sort(); const enriched: OllamaInstalledEnrichment[] = [];
+      let cursor = 0;
+      const workers = Array.from({ length: Math.min(OLLAMA_LIMITS.installedEnrichmentConcurrency, ordered.length) }, async () => {
+        while (true) {
+          const index = cursor; cursor += 1; if (index >= ordered.length) return;
+          const name = ordered[index]; const model = byName.get(name); if (!model) throw new Error('Installed model inventory changed unexpectedly.');
+          const show = await this.localJson('show', { name }, linked.controller.signal);
+          enriched.push(parseOllamaInstalledEnrichment(show, model));
+        }
+      });
+      await Promise.all(workers);
+      enriched.sort((a, b) => a.name.localeCompare(b.name));
+      const snapshot: OllamaInstalledEnrichmentSnapshot = {
+        schemaVersion: 1, source: 'local-ollama-installed-enrichment', sourceRevision: this.enrichmentRevision(version, inventoryRevision, enriched), inventoryRevision,
+        fetchedAt: this.now().toISOString(), version, complete: true, skippedCount: 0, stale: false, models: enriched,
+        message: `Enriched ${enriched.length} installed local model(s) from the documented loopback API.`,
+      };
+      this.installedEnrichment = snapshot; await this.atomicWrite(this.installedEnrichmentFile, snapshot); return structuredClone(snapshot);
+    } catch (error) {
+      if (this.installedEnrichment) {
+        this.installedEnrichment = { ...this.installedEnrichment, stale: true, message: `Installed-model enrichment refresh failed: ${errorText(error)}` };
+        return structuredClone(this.installedEnrichment);
+      }
+      return { schemaVersion: 1, source: 'local-ollama-installed-enrichment', sourceRevision: '', inventoryRevision: '', fetchedAt: this.now().toISOString(), version: '', complete: false, skippedCount: 0, stale: true, models: [], message: `Installed-model enrichment refresh failed: ${errorText(error)}` };
+    } finally { linked.dispose(); }
+  }
 
   async refreshCatalog(firstPageUrl = 'https://ollama.com/library'): Promise<OllamaCatalogSnapshot> {
     if (this.catalogRefreshPromise) return this.catalogRefreshPromise;

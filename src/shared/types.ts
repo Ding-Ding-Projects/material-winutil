@@ -17,7 +17,7 @@ import type { DimSumSurpriseDescriptor } from './dim-sum-surprise';
 import type { ConverterAdapter, FileKind, QueueItemState, QueueState } from './file-converter';
 import type { AppLogoExportMetadata, AppLogoPersistedState, AppLogoPresetId, AppLogoTransform, AppLogoDerivedAsset } from './app-logo';
 import type {
-  OllamaCatalogSnapshot, OllamaCatalogVariant, OllamaChatRequest, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaPullProgress,
+  OllamaCatalogSnapshot, OllamaCatalogVariant, OllamaChatRequest, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress,
 } from './ollama-suite';
 
 /**
@@ -470,6 +470,8 @@ export interface Bridge {
   appLogoUpdateTransform(transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot>;
   appLogoReset(): Promise<AppLogoRuntimeSnapshot>;
   ollamaHealth(): Promise<OllamaHealthSnapshot>;
+  ollamaInstalledEnrichment(): Promise<OllamaInstalledEnrichmentSnapshot | null>;
+  ollamaRefreshInstalledEnrichment(): Promise<OllamaInstalledEnrichmentSnapshot>;
   ollamaHardware(): Promise<OllamaHardwareEvidence>;
   ollamaCatalog(): Promise<OllamaCatalogSnapshot>;
   ollamaRefreshCatalog(): Promise<OllamaCatalogSnapshot>;

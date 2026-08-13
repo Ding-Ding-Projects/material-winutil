@@ -114,6 +114,7 @@ export class ScheduledSettingsService {
   private readonly cache = new Map<string, CachedSource>();
   private generation = 0;
   private timer: NodeJS.Timeout | null = null;
+  private externalRefreshAbort: AbortController | null = null;
   private closed = false;
   private evaluation: Promise<ScheduledSettingsSnapshot> = Promise.resolve({
     document: EMPTY_DOCUMENT, effectiveSettings: {}, activeRuleIds: [], settingRuleIds: {}, sourceStatuses: [],
@@ -178,6 +179,11 @@ export class ScheduledSettingsService {
 
   refresh(force: boolean): Promise<ScheduledSettingsSnapshot> {
     const generation = ++this.generation;
+    // A newer settings document, a user-requested retry, or the next boundary
+    // must not wait behind an obsolete network request.  The response loader
+    // already verifies generation before it can change cached state; aborting
+    // here also releases the privileged request promptly.
+    this.externalRefreshAbort?.abort();
     this.evaluation = this.evaluation.catch(() => this.snapshot()).then(() => this.evaluate(generation, force));
     return this.evaluation;
   }
@@ -186,6 +192,8 @@ export class ScheduledSettingsService {
     this.closed = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this.externalRefreshAbort?.abort();
+    this.externalRefreshAbort = null;
     this.generation += 1;
   }
 
@@ -212,42 +220,48 @@ export class ScheduledSettingsService {
 
   private async evaluate(generation: number, force: boolean): Promise<ScheduledSettingsSnapshot> {
     const at = this.options.now?.() ?? new Date();
+    const abort = new AbortController();
+    this.externalRefreshAbort = abort;
     const rules: ScheduledSettingRule[] = [];
     const statuses: ScheduledSourceStatus[] = [];
-    for (const rule of this.document.rules) {
-      const source = rule.source ?? { kind: 'local' as const };
-      if (source.kind === 'local') {
-        rules.push(rule);
-        statuses.push({ ruleId: rule.id, state: 'local', checkedAt: null, nextRefreshAt: null, code: null });
-        continue;
+    try {
+      for (const rule of this.document.rules) {
+        const source = rule.source ?? { kind: 'local' as const };
+        if (source.kind === 'local') {
+          rules.push(rule);
+          statuses.push({ ruleId: rule.id, state: 'local', checkedAt: null, nextRefreshAt: null, code: null });
+          continue;
+        }
+        if (!isScheduledRuleActive(rule, at)) {
+          rules.push({ ...rule, enabled: false });
+          const cached = this.cache.get(rule.id);
+          statuses.push(this.status(rule.id, cached ?? { checkedAt: 0, nextRefreshAt: 0, status: 'pending', code: null }));
+          continue;
+        }
+        let cached = this.cache.get(rule.id);
+        if (force || !cached || cached.nextRefreshAt <= at.getTime()) cached = await this.loadSource(rule, generation, at, abort.signal);
+        if (source.kind === 'json-api' && cached.settings) rules.push({ ...rule, settings: { ...rule.settings, ...cached.settings } });
+        else if (source.kind === 'home-assistant' && cached.active === true) rules.push(rule);
+        else rules.push({ ...rule, enabled: false });
+        statuses.push(this.status(rule.id, cached));
       }
-      if (!isScheduledRuleActive(rule, at)) {
-        rules.push({ ...rule, enabled: false });
-        const cached = this.cache.get(rule.id);
-        statuses.push(this.status(rule.id, cached ?? { checkedAt: 0, nextRefreshAt: 0, status: 'pending', code: null }));
-        continue;
-      }
-      let cached = this.cache.get(rule.id);
-      if (force || !cached || cached.nextRefreshAt <= at.getTime()) cached = await this.loadSource(rule, generation, at);
-      if (source.kind === 'json-api' && cached.settings) rules.push({ ...rule, settings: { ...rule.settings, ...cached.settings } });
-      else if (source.kind === 'home-assistant' && cached.active === true) rules.push(rule);
-      else rules.push({ ...rule, enabled: false });
-      statuses.push(this.status(rule.id, cached));
+      if (generation !== this.generation || abort.signal.aborted) return this.snapshot();
+      const result = evaluateScheduledSettings({ schemaVersion: SCHEDULED_SETTINGS_SCHEMA_VERSION, rules }, this.baseSettings, at);
+      const snapshot: ScheduledSettingsSnapshot = Object.freeze({
+        document: this.document,
+        effectiveSettings: Object.freeze(result.settings), activeRuleIds: Object.freeze(result.activeRuleIds),
+        settingRuleIds: Object.freeze(result.settingRuleIds), sourceStatuses: Object.freeze(statuses),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local system time', evaluatedAt: at.toISOString(),
+      });
+      this.snapshotValue = snapshot;
+      this.options.onApply?.(snapshot);
+      return snapshot;
+    } finally {
+      if (this.externalRefreshAbort === abort) this.externalRefreshAbort = null;
     }
-    if (generation !== this.generation) return this.snapshot();
-    const result = evaluateScheduledSettings({ schemaVersion: SCHEDULED_SETTINGS_SCHEMA_VERSION, rules }, this.baseSettings, at);
-    const snapshot: ScheduledSettingsSnapshot = Object.freeze({
-      document: this.document,
-      effectiveSettings: Object.freeze(result.settings), activeRuleIds: Object.freeze(result.activeRuleIds),
-      settingRuleIds: Object.freeze(result.settingRuleIds), sourceStatuses: Object.freeze(statuses),
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local system time', evaluatedAt: at.toISOString(),
-    });
-    this.snapshotValue = snapshot;
-    this.options.onApply?.(snapshot);
-    return snapshot;
   }
 
-  private async loadSource(rule: ScheduledSettingRule, generation: number, at: Date): Promise<CachedSource> {
+  private async loadSource(rule: ScheduledSettingRule, generation: number, at: Date, signal: AbortSignal): Promise<CachedSource> {
     const source = rule.source;
     if (!source || source.kind === 'local') throw new Error('A local rule has no external source.');
     const previous = this.cache.get(rule.id);
@@ -257,7 +271,7 @@ export class ScheduledSettingsService {
       if (source.kind === 'json-api') {
         const settings = await loadJsonSettingsSource({ kind: 'json-api', url: source.url }, {
           allowLoopbackHttpForDevelopment: source.allowLoopbackHttpForDevelopment,
-          generation, isGenerationCurrent: (candidate) => candidate === this.generation,
+          generation, isGenerationCurrent: (candidate) => candidate === this.generation, signal,
         });
         cache = { settings, checkedAt: at.getTime(), nextRefreshAt, status: 'ready', code: null };
       } else {
@@ -269,7 +283,7 @@ export class ScheduledSettingsService {
             const token = encoded.toString('utf8');
             const active = await loadHomeAssistantBooleanSource({
               kind: 'home-assistant', baseUrl: source.baseUrl, entityId: source.entityId, token,
-            }, { generation, isGenerationCurrent: (candidate) => candidate === this.generation });
+            }, { generation, isGenerationCurrent: (candidate) => candidate === this.generation, signal });
             cache = { active, checkedAt: at.getTime(), nextRefreshAt, status: active ? 'ready' : 'off', code: null };
           } finally { encoded.fill(0); }
         }

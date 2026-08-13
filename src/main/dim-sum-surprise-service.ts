@@ -127,6 +127,16 @@ export class DimSumSurpriseService {
     return Object.freeze({ descriptor: decision.descriptor, imageDataUrl: `data:image/png;base64,${cache.image.toString('base64')}` });
   }
 
+  /**
+   * Fetching is deliberately an opportunistic cache warm-up, never a startup
+   * dependency. A launch can only render an image that this service previously
+   * decoded, dimension-checked, hashed, and committed to application data.
+   */
+  async warmCache(): Promise<boolean> {
+    if (await this.readCache()) return true;
+    return this.refresh();
+  }
+
   async refresh(): Promise<boolean> {
     if (!validateDimSumPublicAsset(this.publicAsset)) return false;
     const controller = new AbortController();

@@ -1124,11 +1124,12 @@ ipcMain.handle('dim-sum:startup', async (event): Promise<DimSumStartupPresentati
   const firstRun = await dimSumSurpriseService.isFirstRun();
   const schoolMode = settingsSurface().snapshot().schoolMode;
   const preferences = currentNarratorPreferences;
+  const updateState = updateService?.status().state;
   return dimSumSurpriseService.startup({
     context: {
       firstRun,
       errorPath: false,
-      updateFlow: updateService?.status().state === 'downloading' || updateService?.status().state === 'ready',
+      updateFlow: updateState === 'checking' || updateState === 'downloading' || updateState === 'ready',
       activeTask: packageMutationActive,
       quietHours: preferences.narratorQuiet,
       doNotDisturb: preferences.narratorReducedSound,
@@ -1527,6 +1528,11 @@ app.whenReady().then(async () => {
   });
   await scheduledSettingsService.initialize({ ...preferencesAsSettings(basePreferences), displayName: initialSettings.displayName.displayName });
   dimSumSurpriseService = new DimSumSurpriseService({ userDataDirectory: USER_DIR() });
+  // Warm the bounded app-data cache before the renderer asks whether this
+  // launch won its draw. This remains detached from startup: the renderer
+  // consumes only a previously validated local image and never waits on a
+  // public request before becoming usable.
+  void dimSumSurpriseService.warmCache();
   fileConverterService = await FileConverterService.open(USER_DIR());
   appLogoService = new AppLogoService({ userDataDirectory: USER_DIR() });
   await appLogoService.initialize();
@@ -1552,7 +1558,6 @@ app.whenReady().then(async () => {
     onStatus: (status) => win?.webContents.send('update:status', status),
   });
   await updateService.initialize();
-  void dimSumSurpriseService.refresh();
 });
 app.on('accessibility-support-changed', (_event, enabled) => {
   if (currentNarratorPreferences) narratorRuntime.configure(effectiveNarratorPreferences(currentNarratorPreferences), enabled);

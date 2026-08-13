@@ -6,6 +6,8 @@ import {
   FILE_CONVERTER_LIMITS,
   PersistentConversionQueue,
   detectFileType,
+  parseCsvUtf8,
+  serializeCsvRowsAsJson,
   validateAdapterRegistry,
   type ConversionQueueIndex,
   type ConversionQueuePage,
@@ -66,10 +68,10 @@ function sortJsonValue(value: unknown): unknown {
   return Object.fromEntries(Object.keys(value as Record<string, unknown>).sort((left, right) => left < right ? -1 : left > right ? 1 : 0).map((key) => [key, sortJsonValue((value as Record<string, unknown>)[key])]));
 }
 
-function outputName(sourcePath: string): string {
+function outputName(sourcePath: string, suffix = '.txt'): string {
   const sourceName = path.basename(sourcePath);
   if (!sourceName || sourceName === '.' || sourceName === '..' || sourceName.includes('\0')) throw new Error('Source filename cannot produce a safe output filename.');
-  return `${sourceName}.txt`;
+  return `${sourceName}${suffix}`;
 }
 
 class JsonQueueStore implements ConversionQueueStore {
@@ -199,10 +201,18 @@ export class FileConverterService {
       throw new Error(adapter.unavailableReason ?? 'The converter adapter has no packaged bundled proof.');
     }
     if (!this.selected.length) throw new Error('Choose at least one local source file before queueing.');
-    if (adapter.id !== 'text-json-normalize') throw new Error('This bundled adapter has no executable implementation in this build.');
-    const incompatible = this.selected.find((source) => source.kind !== 'text' || source.conflict || source.bytes > adapter.limits.inputBytes);
-    if (incompatible) throw new Error('The selected batch contains a source that is not a bounded, conflict-free text file for this adapter.');
-    const requiredBytes = this.selected.reduce((total, source) => total + source.bytes, 0);
+    if (adapter.id !== 'text-json-normalize' && adapter.id !== 'csv-to-json') throw new Error('This bundled adapter has no executable implementation in this build.');
+    const incompatible = this.selected.find((source) => source.kind !== 'text'
+      || source.conflict
+      || source.bytes > adapter.limits.inputBytes
+      || (adapter.id === 'csv-to-json' && path.extname(source.name).toLocaleLowerCase('en-US') !== '.csv'));
+    if (incompatible) throw new Error(adapter.id === 'csv-to-json'
+      ? 'CSV-to-JSON accepts only bounded, conflict-free local .csv UTF-8 sources; malformed CSV is refused during full parsing.'
+      : 'The selected batch contains a source that is not a bounded, conflict-free text file for this adapter.');
+    const estimatedOutputBytes = (source: FileConverterSelectedSource): number => adapter.id === 'csv-to-json'
+      ? Math.min(adapter.limits.outputBytes, source.bytes * 6 + 2)
+      : source.bytes;
+    const requiredBytes = this.selected.reduce((total, source) => total + estimatedOutputBytes(source), 0);
     await fs.mkdir(this.outputDirectory(), { recursive: true });
     const disk = await fs.statfs(this.outputDirectory());
     const availableBytes = Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, disk.bavail * disk.bsize));
@@ -214,16 +224,18 @@ export class FileConverterService {
         id: randomUUID(),
         items: entries.map((source) => ({
           id: source.id, sourcePath: this.requiredSelectedPath(source.id), sourceBytes: source.bytes,
-          estimatedOutputBytes: source.bytes, adapterId, state: 'queued' as const, retryCount: 0,
+          estimatedOutputBytes: estimatedOutputBytes(source), adapterId, state: 'queued' as const, retryCount: 0,
         })),
       }, { availableBytes, requiredBytes, reserveBytes: RESERVE_BYTES });
     }
     if (this.queue.summary().state !== 'active') {
-      this.lastMessage = 'The local text/JSON conversion work was queued but remains paused until the queue is resumed; source files were unchanged.';
+      this.lastMessage = 'The local conversion work was queued but remains paused until the queue is resumed; source files were unchanged.';
       return this.snapshot();
     }
-    await this.runTextJsonQueue(adapter);
-    this.lastMessage = 'The local text/JSON queue completed with validated atomic outputs; source files were unchanged.';
+    await this.runQueue(adapter);
+    this.lastMessage = adapter.id === 'csv-to-json'
+      ? 'The local CSV-to-JSON queue completed with validated atomic outputs; source files were unchanged.'
+      : 'The local text/JSON queue completed with validated atomic outputs; source files were unchanged.';
     return this.snapshot();
   }
 
@@ -233,21 +245,30 @@ export class FileConverterService {
     return sourcePath;
   }
 
-  private async runTextJsonQueue(adapter: (typeof FILE_CONVERTER_ADAPTERS)[number]): Promise<void> {
+  private async runQueue(adapter: (typeof FILE_CONVERTER_ADAPTERS)[number]): Promise<void> {
     let claimed: Awaited<ReturnType<PersistentConversionQueue['claimNext']>>;
     while ((claimed = await this.queue.claimNext()).length > 0) {
       for (const item of claimed) {
         try {
           const sourceInfo = await fs.stat(item.sourcePath);
           if (!sourceInfo.isFile() || sourceInfo.size !== item.sourceBytes || sourceInfo.size > adapter.limits.inputBytes) throw new Error('Source changed after preflight or exceeds the adapter limit.');
-          const content = deterministicUtf8PlainText(await fs.readFile(item.sourcePath));
+          const sourceBytes = await fs.readFile(item.sourcePath);
+          const content = adapter.id === 'csv-to-json'
+            ? serializeCsvRowsAsJson(parseCsvUtf8(sourceBytes, { inputBytes: adapter.limits.inputBytes }))
+            : deterministicUtf8PlainText(sourceBytes);
           const outputBytes = Buffer.byteLength(content, 'utf8');
           if (outputBytes > adapter.limits.outputBytes) throw new Error('Deterministic output exceeds the adapter limit.');
-          const destination = path.join(this.outputDirectory(), outputName(item.sourcePath));
+          const destination = path.join(this.outputDirectory(), outputName(item.sourcePath, adapter.id === 'csv-to-json' ? '.json' : '.txt'));
           await atomicUtf8Output(destination, content);
-          const reopened = await fs.readFile(destination, 'utf8');
-          if (reopened !== content) throw new Error('Output validation failed after atomic publication.');
-          await this.queue.complete(item.id, 'Converted to validated UTF-8 plain text in the controlled local output location.');
+          const reopenedBytes = await fs.readFile(destination);
+          if (!Buffer.from(reopenedBytes).equals(Buffer.from(content, 'utf8'))) throw new Error('Output validation failed after atomic publication.');
+          if (adapter.id === 'csv-to-json') {
+            const parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(reopenedBytes));
+            if (!Array.isArray(parsed)) throw new Error('CSV JSON output is not a JSON table after reopening.');
+          }
+          await this.queue.complete(item.id, adapter.id === 'csv-to-json'
+            ? 'Converted CSV to validated deterministic JSON in the controlled local output location.'
+            : 'Converted to validated UTF-8 plain text in the controlled local output location.');
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Local conversion failed safely.';
           await this.queue.fail(item.id, message);

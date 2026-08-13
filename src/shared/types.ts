@@ -394,6 +394,11 @@ export interface FileConverterSurfaceState {
     items: FileConverterQueueItemView[];
   };
   storage: { availableBytes: number; requiredBytes: number; reserveBytes: number; status: 'ready' | 'insufficient' | 'unavailable' };
+  outputDestination: {
+    mode: 'user-selected' | 'application-data-fallback';
+    directory: string;
+    validation: 'ready' | 'unavailable';
+  };
   limits: { signatureBytes: number; pageItems: number; maxConcurrency: number };
   lastMessage: string;
 }
@@ -486,6 +491,8 @@ export interface Bridge {
   dimSumStartup(): Promise<DimSumStartupPresentation | null>;
   fileConverterState(): Promise<FileConverterSurfaceState>;
   fileConverterPickSources(): Promise<FileConverterSurfaceState>;
+  fileConverterPickOutputDestination(): Promise<FileConverterSurfaceState>;
+  fileConverterClearOutputDestination(): Promise<FileConverterSurfaceState>;
   fileConverterClearSelection(): Promise<FileConverterSurfaceState>;
   fileConverterEnqueue(adapterId: string): Promise<FileConverterSurfaceState>;
   fileConverterPause(): Promise<FileConverterSurfaceState>;

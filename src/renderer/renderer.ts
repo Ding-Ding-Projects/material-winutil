@@ -1,8 +1,7 @@
 /* ============================================================================
  * WinUtil — renderer process.
- * Pure TypeScript, no framework. Compiled by `tsc` for Electron; the same file
- * is transpiled in-browser by preview.html, so it stays a single script-scope
- * file with no module imports.
+ * Pure TypeScript, no framework. Compiled by `tsc` for Electron and kept in a
+ * single script scope with no module imports.
  * ========================================================================== */
 
 type ViewId = 'install' | 'tweaks' | 'config' | 'updates' | 'iso' | 'converter' | 'ollama' | 'history' | 'docs' | 'settings';
@@ -1091,171 +1090,12 @@ function recordHistory(action: string, detail: string): void {
   void bridge().appendHistory({ action, detail }).catch(() => undefined);
 }
 
-/** Browser fallback so preview.html renders the exact same code path. */
 function bridge(): Bridge {
   const w = window as unknown as { winutil?: Bridge };
-  if (w.winutil) return w.winutil;
-  const fake: Bridge = {
-    platform: 'browser',
-    loadCatalog: () => fetch('config/winutil.json').then((r) => r.json() as Promise<Catalog>),
-    window: () => snack('Window controls are handled by the Electron main process.'),
-    run: async (kind, ids) => {
-      for (let i = 0; i < ids.length; i += 1) {
-        state.queue = { ...state.queue, index: i + 1, current: ids[i] };
-        render();
-        await new Promise((r) => window.setTimeout(r, 120));
-      }
-      return { ok: true, code: 0, stderr: '', stdout: `${kind}: ${ids.length} item(s) processed.\nPreview mode does not execute system commands.` };
-    },
-    installed: async () => ['7zip', 'brave', 'vscode', 'powertoys'],
-    ensureDeps: async () => [
-      { name: 'winget', present: true, installed: false, detail: 'App Installer already present' },
-      { name: 'Chocolatey', present: true, installed: false, detail: 'choco already on PATH' },
-    ],
-    onProgress: () => undefined,
-    loadOfflineDocs: () => fetch('../offline-docs/bundle.json').then((response) => {
-      if (!response.ok) throw new Error('The offline documentation bundle is unavailable.');
-      return response.json() as Promise<OfflineDocsBundle>;
-    }),
-    openExternal: async () => ({ ok: false, status: 'rejected', error: 'External links are available only in the installed application.' }),
-    exportView: async () => ({ status: 'cancelled', warnings: [] }),
-    openExportInVSCode: async () => ({ ok: false, status: 'not-installed', error: 'Visual Studio Code handoff is available only in the installed application.' }),
-    readPrefs: async () => { try { return JSON.parse(localStorage.getItem('winutil.prefs') ?? '{}') as Partial<Prefs>; } catch { return {}; } },
-    writePrefs: async (p) => localStorage.setItem('winutil.prefs', JSON.stringify(p)),
-    history: async () => [],
-    appendHistory: async (e) => ({ ...e, id: `h-${Date.now()}`, at: new Date().toISOString() }),
-    historyBrowse: async () => ({ entries: [], actionCounts: [] }),
-    historyAccess: async () => ({ configured: false, unlocked: false }),
-    historyConfigureCredential: async () => ({ configured: true, unlocked: true }),
-    historyUnlock: async () => ({ configured: true, unlocked: true }),
-    historyLock: async () => ({ configured: true, unlocked: false }),
-    historyDiff: async () => [],
-    historyRestore: async () => { throw new Error('Restore is available only in the installed application.'); },
-    historyLabel: async () => { throw new Error('Labels are available only in the installed application.'); },
-    historyPrune: async () => { throw new Error('Retention is available only in the installed application.'); },
-    historyExport: async () => ({ status: 'cancelled', warnings: [] }),
-    updateStatus: async () => state.update,
-    checkForUpdates: async () => ({ ...state.update, state: 'disabled', message: 'Update checks run only in an installed build.' }),
-    cancelUpdateCheck: async () => ({ ...state.update, state: 'cancelled', canCancel: false, message: 'The update check was cancelled before download began.' }),
-    deferUpdate: async () => ({ ...state.update, deferred: true, message: 'The update remains ready. Restart when your work is saved.' }),
-    restartToUpdate: async () => ({ status: 'not-ready' }),
-    onUpdateStatus: () => undefined,
-    authenticatorBegin: async () => { throw new Error('Authenticator registration is available only in the installed application.'); },
-    authenticatorImportPngFile: async () => { throw new Error('Authenticator PNG import is available only in the installed application.'); },
-    authenticatorImportClipboardPng: async () => { throw new Error('Authenticator clipboard import is available only in the installed application.'); },
-    authenticatorConfirm: async () => { throw new Error('Authenticator confirmation is available only in the installed application.'); },
-    authenticatorCancel: async () => false,
-    authenticatorList: async () => [],
-    authenticatorCodes: async () => { throw new Error('Authenticator codes are available only in the installed application.'); },
-    authenticatorRemove: async () => false,
-    lockState: async () => state.locks.data,
-    lockPrepareTotp: async () => { throw new Error('Local TOTP preparation is available only in the installed application.'); },
-    lockCreate: async (request) => {
-      const id = `preview-${request.target.kind}-${request.target.id}`.replace(/[^A-Za-z0-9._:/-]/gu, '-');
-      const record: LockPublicRecord = { id, target: request.target, label: request.label, credential: { method: request.credential.method === 'password' ? 'password-hash' : 'totp', revision: 1 }, unlockDuration: request.unlockDuration, lockedOnLaunch: true };
-      state.locks.data = { ...state.locks.data, generation: state.locks.data.generation + 1, locks: [...state.locks.data.locks, { record, locked: true }] };
-      return state.locks.data;
-    },
-    lockUpdate: async () => state.locks.data,
-    lockRemove: async (lockId) => {
-      state.locks.data = { ...state.locks.data, generation: state.locks.data.generation + 1, locks: state.locks.data.locks.filter((entry) => entry.record.id !== lockId) };
-      return state.locks.data;
-    },
-    lockSearch: async () => state.locks.data.locks,
-    lockUnlock: async () => ({ ok: false, code: 'credential-unavailable', retryAtMs: null }),
-    lockRelock: async () => state.locks.data,
-    lockRecovery: async () => ({ appDataFolder: 'Application data is available only in the installed app.', disclosure: 'This is a user-experience lock, not a security boundary.', resetInstruction: 'Close the installed app and delete its application-data folder yourself to reset locks.', copyText: 'Preview mode does not open a folder.', action: 'open-folder-only', deletesData: false }),
-    lockOpenRecoveryFolder: async () => fake.lockRecovery(),
-    personalVocabularyLoad: async () => ({ state: 'empty', entryCount: 0, mappings: {} }),
-    personalVocabularyUpload: async () => ({ ok: false, code: 'invalid-schema', message: 'Personal vocabulary data is invalid.' }),
-    personalVocabularyClear: async () => ({ state: 'empty', entryCount: 0, mappings: {} }),
-    narrationState: async () => ({ platformSpeechAvailable: typeof window.speechSynthesis !== 'undefined', screenReaderActive: false }),
-    narrate: async () => ({ status: 'suppressed', reason: 'preview' }),
-    stopNarration: async () => { window.speechSynthesis?.cancel(); },
-    onNarrationSpeech: () => undefined,
-    onNarrationCancel: () => undefined,
-    narrationSpeechResult: () => undefined,
-    onNarrationState: () => undefined,
-    settingsSurfaceState: async () => state.settingsSurface ?? {
-      displayName: { schemaVersion: 1, displayName: 'Material System Utility' },
-      dialogEmoji: { schemaVersion: 1, showEmojisInDialogsAndMessageBoxes: true },
-      dialogDecorations: { information: 'ℹ️', success: '✅', warning: '⚠️', error: '❌', destructive: '🗑️', security: '🔒' },
-      schoolMode: { status: 'unavailable', code: 'shared-store-unavailable', cause: 'read-failed', eventGeneration: 0, recordGeneration: null },
-    },
-    renameDisplayName: async (displayName) => {
-      const current = await fake.settingsSurfaceState();
-      return { ...current, displayName: { schemaVersion: 1, displayName: displayName.trim() || 'Material System Utility' } };
-    },
-    resetDisplayName: async () => ({ ...(await fake.settingsSurfaceState()), displayName: { schemaVersion: 1, displayName: 'Material System Utility' } }),
-    setDialogEmojis: async (enabled) => ({ ...(await fake.settingsSurfaceState()), dialogEmoji: { schemaVersion: 1, showEmojisInDialogsAndMessageBoxes: enabled } }),
-    renameSchoolMode: async () => fake.settingsSurfaceState(),
-    configureSchoolModePassword: async () => fake.settingsSurfaceState(),
-    resetSchoolModeCredential: async () => fake.settingsSurfaceState(),
-    setSchoolModeEnabled: async () => ({ ok: false, code: 'credential-unavailable' }),
-    onSettingsSurfaceState: () => undefined,
-    scheduledSettingsState: async () => state.schedule.data ?? {
-      document: { schemaVersion: 1, rules: [] }, effectiveSettings: {}, activeRuleIds: [], settingRuleIds: {}, sourceStatuses: [],
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local system time', evaluatedAt: new Date().toISOString(),
-    },
-    saveScheduledSettings: async (document) => ({ ...(await fake.scheduledSettingsState()), document }),
-    refreshScheduledSettings: async () => fake.scheduledSettingsState(),
-    setScheduledHomeAssistantToken: async () => fake.scheduledSettingsState(),
-    clearScheduledHomeAssistantToken: async () => fake.scheduledSettingsState(),
-    onScheduledSettingsState: () => undefined,
-    dimSumStartup: async () => null,
-    fileConverterState: async () => state.converter.data ?? previewConverterState(),
-    fileConverterPickSources: async () => { throw new Error('The native local file picker is available only in the installed application.'); },
-    fileConverterClearSelection: async () => previewConverterState(),
-    fileConverterEnqueue: async () => { throw new Error('No offline adapter is bundled in this build.'); },
-    fileConverterPause: async () => ({ ...(state.converter.data ?? previewConverterState()), queue: { ...(state.converter.data ?? previewConverterState()).queue, state: 'paused' } }),
-    fileConverterResume: async () => ({ ...(state.converter.data ?? previewConverterState()), queue: { ...(state.converter.data ?? previewConverterState()).queue, state: 'active' } }),
-    fileConverterCancelAll: async () => ({ ...(state.converter.data ?? previewConverterState()), queue: { ...(state.converter.data ?? previewConverterState()).queue, state: 'cancelled' } }),
-    fileConverterResetQueue: async () => previewConverterState(),
-    appLogoState: async () => state.appLogo.data ?? previewAppLogoState(),
-    appLogoPickPng: async () => { throw new Error('The native local PNG picker is available only in the installed application.'); },
-    appLogoSelectPreset: async (presetId, transform) => previewAppLogoState(presetId, transform),
-    appLogoUpdateTransform: async (transform) => previewAppLogoState('material-blue', transform),
-    appLogoReset: async () => previewAppLogoState(),
-    ollamaHealth: async () => ({ state: 'missing', checkedAt: new Date().toISOString(), version: null, installed: [], running: [], message: 'Ollama is not available in this browser preview. Install and start the local Ollama service, then refresh in the installed application.' }),
-    ollamaInstalledEnrichment: async () => null,
-    ollamaRefreshInstalledEnrichment: async () => ({ schemaVersion: 1, source: 'local-ollama-installed-enrichment', sourceRevision: '', inventoryRevision: '', fetchedAt: new Date().toISOString(), version: '', complete: false, skippedCount: 0, stale: true, models: [], message: 'Installed-model enrichment is unavailable in this browser preview because it cannot read the local Ollama API.' }),
-    ollamaHardware: async () => ({ detectedAt: new Date().toISOString(), ramTotalBytes: null, ramAvailableBytes: null, gpuName: null, vramTotalBytes: null, vramAvailableBytes: null, gpuDriver: null, gpuSupported: null, diskFreeBytes: null, probes: { ram: { state: 'unavailable', message: 'Hardware evidence is available only in the installed application.' }, disk: { state: 'unavailable', message: 'Hardware evidence is available only in the installed application.' }, gpu: { state: 'unavailable', message: 'Hardware evidence is available only in the installed application.' } } }),
-    ollamaCatalog: async () => ({ schemaVersion: 1, source: 'official-ollama-catalog', sourceRevision: '', refreshedAt: new Date().toISOString(), pageCount: 0, complete: false, stale: true, variants: [], installedOnly: [], message: 'No reviewed official catalog adapter is available in this build.' }),
-    ollamaRefreshCatalog: async () => fake.ollamaCatalog(),
-    ollamaPullQueue: async () => [],
-    ollamaEnqueuePulls: async () => { throw new Error('Pulling needs a verified complete official catalog and the local Ollama API.'); },
-    ollamaCancelPull: async () => false,
-    ollamaRetryPull: async () => [],
-    ollamaChat: async () => { throw new Error('Chat needs a healthy local Ollama service and an installed verified model.'); },
-    ollamaCancelChat: async () => false,
-    ollamaExportChat: async (request) => ({ schemaVersion: 1, messages: request.messages.map((message) => ({ role: message.role, content: message.role === 'system' ? '[system prompt omitted]' : message.content, attachmentsOmitted: message.images?.length ?? 0 })) }),
-    onOllamaPullProgress: () => undefined,
-    onOllamaChatChunk: () => undefined,
-  };
-  w.winutil = fake;
-  return fake;
-}
-
-function previewAppLogoState(presetId: AppLogoPresetId = 'material-blue', transform: AppLogoTransform = { crop: 'original', fit: 'contain', focalPoint: { x: 0.5, y: 0.5 }, background: 'transparent' }): AppLogoRuntimeSnapshot {
-  const colors: Record<AppLogoPresetId, [string, string]> = { 'material-blue': ['#6750a4', '#e8def8'], 'material-teal': ['#006b5f', '#d7e8e3'], 'high-contrast': ['#000000', '#ffffff'] };
-  const [foreground, background] = colors[presetId];
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" rx="72" fill="${background}"/><circle cx="128" cy="128" r="88" fill="${foreground}"/><path d="M128 70l52 58-52 58-52-58z" fill="${background}"/></svg>`;
-  const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-  const assets = [20, 24, 48, 64, 128, 256].map((size, index) => ({ id: ['titlebar-20', 'menu-24', 'settings-preview-48', 'app-64', 'app-128', 'app-256'][index], format: 'png' as const, width: size, height: size, consumer: 'preview', sha256: `preview-${size}`, dataUrl }));
-  return { persisted: { schemaVersion: 1, storage: 'local-only', transform, selection: { kind: 'preset', presetId } }, assets, exportMetadata: { schemaVersion: 1, selection: 'preset', presetId, transform, omitted: ['custom-logo-derived-raster'] }, identityBoundary: 'presentation-only', sourceRetention: 'derived-raster-only' };
-}
-
-const CONVERTER_CATEGORIES: readonly ConverterCategory[] = ['Documents/PDF', 'Images', 'Audio', 'Video', 'Archives', 'Structured Data/Spreadsheets', 'Code/Text', 'Binary Encodings'];
-function previewConverterState(): FileConverterSurfaceState {
-  const unavailableReason = 'Unavailable: this adapter is not bundled and verified in the packaged artifact.';
-  const targets = ['PDF inspection and page operations', 'PNG/JPEG/WebP', 'WAV/MP3/Ogg', 'MP4/WebM', 'ZIP/7z', 'CSV/TSV/XLSX/ODS', 'TXT/Markdown/JSON/YAML/XML', 'Base64/hex'];
-  return {
-    schemaVersion: 1,
-    catalog: CONVERTER_CATEGORIES.map((category, index) => ({ id: `preview-${index}`, category, sourceKinds: ['unknown'], targetFormat: targets[index], metadataBehavior: 'Exact behavior requires a bundled offline adapter.', lossiness: 'opaque', sandbox: 'isolated-local', limits: { inputBytes: 0, outputBytes: 0, memoryBytes: 0, cpuMs: 0, tempBytes: 0 }, outputValidator: 'Unavailable until a bundled adapter can reopen and validate its output.', availability: 'unavailable', unavailableReason })),
-    selected: [], queue: { state: 'active', pageCount: 0, inFlightBytes: 0, counts: { queued: 0, running: 0, succeeded: 0, failed: 0, cancelled: 0 }, items: [] },
-    storage: { availableBytes: 0, requiredBytes: 0, reserveBytes: 268435456, status: 'unavailable' },
-    limits: { signatureBytes: 4096, pageItems: 64, maxConcurrency: 4 }, lastMessage: 'Preview mode cannot inspect local source files.',
-  };
+  if (!w.winutil) {
+    throw new Error('WinUtil preload bridge is unavailable. Start the installed application instead of loading the renderer directly.');
+  }
+  return w.winutil;
 }
 
 const activeUtterances = new Map<number, SpeechSynthesisUtterance>();
@@ -5327,7 +5167,7 @@ async function boot(): Promise<void> {
   }
   try { state.offlineDocs = await bridge().loadOfflineDocs(); }
   catch (error) { state.offlineDocsError = error instanceof Error ? error.message : 'The offline documentation bundle could not be verified.'; }
-  try { state.update = await bridge().updateStatus(); } catch { /* development/browser preview */ }
+  try { state.update = await bridge().updateStatus(); } catch { /* update state remains unavailable */ }
   try { state.converter.data = await bridge().fileConverterState(); }
   catch (error) { state.converter.error = error instanceof Error ? error.message : 'The local converter state could not be loaded.'; }
   try { state.appLogo.data = await bridge().appLogoState(); }

@@ -106,6 +106,14 @@ interface WinutilApp { id: string; name: string; cat: string; desc: string; wing
 interface WinutilTweak { id: string; name: string; cat: string; desc: string; panel?: string; type?: string; }
 interface Catalog { apps: WinutilApp[]; tweaks: WinutilTweak[]; features: WinutilTweak[]; presets: Record<string, string[]>; dns: Record<string, Record<string, string>>; }
 interface WorkspaceTab { id: string; view: ViewId; pinned: boolean; group: string | null; locked: boolean; unsaved?: boolean; }
+interface WorkspaceRuntimeDecoration { icon: string | null; badge: string | null; foreground: string | null; background: string | null; }
+interface WorkspaceRuntimeTab { id: string; label: string; pinned: boolean; locked: boolean; unsaved: boolean; groupId: string | null; decoration: WorkspaceRuntimeDecoration; }
+interface WorkspaceRuntimeGroup { id: string; label: string; color: string; collapsed: boolean; tabIds: string[]; decoration: WorkspaceRuntimeDecoration; }
+interface WorkspaceRuntimeSearch { mode: 'plain' | 'regex'; query: string; flags: string; }
+interface WorkspaceRuntimeState {
+  schemaVersion: 1; dock: TabDock; activeWorkspaceId: string;
+  workspaces: Array<{ id: string; label: string; activeWindowId: string; windows: Array<{ id: string; label: string; activeStripId: string; strips: Array<{ id: string; label: string; activeTabId: string | null; focusTabId: string | null; tabOrder: string[]; tabs: WorkspaceRuntimeTab[]; groups: WorkspaceRuntimeGroup[]; searches: { strip: WorkspaceRuntimeSearch; groups: WorkspaceRuntimeSearch; master: WorkspaceRuntimeSearch; group: Array<{ groupId: string; descriptor: WorkspaceRuntimeSearch }> } }> }> }>;
+}
 interface HistoryEntry { id: string; action: string; detail: string; at: string; }
 interface GitHistoryEntry { commit: string; action: string; recordedAt: string; revisionId: string; restoredFrom?: string; label?: string; }
 interface ExportSaveResult { status: 'saved' | 'cancelled'; filePath?: string; warnings: string[]; vscode?: { available: boolean; label?: string }; }
@@ -309,6 +317,8 @@ interface Bridge {
   appLogoSelectPreset(presetId: AppLogoPresetId, transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot>;
   appLogoUpdateTransform(transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot>;
   appLogoReset(): Promise<AppLogoRuntimeSnapshot>;
+  workspaceState(): Promise<WorkspaceRuntimeState>;
+  workspaceSave(state: WorkspaceRuntimeState): Promise<WorkspaceRuntimeState>;
   ollamaHealth(): Promise<OllamaHealthSnapshot>;
   ollamaInstalledEnrichment(): Promise<OllamaInstalledEnrichmentSnapshot | null>;
   ollamaRefreshInstalledEnrichment(): Promise<OllamaInstalledEnrichmentSnapshot>;
@@ -848,76 +858,103 @@ function showDimSumStartup(presentation: DimSumStartupPresentation): void {
   render();
 }
 
-const WORKSPACE_STORAGE_KEY = 'material-system-utility.workspace.v1';
 const VALID_VIEWS = new Set<ViewId>(['install', 'tweaks', 'config', 'updates', 'iso', 'converter', 'ollama', 'history', 'docs', 'settings']);
 let workspaceReady = false;
+let workspaceWriteGeneration = 0;
+let lastAuthoritativeWorkspace: WorkspaceRuntimeState | null = null;
 let authenticatorRefreshTimer = 0;
 let authenticatorRefreshBusy = false;
 let authenticatorExpiryTimer = 0;
 let authenticatorOperationGeneration = 0;
 let dialogReturnFocus: HTMLElement | null = null;
 
-interface StoredWorkspace {
-  schemaVersion: 1;
-  tabs: WorkspaceTab[];
-  groups: string[];
-  collapsedGroups: string[];
-  activeTab: string;
-  selectedGroup: string;
-  tabDock: TabDock;
-}
-
 function normalizeGroupName(value: string): string {
   return value.trim().replace(/\s+/g, ' ').slice(0, 64);
 }
 
-function persistWorkspace(): void {
-  if (!workspaceReady) return;
-  const stored: StoredWorkspace = {
-    schemaVersion: 1,
-    tabs: state.tabs.map((tab) => ({ ...tab, locked: Boolean(tab.locked) })),
-    groups: [...state.groups],
-    collapsedGroups: [...state.collapsedGroups],
-    activeTab: state.activeTab,
-    selectedGroup: state.selectedGroup,
-    tabDock: state.prefs.tabDock,
-  };
-  try { localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(stored)); } catch { /* retain the live workspace */ }
+const workspaceDecoration = (badge: string | null = null): WorkspaceRuntimeDecoration => ({ icon: null, badge, foreground: null, background: null });
+
+function orderedWorkspaceTabs(): WorkspaceTab[] {
+  return [...state.tabs.filter((tab) => tab.pinned), ...state.tabs.filter((tab) => !tab.pinned)];
 }
 
-function loadWorkspace(): void {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(WORKSPACE_STORAGE_KEY) ?? 'null') as Partial<StoredWorkspace> | null;
-    if (!parsed || parsed.schemaVersion !== 1 || !Array.isArray(parsed.tabs)) return;
-    const seen = new Set<string>();
-    const tabs = parsed.tabs.filter((tab): tab is WorkspaceTab => {
-      if (!tab || typeof tab.id !== 'string' || seen.has(tab.id) || !VALID_VIEWS.has(tab.view)) return false;
-      seen.add(tab.id);
-      return typeof tab.pinned === 'boolean' && (tab.group === null || typeof tab.group === 'string');
-    }).map((tab) => ({ ...tab, group: tab.group ? normalizeGroupName(tab.group) : null, locked: Boolean(tab.locked) }));
-    if (!tabs.length) return;
-    const groups = Array.isArray(parsed.groups)
-      ? parsed.groups.filter((group): group is string => typeof group === 'string').map(normalizeGroupName).filter(Boolean)
-      : [];
-    tabs.forEach((tab) => { if (tab.group) groups.push(tab.group); });
-    state.tabs = tabs;
-    state.groups = [...new Set(groups)];
-    state.collapsedGroups = new Set(Array.isArray(parsed.collapsedGroups)
-      ? parsed.collapsedGroups.filter((group): group is string => typeof group === 'string' && state.groups.includes(group))
-      : []);
-    state.activeTab = tabs.some((tab) => tab.id === parsed.activeTab) ? parsed.activeTab! : tabs[0].id;
-    state.selectedGroup = typeof parsed.selectedGroup === 'string' && state.groups.includes(parsed.selectedGroup)
-      ? parsed.selectedGroup : state.groups[0] ?? 'Ungrouped';
-    if (parsed.tabDock && ['left', 'right', 'top', 'bottom'].includes(parsed.tabDock)) state.prefs.tabDock = parsed.tabDock;
-    const active = tabs.find((tab) => tab.id === state.activeTab)!;
-    state.view = active.view;
-  } catch { /* a malformed workspace falls back to the reviewed defaults */ }
+function workspaceRuntimeState(): WorkspaceRuntimeState {
+  const tabs = orderedWorkspaceTabs();
+  const groupIdByLabel = new Map(state.groups.map((label, index) => [label, `group-${index + 1}`]));
+  const runtimeTabs: WorkspaceRuntimeTab[] = tabs.map((tab) => ({
+    id: tab.id, label: tab.id, pinned: tab.pinned, locked: Boolean(tab.locked), unsaved: Boolean(tab.unsaved),
+    groupId: tab.group === null ? null : groupIdByLabel.get(tab.group) ?? null,
+    decoration: workspaceDecoration(tab.view),
+  }));
+  const groups: WorkspaceRuntimeGroup[] = state.groups.map((label, index) => {
+    const id = `group-${index + 1}`;
+    return { id, label, color: '#6750A4', collapsed: state.collapsedGroups.has(label),
+      tabIds: runtimeTabs.filter((tab) => tab.groupId === id).map((tab) => tab.id), decoration: workspaceDecoration() };
+  });
+  const activeTab = runtimeTabs.some((tab) => tab.id === state.activeTab) ? state.activeTab : runtimeTabs[0]?.id ?? null;
+  return {
+    schemaVersion: 1, dock: state.prefs.tabDock, activeWorkspaceId: 'workspace.default',
+    workspaces: [{ id: 'workspace.default', label: 'Default workspace', activeWindowId: 'window.default', windows: [{
+      id: 'window.default', label: 'Main window', activeStripId: 'strip.default', strips: [{
+        id: 'strip.default', label: 'Main tabs', activeTabId: activeTab, focusTabId: activeTab,
+        tabOrder: runtimeTabs.map((tab) => tab.id), tabs: runtimeTabs, groups,
+        searches: { strip: { mode: 'plain', query: '', flags: 'iu' }, groups: { mode: 'plain', query: '', flags: 'iu' }, master: { mode: 'plain', query: '', flags: 'iu' }, group: [] },
+      }],
+    }] }],
+  };
+}
+
+function applyWorkspaceRuntime(runtime: WorkspaceRuntimeState): boolean {
+  const workspace = runtime.schemaVersion === 1 && runtime.workspaces.length === 1 && runtime.workspaces[0];
+  const windowState = workspace?.windows.length === 1 && workspace.windows[0];
+  const strip = windowState?.strips.length === 1 && windowState.strips[0];
+  if (!workspace || !windowState || !strip || workspace.id !== runtime.activeWorkspaceId || windowState.id !== workspace.activeWindowId || strip.id !== windowState.activeStripId
+    || !['left', 'right', 'top', 'bottom'].includes(runtime.dock) || strip.tabs.length === 0 || strip.tabOrder.length !== strip.tabs.length) return false;
+  const groups = new Map(strip.groups.map((group) => [group.id, normalizeGroupName(group.label)]));
+  if ([...groups.values()].some((label) => !label) || new Set(groups.values()).size !== groups.size) return false;
+  const byId = new Map(strip.tabs.map((tab) => [tab.id, tab]));
+  if (byId.size !== strip.tabs.length || strip.tabOrder.some((id) => !byId.has(id)) || !strip.activeTabId || !byId.has(strip.activeTabId)) return false;
+  const tabs: WorkspaceTab[] = [];
+  for (const id of strip.tabOrder) {
+    const tab = byId.get(id)!;
+    const view = tab.decoration?.badge;
+    if (!VALID_VIEWS.has(view as ViewId) || (tab.groupId !== null && !groups.has(tab.groupId))) return false;
+    tabs.push({ id: tab.id, view: view as ViewId, pinned: tab.pinned, locked: tab.locked, unsaved: tab.unsaved, group: tab.groupId === null ? null : groups.get(tab.groupId)! });
+  }
+  const pinnedEnded = tabs.findIndex((tab) => !tab.pinned);
+  if (pinnedEnded >= 0 && tabs.slice(pinnedEnded).some((tab) => tab.pinned)) return false;
+  const namedGroups = [...groups.values()];
+  state.tabs = tabs;
+  state.groups = namedGroups;
+  state.collapsedGroups = new Set(strip.groups.filter((group) => group.collapsed).map((group) => groups.get(group.id)!).filter(Boolean));
+  state.activeTab = strip.activeTabId;
+  state.selectedGroup = namedGroups.find((group) => tabs.some((tab) => tab.group === group)) ?? namedGroups[0] ?? 'Ungrouped';
+  state.prefs.tabDock = runtime.dock;
+  state.basePrefs.tabDock = runtime.dock;
+  state.view = tabs.find((tab) => tab.id === state.activeTab)!.view;
+  return true;
+}
+
+function persistWorkspace(): void {
+  if (!workspaceReady) return;
+  const generation = ++workspaceWriteGeneration;
+  const candidate = workspaceRuntimeState();
+  void bridge().workspaceSave(candidate).then((saved) => {
+    if (generation !== workspaceWriteGeneration) return;
+    if (applyWorkspaceRuntime(saved)) lastAuthoritativeWorkspace = saved;
+  }).catch((error) => {
+    if (generation !== workspaceWriteGeneration) return;
+    if (lastAuthoritativeWorkspace) applyWorkspaceRuntime(lastAuthoritativeWorkspace);
+    snack(error instanceof Error ? `Workspace change was not saved: ${error.message}` : 'Workspace change was not saved.');
+    render();
+  });
 }
 
 function setTabDock(dock: TabDock): void {
   state.prefs.tabDock = dock;
-  savePrefs();
+  state.basePrefs.tabDock = dock;
   render();
+  persistWorkspace();
 }
 
 function moveTabToGroup(tab: WorkspaceTab, group: string | null): void {
@@ -1591,7 +1628,7 @@ function drawer(): HTMLElement {
       oncontextmenu: ctx(`nav-${item.id}`, () => [
         { icon: 'open_in_new', label: `Open ${item.label}`, act: () => go(item.id) },
         { icon: 'tab', label: 'Open in a new tab', act: () => { go(item.id); newTab(); } },
-        { icon: 'push_pin', label: 'Open pinned', act: () => { go(item.id); const tb = state.tabs.find((o) => o.view === item.id); if (tb) tb.pinned = true; } },
+      { icon: 'push_pin', label: 'Open pinned', act: () => { go(item.id); const tb = state.tabs.find((o) => o.view === item.id); if (tb) { tb.pinned = true; persistWorkspace(); render(); } } },
         'divider',
         { icon: 'palette', label: 'Edit this destination’s appearance…', act: () => openAppearance(`nav-${item.id}`, item.label) },
         { icon: 'lock', label: `Lock ${item.label}…`, act: () => openLockWizard(`nav-${item.id}`, `Destination · ${item.label}`) },
@@ -1672,7 +1709,7 @@ function tabStrip(): HTMLElement {
       { icon: 'add', label: 'Open a new tab', act: () => newTab() },
       { icon: 'tab_group', label: 'Open the tab manager', act: () => openDialog('tabs') },
       { icon: 'filter_alt_off', label: 'Close tabs not containing text…', act: () => openDialog('tabs') },
-      { icon: 'push_pin', label: 'Unpin every tab', act: () => state.tabs.forEach((tb) => { tb.pinned = false; }) },
+      { icon: 'push_pin', label: 'Unpin every tab', act: () => { state.tabs.forEach((tb) => { tb.pinned = false; }); persistWorkspace(); render(); } },
       { icon: 'lock', label: 'Manage local locks…', act: () => { state.locks.phase = 'list'; openDialog('lock'); } },
       { icon: 'palette', label: 'Edit the tab strip appearance…', act: () => openAppearance('tabstrip', 'Tab strip') },
       { section: 'Docking' },
@@ -2600,7 +2637,7 @@ function checklistPane(source: WinutilTweak[], showPresets: boolean): HTMLElemen
     pane.appendChild(h('div', appearanceAttrs(`group-${group.name}`, {
       class: 'group-head',
       oncontextmenu: ctx(`grouphead-${group.name}`, () => [
-        { icon: collapsed ? 'expand_more' : 'expand_less', label: collapsed ? 'Expand this category' : 'Collapse this category', act: () => { collapsed ? state.collapsedGroups.delete(group.name) : state.collapsedGroups.add(group.name); } },
+        { icon: collapsed ? 'expand_more' : 'expand_less', label: collapsed ? 'Expand this category' : 'Collapse this category', act: () => { collapsed ? state.collapsedGroups.delete(group.name) : state.collapsedGroups.add(group.name); persistWorkspace(); render(); } },
         { icon: 'done_all', label: `Select all ${items.length} rows here`, act: () => items.forEach((i) => state.selected.add(i.id)) },
         { icon: 'deselect', label: 'Deselect the rows here', act: () => items.forEach((i) => state.selected.delete(i.id)) },
         { icon: 'warning', label: 'Run selected rows — unavailable in this build', act: () => snack('The reviewed system adapter is not installed in this build.') },
@@ -2612,7 +2649,7 @@ function checklistPane(source: WinutilTweak[], showPresets: boolean): HTMLElemen
     }),
       h('button', {
         class: 'group-toggle',
-        onclick: () => { collapsed ? state.collapsedGroups.delete(group.name) : state.collapsedGroups.add(group.name); render(); },
+        onclick: () => { collapsed ? state.collapsedGroups.delete(group.name) : state.collapsedGroups.add(group.name); persistWorkspace(); render(); },
       }, icon(CAT_ICONS[group.name] ?? 'folder'), h('b', {}, group.name.replace(/^z__/, '')),
         h('span', { class: 'nav-count' }, `${items.length}/${group.items.length}`), icon(collapsed ? 'expand_more' : 'expand_less')),
       searchLine(key, `Search ${group.name.replace(/^z__/, '').toLowerCase()}`),
@@ -3763,9 +3800,9 @@ const bulkItems = (ids: string[], label: string): MenuItem[] => [
 function tabMenu(tab: WorkspaceTab, x: number, y: number): void {
   contextMenu(`tab-${tab.id}`, x, y, [
     { section: 'This tab' },
-    { icon: tab.pinned ? 'keep_off' : 'push_pin', label: tab.pinned ? 'Unpin tab' : 'Pin tab', act: () => { tab.pinned = !tab.pinned; } },
+    { icon: tab.pinned ? 'keep_off' : 'push_pin', label: tab.pinned ? 'Unpin tab' : 'Pin tab', act: () => { tab.pinned = !tab.pinned; persistWorkspace(); render(); } },
     { icon: 'lock', label: tab.locked ? 'Unlock this tab…' : 'Lock this tab…', act: () => openLockWizard(`tab-${tab.id}`, `Tab · ${viewTitle(tab.view)}`, tab.locked ? 'unlock' : 'set') },
-    { icon: 'content_copy', label: 'Duplicate tab', act: () => { state.tabs = [...state.tabs, { ...tab, id: `t-${Date.now()}`, pinned: false }]; } },
+    { icon: 'content_copy', label: 'Duplicate tab', act: () => { state.tabs = [...state.tabs, { ...tab, id: `t-${Date.now()}`, pinned: false }]; state.activeTab = state.tabs[state.tabs.length - 1].id; persistWorkspace(); render(); } },
     { section: 'Groups' },
     { icon: 'drive_file_move', label: tab.group ? `Move out of ${tab.group}` : `Move into ${state.selectedGroup}`, act: () => moveTabToGroup(tab, tab.group ? null : state.selectedGroup) },
     { icon: 'tab_group', label: 'Open the tab manager', act: () => openDialog('tabs') },
@@ -5803,7 +5840,12 @@ async function boot(): Promise<void> {
   bridge().onNotificationsState((next) => { acceptNotifications(next); render(); });
   await loadPersonalVocabulary();
   try { state.profiles = JSON.parse(localStorage.getItem('winutil.profiles') ?? '[]'); } catch { state.profiles = []; }
-  loadWorkspace();
+  try {
+    const runtime = await bridge().workspaceState();
+    if (applyWorkspaceRuntime(runtime)) lastAuthoritativeWorkspace = runtime;
+  } catch (error) {
+    snack(error instanceof Error ? `Workspace state could not be loaded: ${error.message}` : 'Workspace state could not be loaded.');
+  }
   workspaceReady = true;
   try {
     state.locks.tickets = JSON.parse(localStorage.getItem('material-system-utility.support-tickets.v1') ?? '[]') as typeof state.locks.tickets;

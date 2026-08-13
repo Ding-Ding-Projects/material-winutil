@@ -41,6 +41,8 @@ import { OllamaHardwareService } from './ollama-hardware-service';
 import { OllamaHarnessService } from './ollama-harness-service';
 import { AppearanceThemeService } from './appearance-theme-service';
 import { NotificationStore } from './notification-store';
+import { WorkspaceRuntimeService } from './workspace-runtime-service';
+import type { WorkspaceRuntimeState } from '../shared/tabs';
 
 const ROOT = path.join(__dirname, '..', '..');
 const CONFIG_DIR = path.join(__dirname, '..', 'config');
@@ -70,6 +72,7 @@ let ollamaHardwareService: OllamaHardwareService | null = null;
 let ollamaHarnessService: OllamaHarnessService | null = null;
 let appearanceThemeService: AppearanceThemeService | null = null;
 let notificationStore: NotificationStore | null = null;
+let workspaceRuntimeService: WorkspaceRuntimeService | null = null;
 const scheduledNotificationFingerprints = new Map<string, string>();
 let updateNotificationFingerprint = '';
 interface EphemeralOllamaAttachment { descriptor: OllamaChatAttachment; base64: string; }
@@ -1370,6 +1373,11 @@ function appLogo(): AppLogoService {
   return appLogoService;
 }
 
+function workspaceRuntime(): WorkspaceRuntimeService {
+  if (!workspaceRuntimeService) throw new Error('The workspace runtime is unavailable.');
+  return workspaceRuntimeService;
+}
+
 function applyNativeAppLogo(snapshot: AppLogoRuntimeSnapshot = appLogo().snapshot()): void {
   if (!win || win.isDestroyed()) return;
   const school = settingsSurfaceService?.snapshot().schoolMode;
@@ -1400,6 +1408,14 @@ function requireLogoTransform(value: unknown): AppLogoTransform {
 ipcMain.handle('app-logo:state', (event): AppLogoRuntimeSnapshot => {
   requireTrustedSender(event);
   return appLogo().snapshot();
+});
+ipcMain.handle('workspace:state', (event): WorkspaceRuntimeState => {
+  requireTrustedSender(event);
+  return workspaceRuntime().snapshot();
+});
+ipcMain.handle('workspace:save', async (event, state: unknown): Promise<WorkspaceRuntimeState> => {
+  requireTrustedSender(event);
+  return workspaceRuntime().save(state);
 });
 ipcMain.handle('app-logo:pick-png', async (event, transformValue: unknown): Promise<AppLogoRuntimeSnapshot | null> => {
   requireTrustedSender(event);
@@ -1751,6 +1767,8 @@ app.whenReady().then(async () => {
   fileConverterService = await FileConverterService.open(USER_DIR());
   appLogoService = new AppLogoService({ userDataDirectory: USER_DIR() });
   await appLogoService.initialize();
+  workspaceRuntimeService = new WorkspaceRuntimeService({ userDataDirectory: USER_DIR() });
+  await workspaceRuntimeService.initialize();
   ollamaSuiteService = new OllamaSuiteService({
     userDataDirectory: USER_DIR(),
     onPullProgress: (progress) => {

@@ -14,6 +14,7 @@ import type {
   ScheduledSettingRule, ScheduledSettingsDocument, ScheduledSettingValue,
 } from './scheduled-settings';
 import type { DimSumSurpriseDescriptor } from './dim-sum-surprise';
+import type { TabWorkspaceState } from './tabs';
 import type { NotificationInput, NotificationReviewState, NotificationState } from './notifications';
 import type { ConverterAdapter, FileKind, QueueItemState, QueueState } from './file-converter';
 import type { AppLogoExportMetadata, AppLogoPersistedState, AppLogoPresetId, AppLogoTransform, AppLogoDerivedAsset } from './app-logo';
@@ -422,6 +423,8 @@ export interface AppLogoRuntimeSnapshot {
   readonly sourceRetention: 'derived-raster-only';
 }
 
+export type WorkspaceRuntimeState = TabWorkspaceState;
+
 /** The surface exposed on `window.winutil` by the preload bridge. */
 export interface Bridge {
   platform: NodeJS.Platform | 'browser';
@@ -518,6 +521,8 @@ export interface Bridge {
   fileConverterResetQueue(): Promise<FileConverterSurfaceState>;
   appLogoState(): Promise<AppLogoRuntimeSnapshot>;
   appLogoPickPng(transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot | null>;
+  workspaceState(): Promise<WorkspaceRuntimeState>;
+  workspaceSave(state: WorkspaceRuntimeState): Promise<WorkspaceRuntimeState>;
   appLogoSelectPreset(presetId: AppLogoPresetId, transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot>;
   appLogoUpdateTransform(transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot>;
   appLogoReset(): Promise<AppLogoRuntimeSnapshot>;

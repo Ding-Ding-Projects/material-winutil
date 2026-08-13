@@ -56,6 +56,10 @@ interface OllamaRunningModel extends OllamaInstalledModel { expiresAt: string; s
 interface OllamaHealthSnapshot { state: 'healthy' | 'missing' | 'unhealthy'; checkedAt: string; version: string | null; installed: OllamaInstalledModel[]; running: OllamaRunningModel[]; message: string; }
 interface OllamaCatalogVariant { model: string; tag: string; qualifiedName: string; digest: string | null; blobSizeBytes: number | null; parameterCount: number | null; quantization: string | null; contextLength: number | null; capabilities: OllamaCapability[]; publishedAt: string | null; sourceUrl: string; }
 interface OllamaCatalogSnapshot { schemaVersion: 1; source: 'official-ollama-catalog'; sourceRevision: string; refreshedAt: string; pageCount: number; complete: boolean; stale: boolean; variants: OllamaCatalogVariant[]; installedOnly: OllamaInstalledModel[]; message: string; }
+interface OllamaInstalledEnrichment { name: string; digest: string; sizeBytes: number; family: string; parameterSize: string; quantization: string; capabilities: OllamaCapability[]; }
+interface OllamaInstalledEnrichmentSnapshot { schemaVersion: 1; source: 'local-ollama-installed-enrichment'; sourceRevision: string; inventoryRevision: string; fetchedAt: string; version: string; complete: boolean; skippedCount: number; stale: boolean; models: OllamaInstalledEnrichment[]; message: string; }
+interface OllamaInstalledVariant extends OllamaCatalogVariant { source: 'installed-local'; family: string; parameterSize: string; }
+type OllamaModelVariant = OllamaCatalogVariant | OllamaInstalledVariant;
 interface OllamaHardwareProbeState { state: 'available' | 'unavailable' | 'error'; message: string; }
 interface OllamaHardwareEvidence { detectedAt: string; ramTotalBytes: number | null; ramAvailableBytes: number | null; gpuName: string | null; vramTotalBytes: number | null; vramAvailableBytes: number | null; gpuDriver: string | null; gpuSupported: boolean | null; diskFreeBytes: number | null; probes: { ram: OllamaHardwareProbeState; disk: OllamaHardwareProbeState; gpu: OllamaHardwareProbeState }; }
 type OllamaFitVerdict = 'runs-well' | 'runs-with-limits' | 'unlikely' | 'unknown';
@@ -254,6 +258,8 @@ interface Bridge {
   appLogoUpdateTransform(transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot>;
   appLogoReset(): Promise<AppLogoRuntimeSnapshot>;
   ollamaHealth(): Promise<OllamaHealthSnapshot>;
+  ollamaInstalledEnrichment(): Promise<OllamaInstalledEnrichmentSnapshot | null>;
+  ollamaRefreshInstalledEnrichment(): Promise<OllamaInstalledEnrichmentSnapshot>;
   ollamaHardware(): Promise<OllamaHardwareEvidence>;
   ollamaCatalog(): Promise<OllamaCatalogSnapshot>;
   ollamaRefreshCatalog(): Promise<OllamaCatalogSnapshot>;
@@ -261,9 +267,9 @@ interface Bridge {
   ollamaEnqueuePulls(models: string[]): Promise<OllamaPullProgress[]>;
   ollamaCancelPull(model: string): Promise<boolean>;
   ollamaRetryPull(model: string): Promise<OllamaPullProgress[]>;
-  ollamaChat(request: OllamaChatRequest, variant: OllamaCatalogVariant): Promise<OllamaChatRequest>;
+  ollamaChat(request: OllamaChatRequest, variant: OllamaModelVariant): Promise<OllamaChatRequest>;
   ollamaCancelChat(): Promise<boolean>;
-  ollamaExportChat(request: OllamaChatRequest, variant: OllamaCatalogVariant): Promise<{ schemaVersion: 1; messages: Array<{ role: string; content: string; attachmentsOmitted: number }> }>;
+  ollamaExportChat(request: OllamaChatRequest, variant: OllamaModelVariant): Promise<{ schemaVersion: 1; messages: Array<{ role: string; content: string; attachmentsOmitted: number }> }>;
   onOllamaPullProgress(cb: (progress: OllamaPullProgress) => void): void;
   onOllamaChatChunk(cb: (content: string) => void): void;
 }
@@ -738,6 +744,7 @@ const state = {
     health: null as OllamaHealthSnapshot | null,
     hardware: null as OllamaHardwareEvidence | null,
     catalog: null as OllamaCatalogSnapshot | null,
+    installedEnrichment: null as OllamaInstalledEnrichmentSnapshot | null,
     queue: [] as OllamaPullProgress[],
     tab: 'store' as 'status' | 'store' | 'cart' | 'chat' | 'harness',
     busy: false, error: '', selectedModel: '', cart: new Set<string>(),
@@ -1210,6 +1217,8 @@ function bridge(): Bridge {
     appLogoUpdateTransform: async (transform) => previewAppLogoState('material-blue', transform),
     appLogoReset: async () => previewAppLogoState(),
     ollamaHealth: async () => ({ state: 'missing', checkedAt: new Date().toISOString(), version: null, installed: [], running: [], message: 'Ollama is not available in this browser preview. Install and start the local Ollama service, then refresh in the installed application.' }),
+    ollamaInstalledEnrichment: async () => null,
+    ollamaRefreshInstalledEnrichment: async () => ({ schemaVersion: 1, source: 'local-ollama-installed-enrichment', sourceRevision: '', inventoryRevision: '', fetchedAt: new Date().toISOString(), version: '', complete: false, skippedCount: 0, stale: true, models: [], message: 'Installed-model enrichment is unavailable in this browser preview because it cannot read the local Ollama API.' }),
     ollamaHardware: async () => ({ detectedAt: new Date().toISOString(), ramTotalBytes: null, ramAvailableBytes: null, gpuName: null, vramTotalBytes: null, vramAvailableBytes: null, gpuDriver: null, gpuSupported: null, diskFreeBytes: null, probes: { ram: { state: 'unavailable', message: 'Hardware evidence is available only in the installed application.' }, disk: { state: 'unavailable', message: 'Hardware evidence is available only in the installed application.' }, gpu: { state: 'unavailable', message: 'Hardware evidence is available only in the installed application.' } } }),
     ollamaCatalog: async () => ({ schemaVersion: 1, source: 'official-ollama-catalog', sourceRevision: '', refreshedAt: new Date().toISOString(), pageCount: 0, complete: false, stale: true, variants: [], installedOnly: [], message: 'No reviewed official catalog adapter is available in this build.' }),
     ollamaRefreshCatalog: async () => fake.ollamaCatalog(),
@@ -1817,19 +1826,36 @@ function ollamaText(english: string, yue: string): string {
   return english;
 }
 
-function ollamaVariant(): OllamaCatalogVariant | undefined {
-  return state.ollama.catalog?.variants.find(({ qualifiedName }) => qualifiedName === state.ollama.selectedModel);
+function installedOllamaVariants(): OllamaInstalledVariant[] {
+  const snapshot = state.ollama.installedEnrichment;
+  if (!snapshot?.complete || snapshot.stale || snapshot.skippedCount !== 0) return [];
+  return snapshot.models.flatMap((model) => {
+    const separator = model.name.lastIndexOf(':');
+    if (separator <= 0 || separator === model.name.length - 1) return [];
+    return [{
+      source: 'installed-local' as const, model: model.name.slice(0, separator), tag: model.name.slice(separator + 1), qualifiedName: model.name,
+      digest: model.digest, blobSizeBytes: model.sizeBytes, parameterCount: null, quantization: model.quantization,
+      contextLength: null, capabilities: [...model.capabilities], publishedAt: null, sourceUrl: 'http://127.0.0.1:11434/api/show',
+      family: model.family, parameterSize: model.parameterSize,
+    }];
+  });
+}
+
+function ollamaVariant(): OllamaModelVariant | undefined {
+  return state.ollama.catalog?.variants.find(({ qualifiedName }) => qualifiedName === state.ollama.selectedModel)
+    ?? installedOllamaVariants().find(({ qualifiedName }) => qualifiedName === state.ollama.selectedModel);
 }
 
 async function refreshOllama(refreshCatalog = false): Promise<void> {
   if (state.ollama.busy) return;
   state.ollama.busy = true; state.ollama.error = ''; render();
   try {
-    const [health, hardware, catalog, queue] = await Promise.all([
-      bridge().ollamaHealth(), bridge().ollamaHardware(), refreshCatalog ? bridge().ollamaRefreshCatalog() : bridge().ollamaCatalog(), bridge().ollamaPullQueue(),
+    const [health, hardware, catalog, installedEnrichment, queue] = await Promise.all([
+      bridge().ollamaHealth(), bridge().ollamaHardware(), refreshCatalog ? bridge().ollamaRefreshCatalog() : bridge().ollamaCatalog(),
+      refreshCatalog ? bridge().ollamaRefreshInstalledEnrichment() : bridge().ollamaInstalledEnrichment(), bridge().ollamaPullQueue(),
     ]);
-    state.ollama.health = health; state.ollama.hardware = hardware; state.ollama.catalog = catalog; state.ollama.queue = queue;
-    if (!state.ollama.selectedModel) state.ollama.selectedModel = catalog.variants[0]?.qualifiedName ?? health.installed[0]?.name ?? '';
+    state.ollama.health = health; state.ollama.hardware = hardware; state.ollama.catalog = catalog; state.ollama.installedEnrichment = installedEnrichment; state.ollama.queue = queue;
+    if (!state.ollama.selectedModel) state.ollama.selectedModel = catalog.variants[0]?.qualifiedName ?? installedOllamaVariants()[0]?.qualifiedName ?? '';
   } catch (error) { state.ollama.error = error instanceof Error ? error.message : 'The local Ollama state could not be loaded.'; }
   finally { state.ollama.busy = false; render(); }
 }
@@ -1892,7 +1918,7 @@ function ollamaStatus(): HTMLElement {
     ]));
 }
 
-function ollamaFitAssessment(variant: OllamaCatalogVariant, evidence: OllamaHardwareEvidence): OllamaFitAssessment {
+function ollamaFitAssessment(variant: OllamaModelVariant, evidence: OllamaHardwareEvidence): OllamaFitAssessment {
   const blob = variant.blobSizeBytes;
   const parameters = variant.parameterCount;
   const context = variant.contextLength;
@@ -1913,7 +1939,7 @@ function ollamaFitAssessment(variant: OllamaCatalogVariant, evidence: OllamaHard
   return { verdict, reasons, evidence, requirements: { blobSizeBytes: blob, parameterCount: parameters, quantization: variant.quantization, contextLength: context, estimatedWorkingSetBytes: working, requiredFreeDiskBytes: disk } };
 }
 
-function ollamaFitText(variant: OllamaCatalogVariant): { verdict: string; detail: string } {
+function ollamaFitText(variant: OllamaModelVariant): { verdict: string; detail: string } {
   const evidence = state.ollama.hardware;
   const missing = variant.blobSizeBytes === null || variant.parameterCount === null || variant.contextLength === null || !variant.quantization;
   if (missing) return { verdict: ollamaText('Unknown', '未知'), detail: ollamaText('Exact size, parameters, quantization, context, or hardware evidence is missing. No fit is guessed from the model name.', '缺少確實大小、參數、量化、context 或硬件證據。唔會靠模型名估計。') };
@@ -1925,23 +1951,36 @@ function ollamaFitText(variant: OllamaCatalogVariant): { verdict: string; detail
 
 function ollamaStore(): HTMLElement {
   const catalog = state.ollama.catalog;
+  const localVariants = installedOllamaVariants();
   const search = sq('ollama:model-store'); const match = makeMatcher(search);
-  const variants = (catalog?.variants ?? []).filter((variant) => match(`${variant.qualifiedName} ${variant.capabilities.join(' ')} ${variant.quantization ?? ''} ${variant.blobSizeBytes ?? ''}`));
-  return h('section', { class: 'ollama-store', 'aria-label': ollamaText('Official Model Store', '官方模型商店') },
+  const officialVariants = (catalog?.variants ?? []).filter((variant) => match(`${variant.qualifiedName} ${variant.capabilities.join(' ')} ${variant.quantization ?? ''} ${variant.blobSizeBytes ?? ''}`));
+  const visibleLocalVariants = localVariants.filter((variant) => match(`${variant.qualifiedName} ${variant.family} ${variant.parameterSize} ${variant.capabilities.join(' ')} ${variant.quantization} ${variant.blobSizeBytes}`));
+  const modelCard = (variant: OllamaModelVariant, origin: 'official' | 'installed') => {
+    const fit = ollamaFitText(variant); const selected = state.ollama.selectedModel === variant.qualifiedName; const inCart = state.ollama.cart.has(variant.qualifiedName);
+    const pullEligible = origin === 'official' && !!catalog?.complete;
+    return h('article', { class: `ollama-model${selected ? ' selected' : ''}` },
+      h('div', { class: 'ollama-model-title' }, h('div', {}, h('b', {}, variant.qualifiedName), h('small', {}, origin === 'installed'
+        ? ollamaText(`Installed locally · ${(variant as OllamaInstalledVariant).family || 'family unknown'} · ${(variant as OllamaInstalledVariant).parameterSize || 'parameter size unknown'}`, `本機已安裝 · ${(variant as OllamaInstalledVariant).family || '系列未知'} · ${(variant as OllamaInstalledVariant).parameterSize || '參數大小未知'}`)
+        : variant.capabilities.join(' · '))), h('span', { class: 'availability unavailable' }, fit.verdict)),
+      h('p', {}, `${variant.blobSizeBytes === null ? 'Size unknown' : byteSize(variant.blobSizeBytes)} · ${variant.parameterCount === null ? (origin === 'installed' ? (variant as OllamaInstalledVariant).parameterSize || 'Parameters unknown' : 'Parameters unknown') : variant.parameterCount.toLocaleString()} · ${variant.quantization ?? 'Quantization unknown'} · ${variant.contextLength ?? 'Context unknown'}`),
+      origin === 'installed' ? h('p', {}, `${ollamaText('Digest', '摘要')}: ${variant.digest ?? 'Unknown'} · ${ollamaText('Capabilities', '能力')}: ${variant.capabilities.length ? variant.capabilities.join(' · ') : ollamaText('Not reported', '未有報告')}`) : null,
+      h('p', { class: 'unavailable-note' }, fit.detail),
+      h('div', { class: 'btnrow' }, h('button', { class: 'btn text', onclick: () => { state.ollama.selectedModel = variant.qualifiedName; render(); } }, selected ? ollamaText('Selected', '已選') : ollamaText('Use for chat', '用於聊天')),
+        pullEligible ? h('button', { class: 'btn tonal', onclick: () => { inCart ? state.ollama.cart.delete(variant.qualifiedName) : state.ollama.cart.add(variant.qualifiedName); render(); } }, inCart ? ollamaText('Remove from cart', '移出下載清單') : ollamaText('Add to pull cart', '加入下載清單')) : null));
+  };
+  return h('section', { class: 'ollama-store', 'aria-label': ollamaText('Model Store and installed local models', '模型商店同本機已安裝模型') },
     h('div', { class: 'ollama-store-search' }, searchLine('ollama:model-store', ollamaText('Search the complete official variant inventory', '搜尋完整官方模型版本清單'))),
     h('div', { class: `ollama-catalog-banner${catalog?.complete ? ' complete' : ' unavailable'}`, role: 'status' },
       icon(catalog?.complete ? 'verified' : 'warning'), h('div', {}, h('b', {}, catalog?.complete ? ollamaText('Verified complete snapshot', '已驗證完整快照') : ollamaText('Catalog unavailable or incomplete', '目錄不可用或者唔完整')),
         h('span', {}, catalog?.message ?? ollamaText('No official snapshot is available.', '未有官方快照。')),
         h('small', {}, `${catalog?.pageCount ?? 0} page(s) · ${catalog?.variants.length ?? 0} variant(s) · ${catalog?.stale ? 'stale' : 'current'} · revision ${catalog?.sourceRevision || 'unknown'}`))),
-    h('div', { class: 'ollama-models' }, ...(variants.length ? variants.map((variant) => {
-      const fit = ollamaFitText(variant); const selected = state.ollama.selectedModel === variant.qualifiedName; const inCart = state.ollama.cart.has(variant.qualifiedName);
-      return h('article', { class: `ollama-model${selected ? ' selected' : ''}` },
-        h('div', { class: 'ollama-model-title' }, h('div', {}, h('b', {}, variant.qualifiedName), h('small', {}, variant.capabilities.join(' · '))), h('span', { class: 'availability unavailable' }, fit.verdict)),
-        h('p', {}, `${variant.blobSizeBytes === null ? 'Size unknown' : byteSize(variant.blobSizeBytes)} · ${variant.parameterCount === null ? 'Parameters unknown' : variant.parameterCount.toLocaleString()} · ${variant.quantization ?? 'Quantization unknown'} · ${variant.contextLength ?? 'Context unknown'}`),
-        h('p', { class: 'unavailable-note' }, fit.detail),
-        h('div', { class: 'btnrow' }, h('button', { class: 'btn text', onclick: () => { state.ollama.selectedModel = variant.qualifiedName; render(); } }, selected ? ollamaText('Selected', '已選') : ollamaText('Use for chat', '用於聊天')),
-          h('button', { class: 'btn tonal', onclick: () => { inCart ? state.ollama.cart.delete(variant.qualifiedName) : state.ollama.cart.add(variant.qualifiedName); render(); } }, inCart ? ollamaText('Remove from cart', '移出下載清單') : ollamaText('Add to pull cart', '加入下載清單'))));
-    }) : [emptyState(ollamaText('No verified official variants are available. The app will not fill the gap with curated or sample models.', '未有已驗證官方模型版本。應用程式唔會用精選或者示範模型填補空缺。'))])));
+    h('section', { class: 'ollama-models', 'aria-label': ollamaText('Verified installed local models', '已驗證本機已安裝模型') },
+      h('h3', {}, ollamaText('Verified installed local models', '已驗證本機已安裝模型')),
+      h('p', { class: 'unavailable-note' }, state.ollama.installedEnrichment?.message ?? ollamaText('No installed-model enrichment is loaded.', '未有載入已安裝模型資料。')),
+      ...(visibleLocalVariants.length ? visibleLocalVariants.map((variant) => modelCard(variant, 'installed')) : [emptyState(ollamaText('No current complete local installed-model inventory is available. No model is invented.', '未有完整最新本機已安裝模型清單；唔會虛構模型。'))])),
+    h('section', { class: 'ollama-models', 'aria-label': ollamaText('Official Model Store', '官方模型商店') },
+      h('h3', {}, ollamaText('Official Model Store', '官方模型商店')),
+      ...(officialVariants.length ? officialVariants.map((variant) => modelCard(variant, 'official')) : [emptyState(ollamaText('No verified official variants are available. The app will not fill the gap with curated or sample models.', '未有已驗證官方模型版本。應用程式唔會用精選或者示範模型填補空缺。'))])));
 }
 
 function ollamaCart(): HTMLElement {
@@ -1957,10 +1996,10 @@ function ollamaCart(): HTMLElement {
 }
 
 function ollamaChat(): HTMLElement {
-  const variant = ollamaVariant(); const installed = new Set(state.ollama.health?.installed.map(({ name }) => name) ?? []); const available = !!variant && installed.has(variant.qualifiedName) && state.ollama.health?.state === 'healthy';
+  const variant = ollamaVariant(); const localVariants = installedOllamaVariants(); const installed = new Set(localVariants.map(({ qualifiedName }) => qualifiedName)); const available = !!variant && installed.has(variant.qualifiedName) && state.ollama.health?.state === 'healthy';
   const chat = state.ollama.chat;
   return h('section', { class: 'ollama-chat', 'aria-label': ollamaText('Local Ollama chat', '本機 Ollama 聊天') },
-    selectField(ollamaText('Verified installed model', '已驗證已安裝模型'), state.ollama.catalog?.variants.filter(({ qualifiedName }) => installed.has(qualifiedName)).map(({ qualifiedName }) => qualifiedName) ?? [], state.ollama.selectedModel || ollamaText('No verified installed model', '冇已驗證已安裝模型'), (value) => { state.ollama.selectedModel = value; render(); }),
+    selectField(ollamaText('Verified installed model', '已驗證已安裝模型'), localVariants.map(({ qualifiedName }) => qualifiedName), state.ollama.selectedModel || ollamaText('No verified installed model', '冇已驗證已安裝模型'), (value) => { state.ollama.selectedModel = value; render(); }),
     h('label', { class: 'field' }, ollamaText('System prompt', '系統提示').toUpperCase(), h('textarea', { maxlength: '32768', value: chat.system, oninput: (event: Event) => { chat.system = (event.target as HTMLTextAreaElement).value; } })),
     h('label', { class: 'field' }, ollamaText('Message', '訊息').toUpperCase(), h('textarea', { maxlength: '32768', value: chat.prompt, oninput: (event: Event) => { chat.prompt = (event.target as HTMLTextAreaElement).value; } })),
     h('div', { class: 'ollama-chat-options' }, rangeField(ollamaText('Temperature', '溫度'), 0, 2, 0.1, chat.temperature, (value) => { chat.temperature = value; }), numberField(ollamaText('Context length', 'Context 長度'), 256, variant?.contextLength ?? 131072, chat.contextLength, (value) => { chat.contextLength = value; })),

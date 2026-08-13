@@ -109,7 +109,11 @@ interface WorkspaceTab { id: string; view: ViewId; pinned: boolean; group: strin
 interface HistoryEntry { id: string; action: string; detail: string; at: string; }
 interface GitHistoryEntry { commit: string; action: string; recordedAt: string; revisionId: string; restoredFrom?: string; label?: string; }
 interface ExportSaveResult { status: 'saved' | 'cancelled'; filePath?: string; warnings: string[]; vscode?: { available: boolean; label?: string }; }
-interface NotificationEntry { id: string; title: string; detail: string; icon: string; read: boolean; }
+type NotificationKind = 'info' | 'success' | 'progress' | 'warning' | 'error';
+type NotificationReview = 'unread' | 'read' | 'dismissed';
+interface NotificationEntry { id: string; title: string; detail: string; icon: string; read: boolean; review: NotificationReview; }
+interface NotificationRuntimeRecord { id: string; kind: NotificationKind; text: { title: string; detail: string }; review: NotificationReview; }
+interface NotificationRuntimeState { entries: readonly NotificationRuntimeRecord[]; }
 interface DimSumStartupPresentation {
   descriptor: {
     autoDismissMs: number; motion: 'standard' | 'reduced';
@@ -215,6 +219,10 @@ interface Bridge {
   openExportInVSCode(filePath: string): Promise<{ ok: boolean; status: string; error?: string; vscodeDownloadUrl?: string }>;
   readPrefs(): Promise<Partial<Prefs>>;
   writePrefs(p: Prefs): Promise<void>;
+  notificationsState(): Promise<NotificationRuntimeState>;
+  notificationsAdd(input: { kind: NotificationKind; text: { title: string; detail: string } }): Promise<NotificationRuntimeState>;
+  notificationsReview(ids: string[], review: NotificationReview): Promise<NotificationRuntimeState>;
+  notificationsDelete(ids: string[]): Promise<NotificationRuntimeState>;
   appearanceThemeList(): Promise<AppearanceThemeDocument>;
   appearanceThemeCreate(name: string, values: AppearanceThemeValues): Promise<AppearanceThemeDocument>;
   appearanceThemeApply(id: string): Promise<{ activeThemeId: string; preferences: Prefs }>;
@@ -1146,6 +1154,52 @@ function snack(msg: string): void {
   window.setTimeout(() => { if (state.snack === msg) { state.snack = ''; render(); } }, 3200);
 }
 
+const NOTIFICATION_ICONS: Readonly<Record<NotificationKind, string>> = {
+  info: 'information', success: 'download_done', progress: 'progress_activity', warning: 'warning', error: 'error',
+};
+
+function acceptNotifications(snapshot: NotificationRuntimeState): void {
+  state.notifications = snapshot.entries.map((entry) => ({
+    id: entry.id,
+    title: entry.text.title,
+    detail: entry.text.detail,
+    icon: NOTIFICATION_ICONS[entry.kind],
+    review: entry.review,
+    read: entry.review !== 'unread',
+  }));
+  state.dlgSelected = new Set([...state.dlgSelected].filter((id) => state.notifications.some((entry) => entry.id === id)));
+}
+
+async function addNotification(kind: NotificationKind, title: string, detail: string): Promise<void> {
+  try {
+    acceptNotifications(await bridge().notificationsAdd({ kind, text: { title, detail } }));
+    render();
+  } catch (error) {
+    snack(error instanceof Error ? `Notification history could not be saved: ${error.message}` : 'Notification history could not be saved.');
+  }
+}
+
+async function reviewNotifications(ids: readonly string[], review: NotificationReview): Promise<void> {
+  if (!ids.length) { snack('Select at least one notification.'); return; }
+  try {
+    acceptNotifications(await bridge().notificationsReview([...ids], review));
+    render();
+  } catch (error) {
+    snack(error instanceof Error ? `Notification review could not be saved: ${error.message}` : 'Notification review could not be saved.');
+  }
+}
+
+async function deleteNotifications(ids: readonly string[]): Promise<void> {
+  if (!ids.length) { snack('Select at least one notification.'); return; }
+  try {
+    acceptNotifications(await bridge().notificationsDelete([...ids]));
+    state.dlgSelected.clear();
+    render();
+  } catch (error) {
+    snack(error instanceof Error ? `Notification deletion could not be saved: ${error.message}` : 'Notification deletion could not be saved.');
+  }
+}
+
 function recordHistory(action: string, detail: string): void {
   const entry: HistoryEntry = { id: `h-${Date.now()}`, action, detail, at: new Date().toISOString() };
   state.history = [entry, ...state.history];
@@ -1210,18 +1264,10 @@ function bindPlatformNarration(): void {
 function narrateFact(category: string, English: string, Yue: string, kind: 'event' | 'error' = 'event'): void {
   void bridge().narrate({ category, English, Yue, kind }).then((result) => {
     if (result.status === 'failed') {
-      state.notifications = [{
-        id: `narration-${Date.now()}`, icon: 'volume_off', title: narratorText('failedTitle'),
-        detail: result.error || narratorText('failedBody'), read: false,
-      }, ...state.notifications];
-      render();
+      void addNotification('error', narratorText('failedTitle'), result.error || narratorText('failedBody'));
     }
   }).catch((error) => {
-    state.notifications = [{
-      id: `narration-${Date.now()}`, icon: 'volume_off', title: narratorText('failedTitle'),
-      detail: error instanceof Error ? error.message : String(error), read: false,
-    }, ...state.notifications];
-    render();
+    void addNotification('error', narratorText('failedTitle'), error instanceof Error ? error.message : String(error));
   });
 }
 
@@ -3510,18 +3556,14 @@ async function runNow(kind: RunKind, ids: string[]): Promise<void> {
     const res = await bridge().run(kind, ids);
     state.runOutput = `$ winutil ${kind} ×${total}\n${res.stdout}${res.stderr ? `\n${res.stderr}` : ''}\nexit ${res.code}`;
     recordHistory(kind, `${kind} completed for ${total} item(s), exit ${res.code}`);
-    state.notifications = [{
-      id: `n-${Date.now()}`, icon: res.ok ? 'download_done' : 'error',
-      title: res.ok ? `${kind} finished` : `${kind} failed (exit ${res.code})`,
-      detail: `${total} item(s) processed automatically · no prompts`, read: false,
-    }, ...state.notifications];
+    void addNotification(res.ok ? 'success' : 'error', res.ok ? `${kind} finished` : `${kind} failed (exit ${res.code})`, `${total} item(s) processed automatically · no prompts`);
     snack(res.ok ? `${kind}: ${total} item(s) completed automatically.` : `${kind} failed with exit ${res.code}. See the output.`);
     if (res.ok) narrateFact('operation', NARRATOR_COPY.English.operationDone.replace('{kind}', kind).replace('{count}', String(total)).replace('{code}', String(res.code)), NARRATOR_COPY.Yue.operationDone.replace('{kind}', kind).replace('{count}', String(total)).replace('{code}', String(res.code)));
     else narrateFact('operation', NARRATOR_COPY.English.operationFailed.replace('{kind}', kind).replace('{count}', String(total)).replace('{code}', String(res.code)), NARRATOR_COPY.Yue.operationFailed.replace('{kind}', kind).replace('{count}', String(total)).replace('{code}', String(res.code)), 'error');
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     state.runOutput = `$ winutil ${kind} ×${total}\n${detail}\nrequest failed`;
-    state.notifications = [{ id: `n-${Date.now()}`, icon: 'error', title: `${kind} could not start`, detail, read: false }, ...state.notifications];
+    void addNotification('error', `${kind} could not start`, detail);
     snack(`${kind} could not start. See the output for the exact reason.`);
     narrateFact('operation', NARRATOR_COPY.English.operationStartFailed.replace('{kind}', kind).replace('{detail}', detail), NARRATOR_COPY.Yue.operationStartFailed.replace('{kind}', kind).replace('{detail}', detail), 'error');
   } finally {
@@ -3543,10 +3585,7 @@ async function ensureDeps(): Promise<void> {
   const failed = state.deps.filter((d) => !d.present && !d.installed);
   if (fixed.length) snack(`Installed ${fixed.map((d) => d.name).join(', ')} automatically.`);
   if (failed.length) {
-    state.notifications = [{
-      id: `n-${Date.now()}`, icon: 'error', title: 'A prerequisite could not be installed',
-      detail: failed.map((d) => `${d.name}: ${d.detail}`).join(' · '), read: false,
-    }, ...state.notifications];
+    void addNotification('error', 'A prerequisite could not be installed', failed.map((d) => `${d.name}: ${d.detail}`).join(' · '));
   }
 }
 
@@ -5124,12 +5163,11 @@ function notificationsDialog(): HTMLElement {
   const found = state.notifications.filter((n) => match(`${n.title} ${n.detail}`));
   const picked = state.dlgSelected;
   const every = found.length > 0 && found.every((n) => picked.has(n.id));
-  const bulk = (fn: (n: NotificationEntry) => void, msg: string): void => {
-    const targets = state.notifications.filter((n) => picked.has(n.id));
-    if (!targets.length) { snack('Select at least one notification.'); return; }
-    targets.forEach(fn);
-    snack(`${msg} · ${targets.length} notification(s).`);
-    render();
+  const selectedIds = (): string[] => found.filter((entry) => picked.has(entry.id)).map((entry) => entry.id);
+  const bulk = (review: NotificationReview, msg: string): void => {
+    const ids = selectedIds();
+    if (!ids.length) { snack('Select at least one notification.'); return; }
+    void reviewNotifications(ids, review).then(() => snack(`${msg} · ${ids.length} notification(s).`));
   };
   const displayName = scheduledDisplayName();
   return dialogShell(`Reviewable local notices · ${displayName}`, `${displayName} notification centre`, [
@@ -5141,14 +5179,14 @@ function notificationsDialog(): HTMLElement {
       }, icon(every ? 'check_box' : picked.size ? 'indeterminate_check_box' : 'check_box_outline_blank')),
       h('span', { class: 'count' }, `${picked.size} of ${found.length} selected`),
       h('div', { style: 'flex:1' }),
-      h('button', { class: 'btn text', onclick: () => bulk((n) => { n.read = true; }, 'Marked read') }, 'Mark read'),
-      h('button', { class: 'btn text', onclick: () => bulk((n) => { n.read = false; }, 'Marked unread') }, 'Mark unread'),
+      h('button', { class: 'btn text', onclick: () => bulk('read', 'Marked read') }, 'Mark read'),
+      h('button', { class: 'btn text', onclick: () => bulk('unread', 'Marked unread') }, 'Mark unread'),
+      h('button', { class: 'btn text', onclick: () => bulk('dismissed', 'Dismissed') }, 'Dismiss'),
       h('button', {
         class: 'btn text', onclick: () => {
-          if (!picked.size) { snack('Select at least one notification.'); return; }
-          const n = picked.size;
-          state.notifications = state.notifications.filter((x) => !picked.has(x.id));
-          picked.clear(); render(); snack(`Deleted ${n} notification(s).`);
+          const ids = selectedIds();
+          if (!ids.length) { snack('Select at least one notification.'); return; }
+          void deleteNotifications(ids).then(() => snack(`Deleted ${ids.length} notification(s).`));
         },
       }, 'Delete'),
       h('button', { class: 'btn text', onclick: () => openDialog('export') }, 'Export selected')),
@@ -5158,21 +5196,22 @@ function notificationsDialog(): HTMLElement {
         class: `row${on ? ' selected' : ''}`,
         onclick: () => { on ? picked.delete(n.id) : picked.add(n.id); render(); },
         oncontextmenu: ctx(`notif-${n.id}`, () => [
-          { icon: n.read ? 'mark_email_unread' : 'mark_email_read', label: n.read ? 'Mark unread' : 'Mark read', act: () => { n.read = !n.read; } },
+          { icon: n.read ? 'mark_email_unread' : 'mark_email_read', label: n.read ? 'Mark unread' : 'Mark read', act: () => { void reviewNotifications([n.id], n.read ? 'unread' : 'read'); } },
+          { icon: 'visibility_off', label: 'Dismiss this notification', act: () => { void reviewNotifications([n.id], 'dismissed'); } },
           { icon: 'select_all', label: 'Select every notification', act: () => found.forEach((x) => picked.add(x.id)) },
           { icon: 'deselect', label: 'Clear the selection', act: () => picked.clear() },
-          { icon: 'delete', label: 'Delete this notification', act: () => { state.notifications = state.notifications.filter((x) => x.id !== n.id); }, danger: true },
+          { icon: 'delete', label: 'Delete this notification', act: () => { void deleteNotifications([n.id]); }, danger: true },
         ], n.title),
       },
         h('span', { class: 'cb' }, on ? icon('check') : null),
         h('span', { class: 'lead' }, icon(n.icon)),
         h('span', { class: 'primary', style: n.read ? 'font-weight:400' : '' }, n.title),
         h('span', { class: 'snippet' }, n.detail),
-        n.read ? null : h('span', { class: 'chip-inline' }, 'NEW'));
+        n.review === 'dismissed' ? h('span', { class: 'chip-inline' }, 'DISMISSED') : n.read ? null : h('span', { class: 'chip-inline' }, 'NEW'));
     }) : [emptyState('No notification matches.')])),
   ], [
-    h('button', { class: 'btn outlined', onclick: () => { state.notifications = []; state.dlgSelected.clear(); render(); } }, 'Clear history'),
-    h('button', { class: 'btn tonal', onclick: () => { state.notifications.forEach((n) => { n.read = true; }); render(); } }, 'Mark all read'),
+    h('button', { class: 'btn outlined', onclick: () => { const ids = state.notifications.map((entry) => entry.id); void deleteNotifications(ids); } }, 'Clear history'),
+    h('button', { class: 'btn tonal', onclick: () => { const ids = found.map((entry) => entry.id); void reviewNotifications(ids, 'read'); } }, 'Mark all read'),
     h('button', { class: 'btn filled', onclick: closeDialog }, 'Close'),
   ], true);
 }
@@ -5715,6 +5754,8 @@ async function boot(): Promise<void> {
   bridge().onScheduledSettingsState((next) => { acceptScheduledSettings(next); render(); });
   bindPlatformNarration();
   try { state.narration = { ...state.narration, ...await bridge().narrationState() }; } catch { state.narration.platformSpeechAvailable = false; }
+  try { acceptNotifications(await bridge().notificationsState()); }
+  catch (error) { snack(error instanceof Error ? `Notification history could not be loaded: ${error.message}` : 'Notification history could not be loaded.'); }
   await loadPersonalVocabulary();
   try { state.profiles = JSON.parse(localStorage.getItem('winutil.profiles') ?? '[]'); } catch { state.profiles = []; }
   loadWorkspace();

@@ -14,6 +14,7 @@ import type {
   ScheduledSettingRule, ScheduledSettingsDocument, ScheduledSettingValue,
 } from './scheduled-settings';
 import type { DimSumSurpriseDescriptor } from './dim-sum-surprise';
+import type { NotificationInput, NotificationReviewState, NotificationState } from './notifications';
 import type { ConverterAdapter, FileKind, QueueItemState, QueueState } from './file-converter';
 import type { AppLogoExportMetadata, AppLogoPersistedState, AppLogoPresetId, AppLogoTransform, AppLogoDerivedAsset } from './app-logo';
 import type {
@@ -436,6 +437,10 @@ export interface Bridge {
   openExportInVSCode(filePath: string): Promise<{ ok: boolean; status: string; error?: string; vscodeDownloadUrl?: string }>;
   readPrefs(): Promise<Partial<Preferences>>;
   writePrefs(prefs: Preferences): Promise<void>;
+  notificationsState(): Promise<NotificationState>;
+  notificationsAdd(input: NotificationInput): Promise<NotificationState>;
+  notificationsReview(ids: string[], review: Exclude<NotificationReviewState, 'dismissed'> | 'dismissed'): Promise<NotificationState>;
+  notificationsDelete(ids: string[]): Promise<NotificationState>;
   history(): Promise<HistoryEntry[]>;
   appendHistory(entry: Omit<HistoryEntry, 'id' | 'at'>): Promise<HistoryEntry>;
   historyAccess(): Promise<HistoryAccessState>;

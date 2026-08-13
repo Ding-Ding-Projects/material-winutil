@@ -12,6 +12,7 @@ import type {
   ScheduledSettingsState, SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateRestartRequest, UpdateRestartResult, UpdateStatus, WinutilCatalog, DimSumStartupPresentation, FileConverterSurfaceState, AppLogoRuntimeSnapshot,
   AppearanceThemeApplication, AppearanceThemeDocument, AppearanceThemeImportResult,
 } from '../shared/types';
+import type { NotificationInput, NotificationReviewState } from '../shared/notifications';
 import type { OllamaCatalogSnapshot, OllamaChatAttachment, OllamaChatAttachmentPickResult, OllamaChatExportDocument, OllamaChatExportResult, OllamaChatExportSaveRequest, OllamaChatRequest, OllamaChatSessionCreateRequest, OllamaChatSessionCreateResult, OllamaChatSessionDeleteRequest, OllamaChatSessionDeleteResult, OllamaChatSessionGetRequest, OllamaChatSessionGetResult, OllamaChatSessionListRequest, OllamaChatSessionListResult, OllamaChatSessionRenameRequest, OllamaChatSessionRenameResult, OllamaChatSessionUpdateRequest, OllamaChatSessionUpdateResult, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress, OllamaHarnessPlan, OllamaHarnessPreflightRequest, OllamaHarnessProfileId, OllamaHarnessRestoreResult, OllamaHarnessLaunchResult, OllamaHarnessExecutable } from '../shared/ollama-suite';
 import { OLLAMA_LIMITS } from '../shared/ollama-suite';
 import { resolvePackageRequest, validateCatalog, wingetArgs } from './package-policy';
@@ -39,6 +40,7 @@ import { OllamaChatSessionService } from './ollama-chat-session-service';
 import { OllamaHardwareService } from './ollama-hardware-service';
 import { OllamaHarnessService } from './ollama-harness-service';
 import { AppearanceThemeService } from './appearance-theme-service';
+import { NotificationStore } from './notification-store';
 
 const ROOT = path.join(__dirname, '..', '..');
 const CONFIG_DIR = path.join(__dirname, '..', 'config');
@@ -67,6 +69,7 @@ let ollamaChatSessionService: OllamaChatSessionService | null = null;
 let ollamaHardwareService: OllamaHardwareService | null = null;
 let ollamaHarnessService: OllamaHarnessService | null = null;
 let appearanceThemeService: AppearanceThemeService | null = null;
+let notificationStore: NotificationStore | null = null;
 interface EphemeralOllamaAttachment { descriptor: OllamaChatAttachment; base64: string; }
 const ollamaChatAttachments = new Map<string, EphemeralOllamaAttachment>();
 const OLLAMA_ATTACHMENT_ID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/iu;
@@ -830,6 +833,11 @@ ipcMain.handle('prefs:write', async (_e, prefs: Preferences): Promise<void> => {
   }
   await writeBasePreferences(nextBase);
 });
+
+ipcMain.handle('notifications:state', async (event) => { requireTrustedSender(event); return (notificationStore ??= new NotificationStore(USER_DIR())).load(); });
+ipcMain.handle('notifications:add', async (event, input: NotificationInput) => { requireTrustedSender(event); return (notificationStore ??= new NotificationStore(USER_DIR())).add(input); });
+ipcMain.handle('notifications:review', async (event, ids: string[], review: NotificationReviewState) => { requireTrustedSender(event); return (notificationStore ??= new NotificationStore(USER_DIR())).review(ids, review); });
+ipcMain.handle('notifications:delete', async (event, ids: string[]) => { requireTrustedSender(event); return (notificationStore ??= new NotificationStore(USER_DIR())).delete(ids); });
 
 ipcMain.handle('scheduled-settings:state', (event): ScheduledSettingsState => {
   requireTrustedSender(event);
@@ -1624,6 +1632,8 @@ app.whenReady().then(async () => {
   });
   lockService = new LockService({ appDataDirectory: USER_DIR() });
   await lockService.initialize();
+  notificationStore = new NotificationStore(USER_DIR());
+  await notificationStore.initialize();
   const initialSettings = await settingsSurfaceService.initialize(defaultSchoolPreferences(persistedPreferences));
   scheduledSettingsService = new ScheduledSettingsService({
     userDataDirectory: USER_DIR(), vault: { write: writeCredential, read: readCredential, delete: deleteCredential },

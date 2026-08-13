@@ -180,7 +180,7 @@ interface Prefs {
   narrator: 'English' | 'Yue' | 'Both'; narratorEnabled: boolean; narratorQuiet: boolean; narratorReducedSound: boolean;
   enFunny: number; yueFunny: number; accent: string; font: string;
   scale: number; weight: number; radius: number; reducedMotion: boolean; exportFormat: string;
-  tabDock: TabDock; appearanceOverrides: Record<string, AppearanceOverride>;
+  tabDock: TabDock; activeAppearanceThemeId: string | null; appearanceOverrides: Record<string, AppearanceOverride>;
 }
 interface SearchState { text: string; regex: boolean; flags: string; }
 type OfflineDocInlineNode =
@@ -217,7 +217,8 @@ interface Bridge {
   writePrefs(p: Prefs): Promise<void>;
   appearanceThemeList(): Promise<AppearanceThemeDocument>;
   appearanceThemeCreate(name: string, values: AppearanceThemeValues): Promise<AppearanceThemeDocument>;
-  appearanceThemeApply(id: string): Promise<AppearanceThemeValues>;
+  appearanceThemeApply(id: string): Promise<{ activeThemeId: string; preferences: Prefs }>;
+  appearanceThemeReset(): Promise<Prefs>;
   appearanceThemeDelete(id: string): Promise<AppearanceThemeDocument>;
   appearanceThemeImport(): Promise<AppearanceThemeImportResult>;
   appearanceThemeExport(id: string): Promise<{ status: 'saved' | 'cancelled'; filePath?: string }>;
@@ -691,6 +692,7 @@ const DEFAULT_PREFS: Prefs = {
   narratorQuiet: false, narratorReducedSound: false,
   enFunny: 3, yueFunny: 4, accent: '#6750A4', font: 'Segoe UI Variable', scale: 1, weight: 400, radius: 16,
   reducedMotion: false, exportFormat: 'md', tabDock: 'left',
+  activeAppearanceThemeId: null,
   appearanceOverrides: {},
 };
 
@@ -3652,12 +3654,27 @@ async function refreshAppearanceThemes(): Promise<void> {
 
 async function applyNamedAppearanceTheme(id: string): Promise<void> {
   try {
-    const values = await bridge().appearanceThemeApply(id);
-    state.prefs = { ...state.prefs, ...values };
-    applyPrefs(true);
-    snack('Named theme applied and persisted.');
+    const result = await bridge().appearanceThemeApply(id);
+    state.prefs = { ...result.preferences, appearanceOverrides: { ...result.preferences.appearanceOverrides } };
+    state.appearanceOverrides = { ...state.prefs.appearanceOverrides };
+    applyPrefs(false);
+    render();
+    snack('Named theme applied to the live appearance and persisted.');
   } catch (error) {
     snack(error instanceof Error ? error.message : 'Named theme could not be applied.');
+  }
+}
+
+async function resetNamedAppearanceTheme(): Promise<void> {
+  try {
+    const preferences = await bridge().appearanceThemeReset();
+    state.prefs = { ...preferences, appearanceOverrides: { ...preferences.appearanceOverrides } };
+    state.appearanceOverrides = { ...state.prefs.appearanceOverrides };
+    applyPrefs(false);
+    render();
+    snack('Shipped appearance restored and persisted.');
+  } catch (error) {
+    snack(error instanceof Error ? error.message : 'Shipped appearance could not be restored.');
   }
 }
 
@@ -4252,6 +4269,9 @@ function appearanceDialog(): HTMLElement {
 
 function appearanceThemesDialog(): HTMLElement {
   const themes = state.appearanceThemes.data.themes;
+  const activeTheme = state.prefs.activeAppearanceThemeId
+    ? themes.find((theme) => theme.id === state.prefs.activeAppearanceThemeId) ?? null
+    : null;
   const draft = h('input', {
     value: state.appearanceThemes.draftName,
     maxlength: '80',
@@ -4282,13 +4302,16 @@ function appearanceThemesDialog(): HTMLElement {
   };
   return dialogShell('Appearance library', 'Named themes', [
     h('p', {}, 'Saved themes contain only visual preferences. They never include credentials, personal-vocabulary data, or other account state.'),
+    h('p', { class: 'feedback', role: 'status' }, activeTheme
+      ? `Active theme: ${activeTheme.name}. Its visual preferences are applied to the live app.`
+      : 'Using the shipped appearance. No named theme is active.'),
     h('label', { class: 'field' }, 'SAVE CURRENT APPEARANCE AS', draft),
     state.appearanceThemes.error ? h('p', { class: 'feedback bad', role: 'alert' }, state.appearanceThemes.error) : null,
     themes.length
       ? h('div', { class: 'listbox', 'aria-label': 'Saved named themes' }, ...themes.map((theme) => h('div', { class: 'row' },
-        h('div', { style: 'min-width:0;flex:1' }, h('div', { class: 'primary' }, theme.name), h('div', { class: 'snippet' }, `${theme.theme.theme} · ${theme.theme.density} · ${theme.theme.accent}`)),
+        h('div', { style: 'min-width:0;flex:1' }, h('div', { class: 'primary' }, theme.name), h('div', { class: 'snippet' }, `${theme.theme.theme} · ${theme.theme.density} · ${theme.theme.accent}${theme.id === state.prefs.activeAppearanceThemeId ? ' · active' : ''}`)),
         h('div', { class: 'btnrow' },
-          h('button', { class: 'btn text', onclick: () => { void applyNamedAppearanceTheme(theme.id); } }, 'Apply'),
+          h('button', { class: 'btn text', 'aria-pressed': theme.id === state.prefs.activeAppearanceThemeId ? 'true' : 'false', disabled: state.appearanceThemes.loading || theme.id === state.prefs.activeAppearanceThemeId, onclick: () => { void applyNamedAppearanceTheme(theme.id); } }, theme.id === state.prefs.activeAppearanceThemeId ? 'Applied' : 'Apply'),
           h('button', { class: 'btn text', onclick: async () => {
             state.appearanceThemes.loading = true; render();
             try {
@@ -4299,13 +4322,24 @@ function appearanceThemesDialog(): HTMLElement {
           } }, 'Export'),
           h('button', { class: 'btn text danger-text', onclick: async () => {
             state.appearanceThemes.loading = true; render();
-            try { state.appearanceThemes.data = await bridge().appearanceThemeDelete(theme.id); snack(`Deleted named theme “${theme.name}”.`); }
+            try {
+              const wasActive = state.prefs.activeAppearanceThemeId === theme.id;
+              state.appearanceThemes.data = await bridge().appearanceThemeDelete(theme.id);
+              if (wasActive) {
+                const saved = await bridge().readPrefs();
+                state.prefs = { ...state.prefs, ...saved, appearanceOverrides: { ...(saved.appearanceOverrides ?? state.prefs.appearanceOverrides) } };
+                state.appearanceOverrides = { ...state.prefs.appearanceOverrides };
+                applyPrefs(false);
+              }
+              snack(wasActive ? 'Active named theme deleted; shipped appearance restored.' : `Deleted named theme “${theme.name}”.`);
+            }
             catch (error) { state.appearanceThemes.error = error instanceof Error ? error.message : 'Named theme could not be deleted.'; }
             finally { state.appearanceThemes.loading = false; render(); }
           } }, 'Delete')))))
       : h('p', { class: 'feedback' }, 'No named themes are saved yet. Save the current appearance to create the first one.'),
   ], [
     h('button', { class: 'btn text', onclick: closeDialog }, 'Close'),
+    h('button', { class: 'btn outlined', disabled: state.appearanceThemes.loading || state.prefs.activeAppearanceThemeId === null, onclick: () => { void resetNamedAppearanceTheme(); } }, 'Restore shipped appearance'),
     h('button', { class: 'btn outlined', disabled: state.appearanceThemes.loading, onclick: () => { void importThemes(); } }, 'Import'),
     h('button', { class: 'btn filled', disabled: state.appearanceThemes.loading, onclick: () => { void create(); } }, 'Save current appearance'),
   ], true);
@@ -5604,6 +5638,7 @@ async function boot(): Promise<void> {
   catch (error) { state.converter.error = error instanceof Error ? error.message : 'The local converter state could not be loaded.'; }
   try { state.appLogo.data = await bridge().appLogoState(); }
   catch (error) { state.appLogo.error = error instanceof Error ? error.message : 'The local app-logo state could not be loaded.'; }
+  await refreshAppearanceThemes();
   await refreshOllama(false);
   await refreshOllamaChatSessions();
   try { state.history = (await bridge().history()).reverse(); } catch { state.history = []; }

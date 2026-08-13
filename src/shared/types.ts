@@ -143,6 +143,9 @@ export interface Preferences {
   radius: number;
   reducedMotion: boolean;
   exportFormat: ExportFormat;
+  tabDock: 'left' | 'right' | 'top' | 'bottom';
+  /** The named visual theme that last supplied the global appearance values. */
+  activeAppearanceThemeId: string | null;
   appearanceOverrides: Readonly<Record<string, AppearanceOverride>>;
 }
 
@@ -167,6 +170,11 @@ export interface AppearanceThemeRecord {
 export interface AppearanceThemeDocument {
   schemaVersion: 1;
   themes: AppearanceThemeRecord[];
+}
+
+export interface AppearanceThemeApplication {
+  activeThemeId: string;
+  preferences: Preferences;
 }
 
 export type AppearanceThemeImportResult =
@@ -507,7 +515,8 @@ export interface Bridge {
   appLogoReset(): Promise<AppLogoRuntimeSnapshot>;
   appearanceThemeList(): Promise<AppearanceThemeDocument>;
   appearanceThemeCreate(name: string, theme: AppearanceThemeValues): Promise<AppearanceThemeDocument>;
-  appearanceThemeApply(id: string): Promise<AppearanceThemeValues>;
+  appearanceThemeApply(id: string): Promise<AppearanceThemeApplication>;
+  appearanceThemeReset(): Promise<Preferences>;
   appearanceThemeDelete(id: string): Promise<AppearanceThemeDocument>;
   appearanceThemeImport(): Promise<AppearanceThemeImportResult>;
   appearanceThemeExport(id: string): Promise<{ status: 'saved' | 'cancelled'; filePath?: string }>;

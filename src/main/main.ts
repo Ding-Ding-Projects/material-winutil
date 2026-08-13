@@ -10,7 +10,7 @@ import type {
   CommandResult, ExportFormat, HistoryBrowseResult, HistoryEntry, HistoryQuery, NarrationClientResult, NarrationEvent, NarrationRuntimeState,
   PersonalVocabularyState, PersonalVocabularyUploadResult, Preferences, RunKind, SchoolModeChangeResult,
   ScheduledSettingsState, SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateRestartRequest, UpdateRestartResult, UpdateStatus, WinutilCatalog, DimSumStartupPresentation, FileConverterSurfaceState, AppLogoRuntimeSnapshot,
-  AppearanceThemeDocument, AppearanceThemeImportResult, AppearanceThemeValues,
+  AppearanceThemeApplication, AppearanceThemeDocument, AppearanceThemeImportResult,
 } from '../shared/types';
 import type { OllamaCatalogSnapshot, OllamaChatAttachment, OllamaChatAttachmentPickResult, OllamaChatExportDocument, OllamaChatExportResult, OllamaChatExportSaveRequest, OllamaChatRequest, OllamaChatSessionCreateRequest, OllamaChatSessionCreateResult, OllamaChatSessionDeleteRequest, OllamaChatSessionDeleteResult, OllamaChatSessionGetRequest, OllamaChatSessionGetResult, OllamaChatSessionListRequest, OllamaChatSessionListResult, OllamaChatSessionRenameRequest, OllamaChatSessionRenameResult, OllamaChatSessionUpdateRequest, OllamaChatSessionUpdateResult, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress, OllamaHarnessPlan, OllamaHarnessPreflightRequest, OllamaHarnessProfileId, OllamaHarnessRestoreResult, OllamaHarnessLaunchResult, OllamaHarnessExecutable } from '../shared/ollama-suite';
 import { OLLAMA_LIMITS } from '../shared/ollama-suite';
@@ -92,6 +92,11 @@ const EXPORT_EXTENSIONS: Record<ExportFormat, string> = {
   csv: 'csv', tsv: 'tsv', html: 'html', sql: 'sql', ts: 'ts', js: 'js', py: 'py', go: 'go', rs: 'rs',
   proto: 'proto', 'schema.json': 'schema.json',
 };
+const APPEARANCE_THEME_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const SHIPPED_APPEARANCE = Object.freeze({
+  theme: 'dark' as const, density: 'comfortable' as const, accent: '#6750A4', font: 'Segoe UI Variable',
+  scale: 1, weight: 400, radius: 16, reducedMotion: false, tabDock: 'left' as const,
+});
 const EXPORT_VIEWS = new Set([
   'install', 'tweaks', 'config', 'updates', 'iso', 'overview', 'sync', 'skills', 'memory',
   'history', 'changelog', 'operations', 'security', 'settings', 'docs',
@@ -315,6 +320,10 @@ function projectPreferences(value: unknown): Preferences | null {
       };
     }
   }
+  const activeAppearanceThemeId = input.activeAppearanceThemeId;
+  if (activeAppearanceThemeId !== null && activeAppearanceThemeId !== undefined
+    && (typeof activeAppearanceThemeId !== 'string' || !APPEARANCE_THEME_ID.test(activeAppearanceThemeId))) return null;
+  const tabDock = input.tabDock === undefined ? 'left' : input.tabDock;
   if (!['light', 'dark'].includes(String(input.theme))
     || !['comfortable', 'compact'].includes(String(input.density))
     || !['English', 'Yue', 'Bilingual'].includes(String(input.language))
@@ -327,7 +336,8 @@ function projectPreferences(value: unknown): Preferences | null {
     || typeof input.font !== 'string' || input.font.length < 1 || input.font.length > 120 || /[\u0000-\u001F\u007F]/.test(input.font)
     || !isNumber('scale', 0.5, 3) || !isNumber('weight', 100, 1000) || !isNumber('radius', 0, 64)
     || typeof input.reducedMotion !== 'boolean'
-    || typeof input.exportFormat !== 'string' || !(input.exportFormat in EXPORT_EXTENSIONS)) return null;
+    || typeof input.exportFormat !== 'string' || !(input.exportFormat in EXPORT_EXTENSIONS)
+    || !['left', 'right', 'top', 'bottom'].includes(String(tabDock))) return null;
   return {
     theme: input.theme as Preferences['theme'], density: input.density as Preferences['density'],
     language: input.language as Preferences['language'], narrator: input.narrator as Preferences['narrator'],
@@ -336,8 +346,24 @@ function projectPreferences(value: unknown): Preferences | null {
     enFunny: Number(input.enFunny), yueFunny: Number(input.yueFunny),
     accent: input.accent, font: input.font, scale: Number(input.scale), weight: Number(input.weight),
     radius: Number(input.radius), reducedMotion: input.reducedMotion, exportFormat: input.exportFormat as ExportFormat,
+    tabDock: tabDock as Preferences['tabDock'],
+    activeAppearanceThemeId: typeof activeAppearanceThemeId === 'string' ? activeAppearanceThemeId.toLowerCase() : null,
     appearanceOverrides,
   };
+}
+
+async function writeBasePreferences(nextBase: Preferences): Promise<Preferences> {
+  basePreferences = nextBase;
+  const effective = scheduledSettingsService
+    ? preferencesWithScheduledSettings(nextBase, scheduledSettingsService.snapshot().effectiveSettings)
+    : nextBase;
+  currentNarratorPreferences = effective;
+  narratorRuntime.configure(effectiveNarratorPreferences(effective), app.isAccessibilitySupportEnabled());
+  await fs.mkdir(USER_DIR(), { recursive: true });
+  await atomicWrite(PREFS_FILE(), JSON.stringify(nextBase, null, 2));
+  await scheduledSettingsService?.setBaseSettings(preferencesAsSettings(nextBase));
+  await settingsSurface().updatePreferences(defaultSchoolPreferences(effective));
+  return effective;
 }
 
 async function atomicWrite(file: string, body: string): Promise<void> {
@@ -772,16 +798,7 @@ ipcMain.handle('prefs:write', async (_e, prefs: Preferences): Promise<void> => {
   for (const [key, value] of Object.entries(projected)) {
     if (scheduledOwned[key] === undefined) (nextBase as unknown as Record<string, unknown>)[key] = value;
   }
-  basePreferences = nextBase;
-  const effective = scheduledSettingsService
-    ? preferencesWithScheduledSettings(nextBase, scheduledSettingsService.snapshot().effectiveSettings)
-    : nextBase;
-  currentNarratorPreferences = effective;
-  narratorRuntime.configure(effectiveNarratorPreferences(effective), app.isAccessibilitySupportEnabled());
-  await fs.mkdir(USER_DIR(), { recursive: true });
-  await atomicWrite(PREFS_FILE(), JSON.stringify(nextBase, null, 2));
-  await scheduledSettingsService?.setBaseSettings(preferencesAsSettings(nextBase));
-  await settingsSurface().updatePreferences(defaultSchoolPreferences(effective));
+  await writeBasePreferences(nextBase);
 });
 
 ipcMain.handle('scheduled-settings:state', (event): ScheduledSettingsState => {
@@ -1271,13 +1288,34 @@ ipcMain.handle('appearance-theme:create', async (event, name: unknown, theme: un
   requireTrustedSender(event);
   return appearanceThemes().create(name, theme);
 });
-ipcMain.handle('appearance-theme:apply', async (event, id: unknown): Promise<AppearanceThemeValues> => {
+ipcMain.handle('appearance-theme:apply', async (event, id: unknown): Promise<AppearanceThemeApplication> => {
   requireTrustedSender(event);
-  return appearanceThemes().apply(id);
+  const values = await appearanceThemes().apply(id);
+  const identifier = typeof id === 'string' && APPEARANCE_THEME_ID.test(id) ? id.toLowerCase() : null;
+  if (!identifier) throw new Error('The named appearance theme identifier is invalid.');
+  const current = basePreferences;
+  if (!current) throw new Error('Appearance preferences are unavailable.');
+  const candidate = projectPreferences({ ...current, ...values, activeAppearanceThemeId: identifier });
+  if (!candidate) throw new Error('The named appearance theme could not be projected into preferences.');
+  return { activeThemeId: identifier, preferences: await writeBasePreferences(candidate) };
+});
+ipcMain.handle('appearance-theme:reset', async (event): Promise<Preferences> => {
+  requireTrustedSender(event);
+  const current = basePreferences;
+  if (!current) throw new Error('Appearance preferences are unavailable.');
+  const candidate = projectPreferences({ ...current, ...SHIPPED_APPEARANCE, activeAppearanceThemeId: null, appearanceOverrides: {} });
+  if (!candidate) throw new Error('The shipped appearance could not be projected into preferences.');
+  return writeBasePreferences(candidate);
 });
 ipcMain.handle('appearance-theme:delete', async (event, id: unknown): Promise<AppearanceThemeDocument> => {
   requireTrustedSender(event);
-  return appearanceThemes().remove(id);
+  const document = await appearanceThemes().remove(id);
+  if (typeof id === 'string' && basePreferences?.activeAppearanceThemeId === id.toLowerCase()) {
+    const candidate = projectPreferences({ ...basePreferences, ...SHIPPED_APPEARANCE, activeAppearanceThemeId: null, appearanceOverrides: {} });
+    if (!candidate) throw new Error('The shipped appearance could not be projected into preferences.');
+    await writeBasePreferences(candidate);
+  }
+  return document;
 });
 ipcMain.handle('appearance-theme:import', async (event): Promise<AppearanceThemeImportResult> => {
   requireTrustedSender(event);
@@ -1513,7 +1551,7 @@ app.whenReady().then(async () => {
   basePreferences = persistedPreferences ?? {
     theme: 'dark', density: 'comfortable', language: 'English', narrator: 'English', narratorEnabled: false,
     narratorQuiet: false, narratorReducedSound: false, enFunny: 3, yueFunny: 4, accent: '#6750A4',
-    font: 'Segoe UI Variable', scale: 1, weight: 400, radius: 16, reducedMotion: false, exportFormat: 'md', appearanceOverrides: {},
+    font: 'Segoe UI Variable', scale: 1, weight: 400, radius: 16, reducedMotion: false, exportFormat: 'md', tabDock: 'left', activeAppearanceThemeId: null, appearanceOverrides: {},
   };
   settingsSurfaceService = new SettingsSurfaceService({
     userDataDirectory: USER_DIR(), sharedAppDataDirectory: sharedAppDataDirectory(),

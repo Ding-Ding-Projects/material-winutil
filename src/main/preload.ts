@@ -100,6 +100,7 @@ const bridge: Bridge = {
   appearanceThemeList: () => ipcRenderer.invoke('appearance-theme:list'),
   appearanceThemeCreate: (name, theme) => ipcRenderer.invoke('appearance-theme:create', name, theme),
   appearanceThemeApply: (id) => ipcRenderer.invoke('appearance-theme:apply', id),
+  appearanceThemeReset: () => ipcRenderer.invoke('appearance-theme:reset'),
   appearanceThemeDelete: (id) => ipcRenderer.invoke('appearance-theme:delete', id),
   appearanceThemeImport: () => ipcRenderer.invoke('appearance-theme:import'),
   appearanceThemeExport: (id) => ipcRenderer.invoke('appearance-theme:export', id),

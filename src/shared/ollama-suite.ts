@@ -424,10 +424,14 @@ function validatePersistedChatMessages(value: unknown): OllamaPersistedChatMessa
   const messages = value.map((message) => {
     if (!record(message)) throw new Error('Chat session message is invalid.');
     onlyKeys(message, ['role', 'content'], 'Chat session message');
-    if (message.role !== 'user' && message.role !== 'assistant') throw new Error('Chat session message role is invalid.');
+    const role: OllamaPersistedChatMessage['role'] = message.role === 'user'
+      ? 'user'
+      : message.role === 'assistant'
+        ? 'assistant'
+        : (() => { throw new Error('Chat session message role is invalid.'); })();
     const content = byteText(message.content, 'Chat session message content', OLLAMA_LIMITS.chatMessageBytes);
     totalBytes += Buffer.byteLength(content, 'utf8');
-    return { role: message.role, content };
+    return { role, content };
   });
   if (totalBytes > OLLAMA_LIMITS.chatHistoryBytes) throw new Error('Chat session history exceeds its byte limit.');
   return messages;

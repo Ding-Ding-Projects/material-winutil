@@ -209,20 +209,20 @@ export class OllamaSuiteService {
         || !SHA256.test(parsed.sourceRevision) || typeof parsed.inventoryRevision !== 'string' || !SHA256.test(parsed.inventoryRevision)
         || !isoTimestamp(parsed.fetchedAt) || typeof parsed.complete !== 'boolean' || !Number.isSafeInteger(parsed.skippedCount) || Number(parsed.skippedCount) < 0
         || typeof parsed.stale !== 'boolean' || typeof parsed.message !== 'string' || parsed.message.length > 500 || !parseOllamaVersion({ version: parsed.version })) throw new Error('installed enrichment cache invalid');
-      const models = parsed.models.map((item) => {
+      const models: OllamaInstalledEnrichment[] = parsed.models.map((item): OllamaInstalledEnrichment => {
         if (!plainRecord(item) || !exactKeys(item, ['name', 'digest', 'sizeBytes', 'family', 'parameterSize', 'quantization', 'capabilities']) || !Array.isArray(item.capabilities)) throw new Error('installed enrichment model invalid');
-        return { name: validateOllamaModelName(item.name), digest: item.digest, sizeBytes: item.sizeBytes, family: item.family, parameterSize: item.parameterSize, quantization: item.quantization, capabilities: [...item.capabilities] };
+        if (typeof item.digest !== 'string' || !SHA256.test(item.digest) || !Number.isSafeInteger(item.sizeBytes) || Number(item.sizeBytes) < 0
+          || typeof item.family !== 'string' || !item.family || item.family.length > 120 || typeof item.parameterSize !== 'string' || !item.parameterSize || item.parameterSize.length > 64
+          || typeof item.quantization !== 'string' || !item.quantization || item.quantization.length > 64
+          || item.capabilities.some((capability) => typeof capability !== 'string' || !CAPABILITIES.has(capability))) throw new Error('installed enrichment model invalid');
+        return { name: validateOllamaModelName(item.name), digest: item.digest, sizeBytes: Number(item.sizeBytes), family: item.family, parameterSize: item.parameterSize, quantization: item.quantization, capabilities: item.capabilities as OllamaInstalledEnrichment['capabilities'] };
       });
-      if (models.some((model) => !SHA256.test(model.digest) || !Number.isSafeInteger(model.sizeBytes) || model.sizeBytes < 0
-        || typeof model.family !== 'string' || !model.family || model.family.length > 120 || typeof model.parameterSize !== 'string' || !model.parameterSize || model.parameterSize.length > 64 || typeof model.quantization !== 'string' || !model.quantization || model.quantization.length > 64
-        || model.capabilities.some((capability) => typeof capability !== 'string' || !CAPABILITIES.has(capability)))) throw new Error('installed enrichment model invalid');
       if (models.some((model) => new Set(model.capabilities).size !== model.capabilities.length) || new Set(models.map(({ name }) => name)).size !== models.length || parsed.skippedCount !== 0 || parsed.complete !== true) throw new Error('installed enrichment cache is incomplete');
       const canonicalModels = [...models].sort((left, right) => left.name.localeCompare(right.name));
       if (canonicalModels.some((model, index) => model !== models[index])) throw new Error('installed enrichment cache ordering is invalid');
       const version = parseOllamaVersion({ version: parsed.version });
-      const typedModels = models as OllamaInstalledEnrichment[];
-      if (parsed.inventoryRevision !== this.installedRevision(version, typedModels) || parsed.sourceRevision !== this.enrichmentRevision(version, parsed.inventoryRevision, typedModels)) throw new Error('installed enrichment cache identity is invalid');
-      this.installedEnrichment = { schemaVersion: 1, source: 'local-ollama-installed-enrichment', sourceRevision: parsed.sourceRevision, inventoryRevision: parsed.inventoryRevision, fetchedAt: parsed.fetchedAt, version, complete: true, skippedCount: 0, stale: parsed.stale || this.now().getTime() - Date.parse(parsed.fetchedAt) > OLLAMA_LIMITS.installedEnrichmentFreshMs, models: typedModels, message: parsed.message };
+      if (parsed.inventoryRevision !== this.installedRevision(version, models) || parsed.sourceRevision !== this.enrichmentRevision(version, parsed.inventoryRevision, models)) throw new Error('installed enrichment cache identity is invalid');
+      this.installedEnrichment = { schemaVersion: 1, source: 'local-ollama-installed-enrichment', sourceRevision: parsed.sourceRevision, inventoryRevision: parsed.inventoryRevision, fetchedAt: parsed.fetchedAt, version, complete: true, skippedCount: 0, stale: parsed.stale || this.now().getTime() - Date.parse(parsed.fetchedAt) > OLLAMA_LIMITS.installedEnrichmentFreshMs, models, message: parsed.message };
     } catch { this.installedEnrichment = null; }
     try {
       const raw = await fs.readFile(this.pullsFile, 'utf8');

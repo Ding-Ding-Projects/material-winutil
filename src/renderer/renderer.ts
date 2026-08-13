@@ -115,6 +115,10 @@ interface WorkspaceRuntimeState {
   schemaVersion: 1; dock: TabDock; activeWorkspaceId: string;
   workspaces: Array<{ id: string; label: string; activeWindowId: string; windows: Array<{ id: string; label: string; activeStripId: string; strips: Array<{ id: string; label: string; activeTabId: string | null; focusTabId: string | null; tabOrder: string[]; tabs: WorkspaceRuntimeTab[]; groups: WorkspaceRuntimeGroup[]; searches: { strip: WorkspaceRuntimeSearch; groups: WorkspaceRuntimeSearch; master: WorkspaceRuntimeSearch; group: Array<{ groupId: string; descriptor: WorkspaceRuntimeSearch }> } }> }> }>;
 }
+interface SelectionProfile { id: string; name: string; color: string; view: ViewId; ids: readonly string[]; }
+interface SelectionProfileCreateRequest { name: string; color: string; view: ViewId; ids: readonly string[]; }
+interface SelectionProfileUpdateRequest { name?: string; color?: string; view?: ViewId; ids?: readonly string[]; }
+interface SelectionProfilesMigrationRequest { profiles: readonly SelectionProfileCreateRequest[]; }
 interface HistoryEntry { id: string; action: string; detail: string; at: string; }
 interface GitHistoryEntry { commit: string; action: string; recordedAt: string; revisionId: string; restoredFrom?: string; label?: string; }
 interface ExportSaveResult { status: 'saved' | 'cancelled'; filePath?: string; warnings: string[]; vscode?: { available: boolean; label?: string }; }
@@ -321,6 +325,11 @@ interface Bridge {
   appLogoReset(): Promise<AppLogoRuntimeSnapshot>;
   workspaceState(): Promise<WorkspaceRuntimeState>;
   workspaceSave(state: WorkspaceRuntimeState): Promise<WorkspaceRuntimeState>;
+  selectionProfilesList(): Promise<readonly SelectionProfile[]>;
+  selectionProfilesCreate(request: SelectionProfileCreateRequest): Promise<readonly SelectionProfile[]>;
+  selectionProfilesMigrate(request: SelectionProfilesMigrationRequest): Promise<readonly SelectionProfile[]>;
+  selectionProfilesUpdate(id: string, request: SelectionProfileUpdateRequest): Promise<readonly SelectionProfile[]>;
+  selectionProfilesDelete(ids: readonly string[]): Promise<readonly SelectionProfile[]>;
   ollamaHealth(): Promise<OllamaHealthSnapshot>;
   ollamaInstalledEnrichment(): Promise<OllamaInstalledEnrichmentSnapshot | null>;
   ollamaRefreshInstalledEnrichment(): Promise<OllamaInstalledEnrichmentSnapshot>;
@@ -734,7 +743,7 @@ const state = {
   selected: new Set<string>(),
   selectionColor: '#6750A4',
   rowColors: {} as Record<string, string>,
-  profiles: [] as Array<{ id: string; name: string; color: string; view: ViewId; ids: string[] }>,
+  profiles: [] as SelectionProfile[],
   profileDraft: { name: '', color: '#6750A4' },
   dimSumStartup: null as DimSumStartupPresentation | null,
   picker: { target: '', label: '', h: 258, s: 32, l: 48, alpha: 1, representation: 'hex' as AppearanceColorSpace, representationInput: '', contrastBackground: '#ffffff', error: '', recents: [] as string[] },
@@ -1433,7 +1442,6 @@ function applyPrefs(persist = false): void {
   state.appearanceOverrides = { ...p.appearanceOverrides };
   if (persist) void bridge().writePrefs({ ...state.basePrefs, appearanceOverrides: { ...state.basePrefs.appearanceOverrides } });
   persistWorkspace();
-  try { localStorage.setItem('winutil.profiles', JSON.stringify(state.profiles)); } catch { /* profiles stay in memory */ }
 }
 
 function savePrefs(): void { captureBasePrefsFromLive(); applyPrefs(true); }
@@ -5487,16 +5495,21 @@ function saveSelectionDialog(): HTMLElement {
     h('button', { class: 'btn text', onclick: closeDialog }, 'Cancel'),
     h('button', {
       class: 'btn filled', disabled: !state.selected.size,
-      onclick: () => {
+      onclick: () => { void (async () => {
         const name = d.name.trim() || `${VIEW_META[state.view].title} ${state.profiles.length + 1}`;
-        state.profiles = [...state.profiles, { id: `p-${Date.now()}`, name, color: d.color, view: state.view, ids: [...state.selected] }];
-        state.selectionColor = d.color;
-        state.selected.forEach((i) => { state.rowColors[i] = d.color; });
-        recordHistory('profile', `Saved the selection profile “${name}” with ${state.selected.size} row(s)`);
-        d.name = '';
-        closeDialog();
-        snack(`Saved “${name}”. Profiles are unlimited.`);
-      },
+        try {
+          state.profiles = [...await bridge().selectionProfilesCreate({ name, color: d.color, view: state.view, ids: [...state.selected] })];
+          state.selectionColor = d.color;
+          state.selected.forEach((i) => { state.rowColors[i] = d.color; });
+          recordHistory('profile', `Saved the selection profile “${name}” with ${state.selected.size} row(s)`);
+          d.name = '';
+          closeDialog();
+          snack(`Saved “${name}”. Profiles are unlimited.`);
+        } catch (error) {
+          snack(error instanceof Error ? `Selection profile was not saved: ${error.message}` : 'Selection profile was not saved.');
+          render();
+        }
+      })(); },
     }, 'Save profile'),
   ]);
 }
@@ -5532,12 +5545,16 @@ function profilesDialog(): HTMLElement {
         },
       }, 'Merge selected'),
       h('button', {
-        class: 'btn text', onclick: () => {
+        class: 'btn text', onclick: () => { void (async () => {
           if (!picked.size) { snack('Select at least one profile.'); return; }
-          const n = picked.size;
-          state.profiles = state.profiles.filter((p) => !picked.has(p.id));
-          picked.clear(); render(); snack(`Deleted ${n} profile(s).`);
-        },
+          const ids = [...picked];
+          try {
+            state.profiles = [...await bridge().selectionProfilesDelete(ids)];
+            picked.clear(); render(); snack(`Deleted ${ids.length} profile(s).`);
+          } catch (error) {
+            snack(error instanceof Error ? `Selection profiles were not deleted: ${error.message}` : 'Selection profiles were not deleted.');
+          }
+        })(); },
       }, 'Delete selected')),
     h('div', { class: 'listbox' }, ...(found.length ? found.map((p) => {
       const on = picked.has(p.id);
@@ -5552,11 +5569,21 @@ function profilesDialog(): HTMLElement {
           { icon: 'remove', label: 'Subtract from the selection', act: () => apply(p, 'subtract') },
           { section: 'Appearance' },
           { icon: 'colorize', label: 'Recolour this profile…', act: () => openColorPicker(`profile:${p.id}`, `Profile · ${p.name}`) },
-          { icon: 'edit', label: 'Rename this profile', act: () => { const n = window.prompt('New name', p.name); if (n) p.name = n; } },
+          { icon: 'edit', label: 'Rename this profile', act: () => {
+            const name = window.prompt('New name', p.name)?.trim();
+            if (!name || name === p.name) return;
+            void bridge().selectionProfilesUpdate(p.id, { name }).then((profiles) => { state.profiles = [...profiles]; render(); snack(`Renamed “${name}”.`); }).catch((error) => {
+              snack(error instanceof Error ? `Selection profile was not renamed: ${error.message}` : 'Selection profile was not renamed.');
+            });
+          } },
           { section: 'Manage' },
           { icon: locked ? 'lock_open' : 'lock', label: locked ? 'Unlock this profile…' : 'Lock this profile…', act: () => openLockWizard(`profile-sel-${p.id}`, `Selection profile · ${p.name}`, locked ? 'unlock' : 'set') },
           { icon: 'download', label: 'Export this profile', act: () => openDialog('export') },
-          { icon: 'delete', label: 'Delete this profile', act: () => { state.profiles = state.profiles.filter((x) => x.id !== p.id); }, danger: true },
+          { icon: 'delete', label: 'Delete this profile', act: () => {
+            void bridge().selectionProfilesDelete([p.id]).then((profiles) => { state.profiles = [...profiles]; picked.delete(p.id); render(); snack(`Deleted “${p.name}”.`); }).catch((error) => {
+              snack(error instanceof Error ? `Selection profile was not deleted: ${error.message}` : 'Selection profile was not deleted.');
+            });
+          }, danger: true },
         ], p.name),
       },
         h('span', { class: 'cb' }, on ? icon('check') : null),
@@ -5636,7 +5663,10 @@ function openColorPicker(target: string, label: string): void {
   const selectionColor = typeof state.selectionColor === 'string' && /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/iu.test(state.selectionColor)
     ? state.selectionColor
     : fallback;
-  const candidate = target.startsWith('row:') ? state.rowColors[target.slice(4)] : selectionColor;
+  const candidate = target.startsWith('row:')
+    ? state.rowColors[target.slice(4)]
+    : target.startsWith('profile:') ? state.profiles.find((profile) => profile.id === target.slice(8))?.color
+    : selectionColor;
   const current = typeof candidate === 'string' && /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/iu.test(candidate) ? candidate : selectionColor;
   const converted = appearanceColorRuntime().convertColor({ space: 'hex', value: current }, 'hsl');
   const hsl = converted.value as AppearanceColorValue;
@@ -5650,6 +5680,7 @@ function openColorPicker(target: string, label: string): void {
 
 function applyPickedColor(hex: string): void {
   const p = state.picker;
+  let profileWritePending = false;
   p.recents = [hex, ...p.recents.filter((c) => c !== hex)].slice(0, 12);
   if (p.target.startsWith('row:')) {
     const id = p.target.slice(4);
@@ -5657,13 +5688,26 @@ function applyPickedColor(hex: string): void {
     state.rowColors[id] = hex;
   } else if (p.target.startsWith('profile:')) {
     const profile = state.profiles.find((x) => x.id === p.target.slice(8));
-    if (profile) profile.color = hex;
+    if (profile) {
+      profileWritePending = true;
+      const previous = state.profiles;
+      state.profiles = state.profiles.map((entry) => entry.id === profile.id ? { ...entry, color: hex } : entry);
+      void bridge().selectionProfilesUpdate(profile.id, { color: hex }).then((profiles) => {
+        state.profiles = [...profiles];
+        snack(`${p.label} coloured ${hex}.`);
+        render();
+      }).catch((error) => {
+        state.profiles = previous;
+        snack(error instanceof Error ? `Selection profile colour was not saved: ${error.message}` : 'Selection profile colour was not saved.');
+        render();
+      });
+    }
   } else {
     state.selectionColor = hex;
     state.selected.forEach((id) => { state.rowColors[id] = hex; });
   }
   closeDialog();
-  snack(`${p.label} coloured ${hex}.`);
+  if (!profileWritePending) snack(`${p.label} coloured ${hex}.`);
 }
 
 function colorDialog(): HTMLElement {
@@ -5913,7 +5957,25 @@ async function boot(): Promise<void> {
   catch (error) { snack(error instanceof Error ? `Notification history could not be loaded: ${error.message}` : 'Notification history could not be loaded.'); }
   bridge().onNotificationsState((next) => { acceptNotifications(next); render(); });
   await loadPersonalVocabulary();
-  try { state.profiles = JSON.parse(localStorage.getItem('winutil.profiles') ?? '[]'); } catch { state.profiles = []; }
+  try {
+    state.profiles = [...await bridge().selectionProfilesList()];
+    const legacyRaw = localStorage.getItem('winutil.profiles');
+    if (state.profiles.length === 0 && legacyRaw) {
+      const legacy = JSON.parse(legacyRaw) as unknown;
+      if (!Array.isArray(legacy)) throw new Error('The previous local selection profiles are malformed.');
+      const migration: SelectionProfileCreateRequest[] = [];
+      for (const candidate of legacy) {
+        if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new Error('The previous local selection profiles are malformed.');
+        const entry = candidate as { name?: unknown; color?: unknown; view?: unknown; ids?: unknown };
+        if (typeof entry.name !== 'string' || typeof entry.color !== 'string' || typeof entry.view !== 'string' || !Array.isArray(entry.ids)) {
+          throw new Error('The previous local selection profiles are malformed.');
+        }
+        migration.push({ name: entry.name, color: entry.color, view: entry.view as ViewId, ids: entry.ids as string[] });
+      }
+      state.profiles = [...await bridge().selectionProfilesMigrate({ profiles: migration })];
+      localStorage.removeItem('winutil.profiles');
+    }
+  } catch (error) { snack(error instanceof Error ? `Selection profiles could not be loaded: ${error.message}` : 'Selection profiles could not be loaded.'); }
   try {
     const runtime = await bridge().workspaceState();
     if (applyWorkspaceRuntime(runtime)) lastAuthoritativeWorkspace = runtime;

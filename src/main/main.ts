@@ -43,6 +43,8 @@ import { OllamaHarnessService } from './ollama-harness-service';
 import { AppearanceThemeService } from './appearance-theme-service';
 import { NotificationStore } from './notification-store';
 import { WorkspaceRuntimeService } from './workspace-runtime-service';
+import { SelectionProfilesService } from './selection-profiles-service';
+import type { SelectionProfile, SelectionProfileCreateRequest, SelectionProfileUpdateRequest, SelectionProfilesMigrationRequest } from '../shared/selection-profiles';
 import { validateChangelogEntries, type ChangelogEntry, type ChangelogEntryInput } from '../shared/changelog';
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -76,6 +78,7 @@ let ollamaHarnessService: OllamaHarnessService | null = null;
 let appearanceThemeService: AppearanceThemeService | null = null;
 let notificationStore: NotificationStore | null = null;
 let workspaceRuntimeService: WorkspaceRuntimeService | null = null;
+let selectionProfilesService: SelectionProfilesService | null = null;
 const scheduledNotificationFingerprints = new Map<string, string>();
 let updateNotificationFingerprint = '';
 interface EphemeralOllamaAttachment { descriptor: OllamaChatAttachment; base64: string; }
@@ -1425,6 +1428,11 @@ function workspaceRuntime(): WorkspaceRuntimeService {
   return workspaceRuntimeService;
 }
 
+function selectionProfiles(): SelectionProfilesService {
+  if (!selectionProfilesService) throw new Error('Selection profiles are unavailable.');
+  return selectionProfilesService;
+}
+
 function applyNativeAppLogo(snapshot: AppLogoRuntimeSnapshot = appLogo().snapshot()): void {
   if (!win || win.isDestroyed()) return;
   const school = settingsSurfaceService?.snapshot().schoolMode;
@@ -1463,6 +1471,26 @@ ipcMain.handle('workspace:state', (event): WorkspaceRuntimeState => {
 ipcMain.handle('workspace:save', async (event, state: unknown): Promise<WorkspaceRuntimeState> => {
   requireTrustedSender(event);
   return workspaceRuntime().save(state);
+});
+ipcMain.handle('selection-profiles:list', (event): readonly SelectionProfile[] => {
+  requireTrustedSender(event);
+  return selectionProfiles().list();
+});
+ipcMain.handle('selection-profiles:create', async (event, request: unknown): Promise<readonly SelectionProfile[]> => {
+  requireTrustedSender(event);
+  return selectionProfiles().create(request as SelectionProfileCreateRequest);
+});
+ipcMain.handle('selection-profiles:migrate', async (event, request: unknown): Promise<readonly SelectionProfile[]> => {
+  requireTrustedSender(event);
+  return selectionProfiles().migrate(request as SelectionProfilesMigrationRequest);
+});
+ipcMain.handle('selection-profiles:update', async (event, id: unknown, request: unknown): Promise<readonly SelectionProfile[]> => {
+  requireTrustedSender(event);
+  return selectionProfiles().update(id, request as SelectionProfileUpdateRequest);
+});
+ipcMain.handle('selection-profiles:delete', async (event, ids: unknown): Promise<readonly SelectionProfile[]> => {
+  requireTrustedSender(event);
+  return selectionProfiles().delete(ids);
 });
 ipcMain.handle('app-logo:pick-png', async (event, transformValue: unknown): Promise<AppLogoRuntimeSnapshot | null> => {
   requireTrustedSender(event);
@@ -1816,6 +1844,8 @@ app.whenReady().then(async () => {
   await appLogoService.initialize();
   workspaceRuntimeService = new WorkspaceRuntimeService({ userDataDirectory: USER_DIR() });
   await workspaceRuntimeService.initialize();
+  selectionProfilesService = new SelectionProfilesService({ userDataDirectory: USER_DIR() });
+  await selectionProfilesService.initialize();
   ollamaSuiteService = new OllamaSuiteService({
     userDataDirectory: USER_DIR(),
     onPullProgress: (progress) => {

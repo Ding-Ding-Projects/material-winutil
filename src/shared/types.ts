@@ -19,6 +19,7 @@ import type { TabWorkspaceState } from './tabs';
 import type { NotificationInput, NotificationReviewState, NotificationState } from './notifications';
 import type { ConverterAdapter, FileKind, QueueItemState, QueueState } from './file-converter';
 import type { AppLogoExportMetadata, AppLogoPersistedState, AppLogoPresetId, AppLogoTransform, AppLogoDerivedAsset } from './app-logo';
+import type { SelectionProfile, SelectionProfileCreateRequest, SelectionProfileUpdateRequest, SelectionProfilesMigrationRequest } from './selection-profiles';
 import type {
   OllamaCatalogSnapshot, OllamaCatalogVariant, OllamaChatAttachmentPickResult, OllamaChatExportResult, OllamaChatExportSaveRequest, OllamaChatRequest, OllamaChatSessionCreateRequest, OllamaChatSessionCreateResult, OllamaChatSessionDeleteRequest, OllamaChatSessionDeleteResult, OllamaChatSessionDetail, OllamaChatSessionGetRequest, OllamaChatSessionGetResult, OllamaChatSessionListRequest, OllamaChatSessionListResult, OllamaChatSessionRenameRequest, OllamaChatSessionRenameResult, OllamaChatSessionUpdateRequest, OllamaChatSessionUpdateResult, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress,
   OllamaHarnessExecutable, OllamaHarnessLaunchResult, OllamaHarnessPlan, OllamaHarnessPreflightRequest, OllamaHarnessProfileId, OllamaHarnessRestoreResult,
@@ -525,6 +526,11 @@ export interface Bridge {
   appLogoPickPng(transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot | null>;
   workspaceState(): Promise<WorkspaceRuntimeState>;
   workspaceSave(state: WorkspaceRuntimeState): Promise<WorkspaceRuntimeState>;
+  selectionProfilesList(): Promise<readonly SelectionProfile[]>;
+  selectionProfilesCreate(request: SelectionProfileCreateRequest): Promise<readonly SelectionProfile[]>;
+  selectionProfilesMigrate(request: SelectionProfilesMigrationRequest): Promise<readonly SelectionProfile[]>;
+  selectionProfilesUpdate(id: string, request: SelectionProfileUpdateRequest): Promise<readonly SelectionProfile[]>;
+  selectionProfilesDelete(ids: readonly string[]): Promise<readonly SelectionProfile[]>;
   appLogoSelectPreset(presetId: AppLogoPresetId, transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot>;
   appLogoUpdateTransform(transform: AppLogoTransform): Promise<AppLogoRuntimeSnapshot>;
   appLogoReset(): Promise<AppLogoRuntimeSnapshot>;

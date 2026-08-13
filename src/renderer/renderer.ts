@@ -1270,6 +1270,7 @@ async function persistAppearanceOverrides(): Promise<void> {
   captureBasePrefsFromLive();
   state.basePrefs.appearanceOverrides = { ...state.appearanceOverrides };
   await bridge().writePrefs({ ...state.basePrefs, appearanceOverrides: { ...state.appearanceOverrides } });
+  reapplyPersistedAppearanceOverrides();
 }
 
 function appearanceAttrs(targetId: string, attrs: Record<string, unknown> = {}): Record<string, unknown> {
@@ -3703,6 +3704,7 @@ async function applyNamedAppearanceTheme(id: string): Promise<void> {
     state.prefs = scheduledPrefs(state.basePrefs, state.schedule.data);
     state.appearanceOverrides = { ...state.prefs.appearanceOverrides };
     applyPrefs(false);
+    reapplyPersistedAppearanceOverrides();
     render();
     snack('Named theme applied to the live appearance and persisted.');
   } catch (error) {
@@ -3717,6 +3719,7 @@ async function resetNamedAppearanceTheme(): Promise<void> {
     state.prefs = scheduledPrefs(state.basePrefs, state.schedule.data);
     state.appearanceOverrides = { ...state.prefs.appearanceOverrides };
     applyPrefs(false);
+    reapplyPersistedAppearanceOverrides();
     render();
     snack('Shipped appearance restored and persisted.');
   } catch (error) {

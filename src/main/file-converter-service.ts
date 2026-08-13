@@ -126,6 +126,7 @@ export class FileConverterService {
   private selected: FileConverterSelectedSource[] = [];
   private selectedPaths = new Map<string, string>();
   private lastMessage = 'No source files selected. The source stays unchanged.';
+  private queueRun?: Promise<void>;
 
   private constructor(private readonly appDataDirectory: string) {
     this.store = new JsonQueueStore(path.join(appDataDirectory, QUEUE_DIRECTORY));
@@ -176,7 +177,12 @@ export class FileConverterService {
   }
 
   async pause(): Promise<FileConverterSurfaceState> { await this.queue.pause(); this.lastMessage = 'The persistent conversion queue is paused.'; return this.snapshot(); }
-  async resume(): Promise<FileConverterSurfaceState> { await this.queue.resume(); this.lastMessage = 'The persistent conversion queue is active.'; return this.snapshot(); }
+  async resume(): Promise<FileConverterSurfaceState> {
+    await this.queue.resume();
+    await this.runQueue();
+    this.lastMessage = 'The persistent conversion queue resumed its saved local work.';
+    return this.snapshot();
+  }
   async cancelAll(): Promise<FileConverterSurfaceState> {
     const items = await this.store.pageViews(this.queue.summary().pageIds);
     for (const item of items) {
@@ -195,13 +201,8 @@ export class FileConverterService {
   }
 
   async enqueue(adapterId: string): Promise<FileConverterSurfaceState> {
-    const adapter = FILE_CONVERTER_ADAPTERS.find((entry) => entry.id === adapterId);
-    if (!adapter) throw new Error('The requested converter adapter is unknown.');
-    if (adapter.availability !== 'available' || adapter.bundledProof?.bundled !== true) {
-      throw new Error(adapter.unavailableReason ?? 'The converter adapter has no packaged bundled proof.');
-    }
+    const adapter = this.executableAdapter(adapterId);
     if (!this.selected.length) throw new Error('Choose at least one local source file before queueing.');
-    if (adapter.id !== 'text-json-normalize' && adapter.id !== 'csv-to-json') throw new Error('This bundled adapter has no executable implementation in this build.');
     const incompatible = this.selected.find((source) => source.kind !== 'text'
       || source.conflict
       || source.bytes > adapter.limits.inputBytes
@@ -232,7 +233,7 @@ export class FileConverterService {
       this.lastMessage = 'The local conversion work was queued but remains paused until the queue is resumed; source files were unchanged.';
       return this.snapshot();
     }
-    await this.runQueue(adapter);
+    await this.runQueue();
     this.lastMessage = adapter.id === 'csv-to-json'
       ? 'The local CSV-to-JSON queue completed with validated atomic outputs; source files were unchanged.'
       : 'The local text/JSON queue completed with validated atomic outputs; source files were unchanged.';
@@ -245,35 +246,85 @@ export class FileConverterService {
     return sourcePath;
   }
 
-  private async runQueue(adapter: (typeof FILE_CONVERTER_ADAPTERS)[number]): Promise<void> {
+  private executableAdapter(adapterId: string): (typeof FILE_CONVERTER_ADAPTERS)[number] {
+    const adapter = FILE_CONVERTER_ADAPTERS.find((entry) => entry.id === adapterId);
+    if (!adapter) throw new Error('The requested converter adapter is unknown.');
+    if (adapter.availability !== 'available' || adapter.bundledProof?.bundled !== true) {
+      throw new Error(adapter.unavailableReason ?? 'The converter adapter has no packaged bundled proof.');
+    }
+    if (adapter.id !== 'text-json-normalize' && adapter.id !== 'csv-to-json') {
+      throw new Error('This bundled adapter has no executable implementation in this build.');
+    }
+    return adapter;
+  }
+
+  private async runQueue(): Promise<void> {
+    if (this.queueRun) return this.queueRun;
+    const running = this.runQueuedItems();
+    this.queueRun = running;
+    try { await running; }
+    finally { if (this.queueRun === running) this.queueRun = undefined; }
+  }
+
+  private async runQueuedItems(): Promise<void> {
     let claimed: Awaited<ReturnType<PersistentConversionQueue['claimNext']>>;
     while ((claimed = await this.queue.claimNext()).length > 0) {
       for (const item of claimed) {
-        try {
-          const sourceInfo = await fs.stat(item.sourcePath);
-          if (!sourceInfo.isFile() || sourceInfo.size !== item.sourceBytes || sourceInfo.size > adapter.limits.inputBytes) throw new Error('Source changed after preflight or exceeds the adapter limit.');
-          const sourceBytes = await fs.readFile(item.sourcePath);
-          const content = adapter.id === 'csv-to-json'
-            ? serializeCsvRowsAsJson(parseCsvUtf8(sourceBytes, { inputBytes: adapter.limits.inputBytes }))
-            : deterministicUtf8PlainText(sourceBytes);
-          const outputBytes = Buffer.byteLength(content, 'utf8');
-          if (outputBytes > adapter.limits.outputBytes) throw new Error('Deterministic output exceeds the adapter limit.');
-          const destination = path.join(this.outputDirectory(), outputName(item.sourcePath, adapter.id === 'csv-to-json' ? '.json' : '.txt'));
-          await atomicUtf8Output(destination, content);
-          const reopenedBytes = await fs.readFile(destination);
-          if (!Buffer.from(reopenedBytes).equals(Buffer.from(content, 'utf8'))) throw new Error('Output validation failed after atomic publication.');
-          if (adapter.id === 'csv-to-json') {
-            const parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(reopenedBytes));
-            if (!Array.isArray(parsed)) throw new Error('CSV JSON output is not a JSON table after reopening.');
-          }
-          await this.queue.complete(item.id, adapter.id === 'csv-to-json'
-            ? 'Converted CSV to validated deterministic JSON in the controlled local output location.'
-            : 'Converted to validated UTF-8 plain text in the controlled local output location.');
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Local conversion failed safely.';
-          await this.queue.fail(item.id, message);
+        const queueState = this.queue.summary().state;
+        if (queueState === 'paused') {
+          await this.queue.defer(item.id, 'Deferred while the queue is paused; source file unchanged.');
+          continue;
         }
+        if (queueState === 'cancelled') {
+          await this.queue.cancel(item.id, 'Cancelled before conversion began; source file unchanged.');
+          continue;
+        }
+        await this.processQueueItem(item);
       }
+    }
+  }
+
+  private async processQueueItem(item: Awaited<ReturnType<PersistentConversionQueue['claimNext']>>[number]): Promise<void> {
+    try {
+      const adapter = this.executableAdapter(item.adapterId);
+      if (!path.isAbsolute(item.sourcePath) || item.sourcePath.includes('\0')) {
+        throw new Error('Persisted conversion source path is not an absolute local path.');
+      }
+      const sourceInfo = await fs.stat(item.sourcePath);
+      if (!sourceInfo.isFile() || !Number.isSafeInteger(sourceInfo.size) || sourceInfo.size !== item.sourceBytes || sourceInfo.size > adapter.limits.inputBytes) {
+        throw new Error('Source changed after preflight or exceeds the adapter limit.');
+      }
+      const detection = detectFileType(await boundedPrefix(item.sourcePath), path.basename(item.sourcePath));
+      if (detection.kind !== 'text' || detection.conflict || (adapter.id === 'csv-to-json' && path.extname(item.sourcePath).toLocaleLowerCase('en-US') !== '.csv')) {
+        throw new Error('Persisted source is not compatible with its original bundled adapter.');
+      }
+      const sourceBytes = await fs.readFile(item.sourcePath);
+      if (sourceBytes.byteLength !== item.sourceBytes || sourceBytes.byteLength > adapter.limits.inputBytes) {
+        throw new Error('Source changed while it was being read; no output was written.');
+      }
+      const content = adapter.id === 'csv-to-json'
+        ? serializeCsvRowsAsJson(parseCsvUtf8(sourceBytes, { inputBytes: adapter.limits.inputBytes }))
+        : deterministicUtf8PlainText(sourceBytes);
+      const outputBytes = Buffer.byteLength(content, 'utf8');
+      if (outputBytes > adapter.limits.outputBytes) throw new Error('Deterministic output exceeds the adapter limit.');
+      const outputRoot = this.outputDirectory();
+      const destination = path.resolve(outputRoot, outputName(item.sourcePath, adapter.id === 'csv-to-json' ? '.json' : '.txt'));
+      if (path.relative(outputRoot, destination).startsWith('..') || path.isAbsolute(path.relative(outputRoot, destination))) {
+        throw new Error('Controlled output path escaped its application-data directory.');
+      }
+      await atomicUtf8Output(destination, content);
+      const reopenedBytes = await fs.readFile(destination);
+      if (!Buffer.from(reopenedBytes).equals(Buffer.from(content, 'utf8'))) throw new Error('Output validation failed after atomic publication.');
+      if (adapter.id === 'csv-to-json') {
+        const parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(reopenedBytes));
+        if (!Array.isArray(parsed)) throw new Error('CSV JSON output is not a JSON table after reopening.');
+      }
+      await this.queue.complete(item.id, adapter.id === 'csv-to-json'
+        ? 'Converted CSV to validated deterministic JSON in the controlled local output location.'
+        : 'Converted to validated UTF-8 plain text in the controlled local output location.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Local conversion failed safely.';
+      await this.queue.fail(item.id, message);
     }
   }
 

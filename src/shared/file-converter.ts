@@ -471,6 +471,22 @@ export class PersistentConversionQueue {
   }
 
   async complete(itemId: string, outcome = 'validated output'): Promise<void> { await this.settle(itemId, 'succeeded', outcome); }
+  /**
+   * Return a claimed item to the durable queue without consuming a retry.
+   * This is used when a user pauses the queue after a worker has claimed an
+   * item but before it begins touching the source file.
+   */
+  async defer(itemId: string, outcome = 'Deferred while the queue is paused'): Promise<void> {
+    const found = await this.findItem(itemId);
+    if (!found) throw new Error(`Unknown queue item: ${itemId}`);
+    const { page, item } = found;
+    if (item.state !== 'running') throw new Error(`Queue item ${itemId} is not running`);
+    this.index.inFlightBytes = Math.max(0, this.index.inFlightBytes - item.sourceBytes);
+    item.state = 'queued';
+    item.outcome = boundedOutcome(outcome);
+    await this.store.writePage(page);
+    await this.persistIndex();
+  }
   async fail(itemId: string, outcome: string, retryable = false): Promise<void> {
     const found = await this.findItem(itemId);
     if (!found) throw new Error(`Unknown queue item: ${itemId}`);

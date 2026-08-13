@@ -122,6 +122,9 @@ interface SelectionProfilesMigrationRequest { profiles: readonly SelectionProfil
 interface HistoryEntry { id: string; action: string; detail: string; at: string; }
 interface GitHistoryEntry { commit: string; action: string; recordedAt: string; revisionId: string; restoredFrom?: string; label?: string; }
 interface ExportSaveResult { status: 'saved' | 'cancelled'; filePath?: string; warnings: string[]; vscode?: { available: boolean; label?: string }; }
+interface ExternalEditorChoice { id: string; label: string; kind: 'vscode-stable' | 'vscode-insiders' | 'vscode-portable' | 'configured'; source: 'known-install' | 'path' | 'portable' | 'configured'; }
+interface ExternalEditorState { choices: readonly ExternalEditorChoice[]; selectedEditorId: string | null; selectedLabel?: string; vscodeDownloadUrl: string; }
+interface ExternalEditorOpenResult { ok: boolean; status: 'launched' | 'failed' | 'timed-out' | 'not-installed' | 'no-selection' | 'rejected'; error?: string; vscodeDownloadUrl?: string; }
 type NotificationKind = 'info' | 'success' | 'progress' | 'warning' | 'error';
 type NotificationReview = 'unread' | 'read' | 'dismissed';
 interface NotificationEntry { id: string; title: string; detail: string; icon: string; read: boolean; review: NotificationReview; }
@@ -231,6 +234,10 @@ interface Bridge {
   openExternal(url: string): Promise<{ ok: boolean; status: 'opened' | 'rejected' | 'failed'; error?: string }>;
   exportView(p: { view: string; format: string; records: Array<Record<string, unknown>>; scope: { kind: 'all' | 'filtered-view' | 'selection'; detail: string; sourceCount: number; exportedCount: number }; lineEnding: 'lf' | 'crlf'; archive?: Record<string, unknown> }): Promise<ExportSaveResult>;
   openExportInVSCode(filePath: string): Promise<{ ok: boolean; status: string; error?: string; vscodeDownloadUrl?: string }>;
+  externalEditorsState(): Promise<ExternalEditorState>;
+  externalEditorsSelect(editorId: string): Promise<ExternalEditorState>;
+  externalEditorsPickConfigured(): Promise<ExternalEditorState>;
+  openExportInExternalEditor(filePath: string): Promise<ExternalEditorOpenResult>;
   readPrefs(): Promise<Partial<Prefs>>;
   writePrefs(p: Prefs): Promise<void>;
   notificationsState(): Promise<NotificationRuntimeState>;
@@ -822,6 +829,7 @@ const state = {
   narration: { platformSpeechAvailable: true, screenReaderActive: false, activeSpeechId: 0 },
   settingsSurface: null as SettingsSurfaceState | null,
   settingsDraft: { displayName: '', schoolLabel: '', password: '', confirmPassword: '', error: '', busy: false },
+  externalEditors: { data: null as ExternalEditorState | null, busy: false, error: '' },
   schedule: {
     data: null as ScheduledSettingsState | null, selectedId: '', tab: 'rules' as 'rules' | 'editor' | 'sources',
     busy: false, error: '', token: '',
@@ -3155,6 +3163,73 @@ function scheduledSettingsSurface(): HTMLElement {
     h('p', { class: 'feedback' }, `Timezone: ${data?.timezone ?? 'loading'} · Evaluated: ${data ? new Date(data.evaluatedAt).toLocaleString() : 'not yet'}. Higher priority wins; ties use the lexicographically smaller stable rule ID. When an override ends, the saved base value returns.`));
 }
 
+async function refreshExternalEditors(): Promise<void> {
+  state.externalEditors.busy = true;
+  state.externalEditors.error = '';
+  try {
+    state.externalEditors.data = await bridge().externalEditorsState();
+  } catch (error) {
+    state.externalEditors.error = error instanceof Error ? error.message : 'Installed external editors could not be read.';
+  } finally {
+    state.externalEditors.busy = false;
+    render();
+  }
+}
+
+async function selectExternalEditor(editorId: string): Promise<void> {
+  state.externalEditors.busy = true;
+  state.externalEditors.error = '';
+  render();
+  try {
+    state.externalEditors.data = await bridge().externalEditorsSelect(editorId);
+    snack(`External editor set to ${state.externalEditors.data.selectedLabel ?? 'the selected editor'}.`);
+  } catch (error) {
+    state.externalEditors.error = error instanceof Error ? error.message : 'The external editor could not be selected.';
+  } finally {
+    state.externalEditors.busy = false;
+    render();
+  }
+}
+
+async function chooseExternalEditorExecutable(): Promise<void> {
+  state.externalEditors.busy = true;
+  state.externalEditors.error = '';
+  render();
+  try {
+    state.externalEditors.data = await bridge().externalEditorsPickConfigured();
+    if (state.externalEditors.data.selectedLabel) snack(`External editor set to ${state.externalEditors.data.selectedLabel}.`);
+  } catch (error) {
+    state.externalEditors.error = error instanceof Error ? error.message : 'The external editor executable could not be used.';
+  } finally {
+    state.externalEditors.busy = false;
+    render();
+  }
+}
+
+function externalEditorSettingsCard(): HTMLElement {
+  const runtime = state.externalEditors;
+  const data = runtime.data;
+  const choices = data?.choices ?? [];
+  const selected = data?.selectedEditorId ?? '';
+  const hasEditors = choices.length > 0;
+  return card('External editor', '', [
+    h('p', {}, 'Choose a verified installed editor for saved exports. The app starts the selected executable only for the most recently saved export; it never accepts shell commands or free-form launch arguments.'),
+    runtime.error ? h('p', { class: 'feedback bad', role: 'alert' }, runtime.error) : null,
+    runtime.busy ? h('p', { class: 'feedback', role: 'status' }, 'Refreshing installed editors…') : null,
+    hasEditors ? h('label', { class: 'field' }, 'SELECTED EDITOR', h('select', {
+      value: selected, disabled: runtime.busy,
+      onchange: (event: Event) => void selectExternalEditor((event.target as HTMLSelectElement).value),
+    }, h('option', { value: '', disabled: true, selected: selected ? undefined : 'selected' }, 'Choose an installed editor'), ...choices.map((editor) => h('option', { value: editor.id }, `${editor.label} · ${editor.source}`)))) : h('p', { class: 'feedback', role: 'status' }, 'No verified external editor is installed. Saved exports stay on disk until an editor is available.'),
+    h('div', { class: 'btnrow' },
+      h('button', { class: 'btn tonal', disabled: runtime.busy, onclick: () => void chooseExternalEditorExecutable() }, 'Choose editor executable'),
+      h('button', { class: 'btn outlined', disabled: runtime.busy, onclick: () => void refreshExternalEditors() }, 'Refresh installed editors'),
+      !hasEditors ? h('button', { class: 'btn text', disabled: runtime.busy, onclick: () => void bridge().openExternal(data?.vscodeDownloadUrl ?? 'https://code.visualstudio.com/download') }, 'Get Visual Studio Code') : null),
+    h('p', { class: 'feedback' }, data?.selectedLabel
+      ? `Saved exports open with ${data.selectedLabel}.`
+      : 'Select an installed editor before opening a saved export.'),
+  ], 'wide');
+}
+
 function settingsPane(): HTMLElement {
   const p = state.prefs;
   const match = makeMatcher(sq('settings'));
@@ -3303,6 +3378,10 @@ function settingsPane(): HTMLElement {
           onclick: () => void clearPersonalVocabulary(),
         }, vocabularyCopy('clear'))),
     ], 'wide'));
+  }
+
+  if (show('External editor installed Visual Studio Code export executable selected local preference open saved export')) {
+    cards.appendChild(externalEditorSettingsCard());
   }
 
   const appearance = h('div', { class: 'grid2' },
@@ -5458,7 +5537,11 @@ function exportDialog(): HTMLElement {
     draft.savedPath ? h('div', { class: 'notice success', role: 'status' }, icon('check_circle'), h('span', {}, `Saved ${draft.savedPath}`)) : null,
   ], [
     h('button', { class: 'btn text', onclick: closeDialog }, 'Cancel'),
-    draft.savedPath ? h('button', { class: 'btn tonal', onclick: () => void bridge().openExportInVSCode(draft.savedPath).then((result) => snack(result.ok ? 'Opened the export in Visual Studio Code.' : result.error ?? 'Visual Studio Code is unavailable.')) }, 'Open in VS Code') : null,
+    draft.savedPath ? h('button', { class: 'btn tonal', onclick: () => void bridge().openExportInExternalEditor(draft.savedPath).then((result) => {
+      if (result.ok) snack('Opened the saved export in the selected external editor.');
+      else if (result.status === 'not-installed') snack(result.error ?? 'No external editor is installed. Use Settings to open the official Visual Studio Code download route.');
+      else snack(result.error ?? 'The selected external editor could not open the saved export.');
+    }) }, 'Open in selected editor') : null,
     h('button', {
       class: 'btn filled',
       disabled: draft.archive === '7z' && draft.encryption && draft.password.length < 8,
@@ -5948,6 +6031,8 @@ async function boot(): Promise<void> {
     };
   }
   bridge().onSettingsSurfaceState((next) => { acceptSettingsSurface(next); render(); });
+  try { state.externalEditors.data = await bridge().externalEditorsState(); }
+  catch { state.externalEditors.error = 'Installed external editors could not be read.'; }
   try { acceptScheduledSettings(await bridge().scheduledSettingsState()); }
   catch { state.schedule.error = 'Scheduled settings could not be loaded.'; }
   bridge().onScheduledSettingsState((next) => { acceptScheduledSettings(next); render(); });

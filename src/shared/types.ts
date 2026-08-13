@@ -427,6 +427,33 @@ export interface AppLogoRuntimeSnapshot {
 
 export type WorkspaceRuntimeState = TabWorkspaceState;
 
+/**
+ * A renderer-safe description of an editor discovered by the main process.
+ * Launch arguments and executable paths intentionally never cross the bridge.
+ */
+export interface ExternalEditorChoice {
+  readonly id: string;
+  readonly label: string;
+  readonly kind: 'vscode-stable' | 'vscode-insiders' | 'vscode-portable' | 'configured';
+  readonly source: 'known-install' | 'path' | 'portable' | 'configured';
+}
+
+/** The persisted external-editor selection and the currently detectable choices. */
+export interface ExternalEditorState {
+  readonly choices: readonly ExternalEditorChoice[];
+  readonly selectedEditorId: string | null;
+  readonly selectedLabel?: string;
+  readonly vscodeDownloadUrl: string;
+}
+
+/** Safe launch outcome returned to the renderer without process invocation details. */
+export interface ExternalEditorOpenResult {
+  readonly ok: boolean;
+  readonly status: 'launched' | 'failed' | 'timed-out' | 'not-installed' | 'no-selection' | 'rejected';
+  readonly error?: string;
+  readonly vscodeDownloadUrl?: string;
+}
+
 /** The surface exposed on `window.winutil` by the preload bridge. */
 export interface Bridge {
   platform: NodeJS.Platform | 'browser';
@@ -442,6 +469,10 @@ export interface Bridge {
   openExternal(url: string): Promise<{ ok: boolean; status: 'opened' | 'rejected' | 'failed'; error?: string }>;
   exportView(payload: StructuredExportRequest): Promise<StructuredExportSaveResult>;
   openExportInVSCode(filePath: string): Promise<{ ok: boolean; status: string; error?: string; vscodeDownloadUrl?: string }>;
+  externalEditorsState(): Promise<ExternalEditorState>;
+  externalEditorsSelect(editorId: string): Promise<ExternalEditorState>;
+  externalEditorsPickConfigured(): Promise<ExternalEditorState>;
+  openExportInExternalEditor(filePath: string): Promise<ExternalEditorOpenResult>;
   readPrefs(): Promise<Partial<Preferences>>;
   writePrefs(prefs: Preferences): Promise<void>;
   notificationsState(): Promise<NotificationState>;

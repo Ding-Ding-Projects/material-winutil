@@ -25,7 +25,10 @@ import { SettingsSurfaceService } from './settings-surface-service';
 import { deleteCredential, readCredential, writeCredential } from './credential-vault';
 import { exportStructuredRecords } from '../shared/export-formats';
 import { buildSevenZipCommand, createArchiveListFile, createArchiveManifest } from '../shared/archive-export';
-import { detectExternalEditors, openExportInVSCode } from './external-editor';
+import {
+  detectExternalEditors, launchExternalEditor, validateConfiguredEditors, VSCODE_DOWNLOAD_URL,
+  type ConfiguredEditorRecord, type DetectedEditor,
+} from './external-editor';
 import { LocalHistory, LOCAL_HISTORY_ACTIONS, type JsonValue, type LocalHistoryAction } from './local-history';
 import { LockService, type LockCreateRequest, type LockSearchRequest, type LockUpdateRequest } from './lock-service';
 import { verifyOfflineDocsBundle, type OfflineDocsBundle } from '../shared/offline-docs';
@@ -51,6 +54,7 @@ const ROOT = path.join(__dirname, '..', '..');
 const CONFIG_DIR = path.join(__dirname, '..', 'config');
 const USER_DIR = () => app.getPath('userData');
 const PREFS_FILE = () => path.join(USER_DIR(), 'preferences.json');
+const EXTERNAL_EDITOR_FILE = () => path.join(USER_DIR(), 'external-editors.json');
 const HISTORY_FILE = () => path.join(USER_DIR(), 'history.jsonl');
 const RENDERER_FILE = path.join(__dirname, '..', 'renderer', 'index.html');
 const RENDERER_URL = pathToFileURL(RENDERER_FILE).href;
@@ -79,6 +83,12 @@ let appearanceThemeService: AppearanceThemeService | null = null;
 let notificationStore: NotificationStore | null = null;
 let workspaceRuntimeService: WorkspaceRuntimeService | null = null;
 let selectionProfilesService: SelectionProfilesService | null = null;
+interface ExternalEditorPreferences {
+  readonly schemaVersion: 1;
+  readonly selectedEditorId: string | null;
+  readonly configuredEditors: readonly ConfiguredEditorRecord[];
+}
+let externalEditorPreferencesCache: ExternalEditorPreferences | null = null;
 const scheduledNotificationFingerprints = new Map<string, string>();
 let updateNotificationFingerprint = '';
 interface EphemeralOllamaAttachment { descriptor: OllamaChatAttachment; base64: string; }
@@ -671,7 +681,41 @@ async function requireHistoryAccess(): Promise<void> {
   if (!access.unlocked) throw new Error('Unlock local history before using this action.');
 }
 
-async function detectedEditors() {
+function externalEditorPreferences(value: unknown): ExternalEditorPreferences | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (record.schemaVersion !== 1 || (record.selectedEditorId !== null && typeof record.selectedEditorId !== 'string')) return null;
+  if (typeof record.selectedEditorId === 'string' && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(record.selectedEditorId)) return null;
+  try {
+    return {
+      schemaVersion: 1,
+      selectedEditorId: record.selectedEditorId as string | null,
+      configuredEditors: validateConfiguredEditors(Array.isArray(record.configuredEditors) ? record.configuredEditors as ConfiguredEditorRecord[] : []),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function loadExternalEditorPreferences(): Promise<ExternalEditorPreferences> {
+  if (externalEditorPreferencesCache) return externalEditorPreferencesCache;
+  try {
+    const parsed = externalEditorPreferences(JSON.parse(await fs.readFile(EXTERNAL_EDITOR_FILE(), 'utf8')) as unknown);
+    if (parsed) return externalEditorPreferencesCache = parsed;
+  } catch {
+    // A missing or malformed local preference never enables an editor implicitly.
+  }
+  return externalEditorPreferencesCache = { schemaVersion: 1, selectedEditorId: null, configuredEditors: [] };
+}
+
+async function saveExternalEditorPreferences(next: ExternalEditorPreferences): Promise<ExternalEditorPreferences> {
+  externalEditorPreferencesCache = next;
+  await fs.mkdir(USER_DIR(), { recursive: true });
+  await atomicWrite(EXTERNAL_EDITOR_FILE(), JSON.stringify(next, null, 2));
+  return next;
+}
+
+async function detectedEditors(preferences = await loadExternalEditorPreferences()): Promise<readonly DetectedEditor[]> {
   const isFile = async (candidate: string): Promise<boolean> => {
     try { return (await fs.stat(candidate)).isFile(); } catch { return false; }
   };
@@ -683,8 +727,34 @@ async function detectedEditors() {
     localAppData: process.env.LOCALAPPDATA,
     programFiles: process.env.ProgramFiles,
     programFilesX86: process.env['ProgramFiles(x86)'],
-    portableRoots: [], configuredEditors: [],
+    portableRoots: [], configuredEditors: preferences.configuredEditors,
   }, { isFile, findOnPath });
+}
+
+function externalEditorState(editors: readonly DetectedEditor[], selectedEditorId: string | null) {
+  const selected = selectedEditorId ? editors.find((editor) => editor.id === selectedEditorId) : undefined;
+  return {
+    choices: editors.map(({ id, kind, label, source }) => ({ id, kind, label, source })),
+    selectedEditorId: selected?.id ?? null,
+    ...(selected ? { selectedLabel: selected.label } : {}),
+    vscodeDownloadUrl: VSCODE_DOWNLOAD_URL,
+  };
+}
+
+function publicExternalEditorLaunch(result: Awaited<ReturnType<typeof launchExternalEditor>>) {
+  return {
+    ok: result.ok,
+    status: result.status,
+    ...(result.error ? { error: result.error } : {}),
+    ...(result.vscodeDownloadUrl ? { vscodeDownloadUrl: result.vscodeDownloadUrl } : {}),
+  };
+}
+
+async function currentExternalEditorState() {
+  const preferences = await loadExternalEditorPreferences();
+  const editors = await detectedEditors(preferences);
+  const selectedEditorId = editors.some((editor) => editor.id === preferences.selectedEditorId) ? preferences.selectedEditorId : null;
+  return externalEditorState(editors, selectedEditorId);
 }
 
 function exportBaseName(view: string): string {
@@ -924,7 +994,80 @@ ipcMain.handle('view:export', async (event, payload: StructuredExportRequest): P
 ipcMain.handle('view:export-open-vscode', async (event, filePath: string) => {
   requireTrustedSender(event);
   if (filePath !== lastExportPath || !path.isAbsolute(filePath)) throw new Error('Only the most recently saved export can be opened.');
-  return openExportInVSCode(filePath, await detectedEditors(), execFile);
+  const editors = await detectedEditors();
+  const vscode = editors.find((editor) => editor.kind === 'vscode-stable')
+    ?? editors.find((editor) => editor.kind === 'vscode-insiders' || editor.kind === 'vscode-portable');
+  if (!vscode) return { ok: false, status: 'not-installed', error: 'Visual Studio Code was not found. The export was not opened and nothing was downloaded.', vscodeDownloadUrl: VSCODE_DOWNLOAD_URL };
+  return publicExternalEditorLaunch(await launchExternalEditor({ editor: vscode, targetPath: filePath, targetKind: 'export' }, execFile));
+});
+
+ipcMain.handle('external-editors:state', async (event) => {
+  requireTrustedSender(event);
+  return currentExternalEditorState();
+});
+
+ipcMain.handle('external-editors:select', async (event, editorId: string) => {
+  requireTrustedSender(event);
+  if (typeof editorId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(editorId)) {
+    throw new Error('The selected editor identifier is invalid.');
+  }
+  const preferences = await loadExternalEditorPreferences();
+  const editors = await detectedEditors(preferences);
+  if (!editors.some((editor) => editor.id === editorId)) {
+    throw new Error('That editor is no longer available on this computer.');
+  }
+  await saveExternalEditorPreferences({ ...preferences, selectedEditorId: editorId });
+  return currentExternalEditorState();
+});
+
+ipcMain.handle('external-editors:pick-configured', async (event) => {
+  requireTrustedSender(event);
+  const choice = await dialog.showOpenDialog({
+    title: 'Choose external editor executable',
+    properties: ['openFile'],
+    filters: [{ name: 'Windows executable', extensions: ['exe'] }],
+  });
+  if (choice.canceled || choice.filePaths.length !== 1) return currentExternalEditorState();
+  const executablePath = choice.filePaths[0];
+  const stat = await fs.stat(executablePath).catch(() => null);
+  if (!stat?.isFile() || path.extname(executablePath).toLowerCase() !== '.exe') {
+    throw new Error('Choose one existing Windows executable. The editor preference was not changed.');
+  }
+  const preferences = await loadExternalEditorPreferences();
+  const normalized = path.win32.normalize(executablePath);
+  const existing = preferences.configuredEditors.find((editor) => path.win32.normalize(editor.executablePath).toLowerCase() === normalized.toLowerCase());
+  const record: ConfiguredEditorRecord = existing ?? {
+    id: `local-${randomUUID()}`,
+    label: path.basename(normalized, '.exe').replace(/[._-]+/gu, ' ').slice(0, 80) || 'Local editor',
+    executablePath: normalized,
+    arguments: [],
+  };
+  const configuredEditors = existing ? preferences.configuredEditors : [...preferences.configuredEditors, record];
+  const next: ExternalEditorPreferences = { schemaVersion: 1, selectedEditorId: `configured:${record.id}`, configuredEditors: validateConfiguredEditors(configuredEditors) };
+  const editors = await detectedEditors(next);
+  if (!editors.some((editor) => editor.id === next.selectedEditorId)) {
+    throw new Error('The selected executable could not be verified. The editor preference was not changed.');
+  }
+  await saveExternalEditorPreferences(next);
+  return externalEditorState(editors, next.selectedEditorId);
+});
+
+ipcMain.handle('view:export-open-external-editor', async (event, filePath: string) => {
+  requireTrustedSender(event);
+  if (filePath !== lastExportPath || !path.isAbsolute(filePath)) throw new Error('Only the most recently saved export can be opened.');
+  const preferences = await loadExternalEditorPreferences();
+  const editors = await detectedEditors(preferences);
+  const selected = editors.find((editor) => editor.id === preferences.selectedEditorId);
+  if (!selected) {
+    return {
+      ok: false, status: editors.length ? 'no-selection' : 'not-installed',
+      error: editors.length
+        ? 'Choose an installed external editor in Settings before opening the export.'
+        : 'No supported external editor was found. The export was not opened and nothing was downloaded.',
+      vscodeDownloadUrl: VSCODE_DOWNLOAD_URL,
+    };
+  }
+  return publicExternalEditorLaunch(await launchExternalEditor({ editor: selected, targetPath: filePath, targetKind: 'export' }, execFile));
 });
 
 ipcMain.handle('prefs:read', async (event): Promise<Partial<Preferences>> => {

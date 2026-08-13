@@ -4,7 +4,7 @@
  * single script scope with no module imports.
  * ========================================================================== */
 
-type ViewId = 'install' | 'tweaks' | 'config' | 'updates' | 'iso' | 'converter' | 'ollama' | 'history' | 'docs' | 'settings';
+type ViewId = 'install' | 'tweaks' | 'config' | 'updates' | 'iso' | 'converter' | 'ollama' | 'history' | 'changelog' | 'docs' | 'settings';
 
 type ThemeMode = 'light' | 'dark';
 type Density = 'comfortable' | 'compact';
@@ -13,6 +13,7 @@ type TabDock = 'left' | 'right' | 'top' | 'bottom';
 type AppearanceColorSpace = 'hex' | 'rgb' | 'hsl' | 'hsv' | 'hwb' | 'lab' | 'lch' | 'oklab' | 'oklch' | 'cmyk';
 type AppearanceColorValue = { space: AppearanceColorSpace; [channel: string]: string | number | undefined };
 interface AppearanceOverride { accent: string; font: string; radius: number; scale: number; weight: number; }
+interface ChangelogEntry { schemaVersion: 1; version: string; releaseDate: string; category: string; facts: { English: string; Yue: string }; commitSha: string; forgeBaseUrl: string; commitUrl: string; }
 interface AppearanceColorConversion {
   value: AppearanceColorValue;
   inGamut: boolean;
@@ -222,6 +223,7 @@ interface Bridge {
   ensureDeps(): Promise<Array<{ name: string; present: boolean; installed: boolean; detail: string }>>;
   onProgress(cb: (p: { id: string; index: number; total: number; state: string; detail: string }) => void): void;
   loadOfflineDocs(): Promise<OfflineDocsBundle>;
+  loadChangelog(): Promise<readonly ChangelogEntry[]>;
   openExternal(url: string): Promise<{ ok: boolean; status: 'opened' | 'rejected' | 'failed'; error?: string }>;
   exportView(p: { view: string; format: string; records: Array<Record<string, unknown>>; scope: { kind: 'all' | 'filtered-view' | 'selection'; detail: string; sourceCount: number; exportedCount: number }; lineEnding: 'lf' | 'crlf'; archive?: Record<string, unknown> }): Promise<ExportSaveResult>;
   openExportInVSCode(filePath: string): Promise<{ ok: boolean; status: string; error?: string; vscodeDownloadUrl?: string }>;
@@ -364,6 +366,7 @@ const NAV: Array<{ heading: string } | { id: ViewId; label: string; icon: string
   { id: 'ollama', label: 'Ollama suite', icon: 'memory' },
   { heading: '' },
   { id: 'history', label: 'History', icon: 'history' },
+  { id: 'changelog', label: 'Changelog', icon: 'receipt_long' },
   { id: 'docs', label: 'Docs', icon: 'menu_book' },
   { id: 'settings', label: 'Settings', icon: 'settings' },
 ];
@@ -377,6 +380,7 @@ const VIEW_META: Record<ViewId, { title: string; search: string }> = {
   converter: { title: 'File converter', search: 'Search converter categories, formats and unavailable reasons' },
   ollama: { title: 'Ollama suite', search: 'Search official variants, capabilities, sizes and local states' },
   history: { title: 'History', search: 'Search history actions and details' },
+  changelog: { title: 'Changelog', search: 'Search release versions, dates, categories and commits' },
   docs: { title: 'Docs', search: 'Search the built-in documentation' },
   settings: { title: 'Settings', search: 'Search settings, descriptions and current values' },
 };
@@ -624,14 +628,14 @@ const COPY_EN = {
   minimize: 'Minimize', maximize: 'Maximize', close: 'Close', search: 'Search', clearSearch: 'Clear search',
   regexForSearch: 'Open the regex builder for this search', searchDestinations: 'Search destinations',
   system: 'System', install: 'Install', tweaks: 'Tweaks', config: 'Config', updates: 'Updates',
-  creator: 'Win11 Creator', converter: 'File converter', ollama: 'Ollama suite', history: 'History', docs: 'Docs',
+  creator: 'Win11 Creator', converter: 'File converter', ollama: 'Ollama suite', history: 'History', changelog: 'Changelog', docs: 'Docs',
   installSearch: 'Search 227 applications, winget ids and descriptions',
   tweakSearch: 'Search tweaks, categories and registry effects',
   configSearch: 'Search features, fixes, legacy panels and remote access',
   updateSearch: 'Search update profiles', creatorSearch: 'Search image customization steps',
   converterSearch: 'Search converter categories, formats and unavailable reasons',
   ollamaSearch: 'Search official variants, capabilities, sizes and local states',
-  historySearch: 'Search history actions and details', docsSearch: 'Search the built-in documentation',
+  historySearch: 'Search history actions and details', changelogSearch: 'Search release versions, dates, categories and commits', docsSearch: 'Search the built-in documentation',
   settingsSearch: 'Search settings, descriptions and current values',
   installSelectedPackages: 'Install the selected packages', readOnlyView: 'Read-only view',
   adapterUnavailable: 'Unavailable until the reviewed system adapter is installed',
@@ -662,14 +666,14 @@ const COPY_YUE: Record<CopyKey, string> = {
   minimize: '最小化', maximize: '最大化', close: '關閉', search: '搜尋', clearSearch: '清除搜尋',
   regexForSearch: '開啟呢個搜尋欄嘅正規表示式建構器', searchDestinations: '搜尋目的地',
   system: '系統', install: '安裝', tweaks: '調校', config: '設定功能', updates: '更新',
-  creator: 'Win11 映像製作器', converter: '檔案轉換器', ollama: 'Ollama 套件管理器', history: '歷史', docs: '說明文件',
+  creator: 'Win11 映像製作器', converter: '檔案轉換器', ollama: 'Ollama 套件管理器', history: '歷史', changelog: '更新記錄', docs: '說明文件',
   installSearch: '搜尋 227 個應用程式、winget 識別碼同描述',
   tweakSearch: '搜尋調校、分類同登錄效果',
   configSearch: '搜尋功能、修正、傳統面板同遙距存取',
   updateSearch: '搜尋更新設定檔', creatorSearch: '搜尋映像自訂步驟',
   converterSearch: '搜尋轉換分類、格式同不可用原因',
   ollamaSearch: '搜尋官方模型版本、能力、大小同本機狀態',
-  historySearch: '搜尋歷史動作同詳情', docsSearch: '搜尋內置說明文件',
+  historySearch: '搜尋歷史動作同詳情', changelogSearch: '搜尋版本、日期、分類同提交記錄', docsSearch: '搜尋內置說明文件',
   settingsSearch: '搜尋設定、說明同目前值',
   installSelectedPackages: '安裝已選套件', readOnlyView: '唯讀檢視',
   adapterUnavailable: '要等經審核嘅系統配接器安裝好先可以用',
@@ -695,7 +699,7 @@ const COPY_YUE: Record<CopyKey, string> = {
 const VIEW_COPY: Record<ViewId, { title: CopyKey; search: CopyKey }> = {
   install: { title: 'install', search: 'installSearch' }, tweaks: { title: 'tweaks', search: 'tweakSearch' },
   config: { title: 'config', search: 'configSearch' }, updates: { title: 'updates', search: 'updateSearch' },
-  iso: { title: 'creator', search: 'creatorSearch' }, converter: { title: 'converter', search: 'converterSearch' }, ollama: { title: 'ollama', search: 'ollamaSearch' }, history: { title: 'history', search: 'historySearch' },
+  iso: { title: 'creator', search: 'creatorSearch' }, converter: { title: 'converter', search: 'converterSearch' }, ollama: { title: 'ollama', search: 'ollamaSearch' }, history: { title: 'history', search: 'historySearch' }, changelog: { title: 'changelog', search: 'changelogSearch' },
   docs: { title: 'docs', search: 'docsSearch' }, settings: { title: 'settings', search: 'settingsSearch' },
 };
 
@@ -774,6 +778,7 @@ const state = {
   prefs: { ...DEFAULT_PREFS },
   runOutput: 'No command has run yet. Package actions use WinGet. Other system operations stay disabled until their verified WinUtil adapter is installed.',
   history: [] as HistoryEntry[],
+  changelog: { entries: [] as readonly ChangelogEntry[], loading: false, error: '' },
   gitHistory: [] as GitHistoryEntry[],
   historyCounts: [] as Array<{ action: string; count: number }>,
   historyFilter: { from: '', to: '', action: 'all' },
@@ -858,7 +863,7 @@ function showDimSumStartup(presentation: DimSumStartupPresentation): void {
   render();
 }
 
-const VALID_VIEWS = new Set<ViewId>(['install', 'tweaks', 'config', 'updates', 'iso', 'converter', 'ollama', 'history', 'docs', 'settings']);
+const VALID_VIEWS = new Set<ViewId>(['install', 'tweaks', 'config', 'updates', 'iso', 'converter', 'ollama', 'history', 'changelog', 'docs', 'settings']);
 let workspaceReady = false;
 let workspaceWriteGeneration = 0;
 let lastAuthoritativeWorkspace: WorkspaceRuntimeState | null = null;
@@ -1486,7 +1491,7 @@ function categoryLabel(category: string): string {
 /* ------------------------------------------------------------ derivation -- */
 
 const isSystemView = (v: ViewId): boolean => ['install', 'tweaks', 'config', 'updates', 'iso', 'converter', 'ollama'].includes(v);
-const isListView = (v: ViewId): boolean => ['install', 'tweaks', 'config', 'history'].includes(v);
+const isListView = (v: ViewId): boolean => ['install', 'tweaks', 'config', 'history', 'changelog'].includes(v);
 
 function tweakGroups(source: WinutilTweak[]): Array<{ name: string; items: WinutilTweak[] }> {
   const match = makeMatcher(state.search);
@@ -1514,6 +1519,7 @@ function countFor(view: ViewId): string {
     case 'tweaks': return String(state.catalog.tweaks.length);
     case 'config': return String(state.catalog.features.length);
     case 'history': return String(state.history.length);
+    case 'changelog': return String(state.changelog.entries.length);
     default: return '';
   }
 }
@@ -1840,6 +1846,7 @@ function statusLine(): string {
     case 'tweaks': return `${tweakGroups(state.catalog.tweaks).reduce((n, g) => n + g.items.length, 0)} of ${state.catalog.tweaks.length} · ${state.selected.size} selected`;
     case 'config': return `${tweakGroups(state.catalog.features).reduce((n, g) => n + g.items.length, 0)} of ${state.catalog.features.length} · ${state.selected.size} selected`;
     case 'history': return `${filteredHistory().length} Git-backed revisions`;
+    case 'changelog': return `${filteredChangelog().length} bundled release record(s)`;
     default: return '';
   }
 }
@@ -1850,6 +1857,7 @@ function allIdsInView(): string[] {
     case 'tweaks': return tweakGroups(state.catalog.tweaks).flatMap((g) => g.items.map((i) => i.id));
     case 'config': return tweakGroups(state.catalog.features).flatMap((g) => g.items.map((i) => i.id));
     case 'history': return filteredHistory().map((e) => e.commit);
+    case 'changelog': return filteredChangelog().map((entry) => entry.commitSha);
     default: return [];
   }
 }
@@ -1897,6 +1905,7 @@ function pane(): HTMLElement {
     case 'converter': return converterPane();
     case 'ollama': return ollamaPane();
     case 'history': return historyPane();
+    case 'changelog': return changelogPane();
     case 'docs': return docsPane();
     case 'settings': return settingsPane();
   }
@@ -2932,6 +2941,52 @@ function historyPane(): HTMLElement {
       h('button', { class: 'btn text', onclick: () => void lockHistory() }, 'Lock history')),
     h('div', { style: 'padding:12px 20px' }, h('p', { class: state.historyMessage ? 'feedback error' : 'feedback', role: 'status' },
       state.historyMessage || 'Local Git-backed history is append-only. Browse, date/action filtering, redacted diff, restore-as-new-revision, labels, retention decisions, and redacted export are available. Snapshot contents and credentials are omitted from exports.')));
+}
+
+function filteredChangelog(): readonly ChangelogEntry[] {
+  const matches = makeMatcher(state.search);
+  return state.changelog.entries.filter((entry) => matches([
+    entry.version, entry.releaseDate, entry.category, entry.facts.English, entry.facts.Yue, entry.commitSha,
+  ].join('\n')));
+}
+
+function changelogPane(): HTMLElement {
+  const changelog = state.changelog;
+  const entries = filteredChangelog();
+  const list = h('div', { class: 'rowlist' });
+  if (changelog.loading) list.appendChild(emptyState('Loading the bundled changelog…'));
+  else if (changelog.error) list.appendChild(h('div', { class: 'notice warn', role: 'alert' }, icon('warning'), h('span', {}, changelog.error)));
+  else if (!entries.length) list.appendChild(emptyState(state.search.text.trim()
+    ? 'No bundled changelog entry matches this search.'
+    : 'This bundled build contains no release changelog entries.'));
+  else for (const entry of entries) {
+    const facts = effectiveLanguage() === 'Bilingual'
+      ? `${entry.facts.English}\n${entry.facts.Yue}`
+      : effectiveLanguage() === 'Yue' ? entry.facts.Yue : entry.facts.English;
+    list.appendChild(h('article', appearanceAttrs(`changelog-${entry.commitSha}`, {
+      class: 'card wide', 'data-changelog-version': entry.version,
+      oncontextmenu: ctx(`changelog-${entry.commitSha}`, () => [
+        { icon: 'content_copy', label: 'Copy full commit SHA', act: () => void navigator.clipboard.writeText(entry.commitSha).then(() => snack('Copied full commit SHA.')) },
+        { icon: 'open_in_new', label: 'Open commit in browser', act: () => void bridge().openExternal(entry.commitUrl) },
+        { icon: 'palette', label: 'Edit this changelog entry’s appearance…', act: () => openAppearance(`changelog-${entry.commitSha}`, `Changelog · ${entry.version}`) },
+      ], `Changelog ${entry.version}`),
+    }),
+    h('div', { class: 'card-head' }, h('div', {}, h('p', { class: 'eyebrow' }, entry.category), h('h2', {}, entry.version)), h('time', { datetime: entry.releaseDate, class: 'chip-inline' }, entry.releaseDate)),
+    h('p', { style: 'white-space:pre-line' }, facts),
+    h('a', { href: entry.commitUrl, onclick: (event: Event) => { event.preventDefault(); void bridge().openExternal(entry.commitUrl); } }, entry.commitSha)));
+  }
+  return h('div', { class: 'pane' },
+    h('div', { class: 'pane-head' }, h('div', {}, h('p', { class: 'eyebrow' }, 'Bundled release records'), h('h2', {}, 'Changelog'), h('p', {}, 'Entries come from local release tags and commit subjects included during the build.')),
+      h('button', { class: 'btn tonal', disabled: changelog.loading, onclick: () => void refreshChangelog() }, icon('refresh'), 'Reload bundled data')),
+    list);
+}
+
+async function refreshChangelog(): Promise<void> {
+  if (state.changelog.loading) return;
+  state.changelog.loading = true; state.changelog.error = ''; render();
+  try { state.changelog.entries = await bridge().loadChangelog(); }
+  catch (error) { state.changelog.entries = []; state.changelog.error = error instanceof Error ? error.message : 'The bundled changelog could not be loaded.'; }
+  finally { state.changelog.loading = false; render(); }
 }
 
 const SCHEDULE_WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -5335,6 +5390,13 @@ function exportRecords(): Array<Record<string, unknown>> {
     return ids.map((id) => { const item = source.find((entry) => entry.id === id); return item ? { id: item.id, name: item.name, category: item.cat, description: item.desc, panel: item.panel ?? '', type: item.type ?? '' } : { id }; });
   }
   if (state.view === 'history') return state.gitHistory.map((entry) => ({ ...entry }));
+  if (state.view === 'changelog') return ids.map((id) => {
+    const entry = state.changelog.entries.find((candidate) => candidate.commitSha === id);
+    return entry ? {
+      version: entry.version, releaseDate: entry.releaseDate, category: entry.category,
+      facts: { ...entry.facts }, commitSha: entry.commitSha, commitUrl: entry.commitUrl,
+    } : { commitSha: id };
+  });
   if (state.view === 'settings') return [{ theme: state.prefs.theme, density: state.prefs.density, language: state.prefs.language, accent: state.prefs.accent, font: state.prefs.font, scale: state.prefs.scale, weight: state.prefs.weight, radius: state.prefs.radius, reducedMotion: state.prefs.reducedMotion }];
   return ids.map((id) => ({ id, view: state.view }));
 }
@@ -5887,6 +5949,7 @@ async function boot(): Promise<void> {
   await refreshOllama(false);
   await refreshOllamaChatSessions();
   try { state.history = (await bridge().history()).reverse(); } catch { state.history = []; }
+  await refreshChangelog();
   await refreshHistoryAccess();
   if (state.historyAccess.unlocked) await refreshGitHistory();
   render();

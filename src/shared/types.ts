@@ -10,6 +10,7 @@ import type {
   LockUnlockResult, LockUpdateRequest, PreparedLockTotp,
 } from '../main/lock-service';
 import type { OfflineDocsBundle } from './offline-docs';
+import type { ChangelogEntry } from './changelog';
 import type {
   ScheduledSettingRule, ScheduledSettingsDocument, ScheduledSettingValue,
 } from './scheduled-settings';
@@ -436,6 +437,7 @@ export interface Bridge {
   ensureDeps(): Promise<Array<{ name: string; present: boolean; installed: boolean; detail: string }>>;
   onProgress(cb: (p: { id: string; index: number; total: number; state: string; detail: string }) => void): void;
   loadOfflineDocs(): Promise<OfflineDocsBundle>;
+  loadChangelog(): Promise<readonly ChangelogEntry[]>;
   openExternal(url: string): Promise<{ ok: boolean; status: 'opened' | 'rejected' | 'failed'; error?: string }>;
   exportView(payload: StructuredExportRequest): Promise<StructuredExportSaveResult>;
   openExportInVSCode(filePath: string): Promise<{ ok: boolean; status: string; error?: string; vscodeDownloadUrl?: string }>;

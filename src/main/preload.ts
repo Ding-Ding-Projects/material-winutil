@@ -15,6 +15,7 @@ const bridge: Bridge = {
   ensureDeps: () => ipcRenderer.invoke('deps:ensure'),
   onProgress: (cb) => { ipcRenderer.on('winutil:progress', (_e, p) => cb(p)); },
   loadOfflineDocs: () => ipcRenderer.invoke('docs:bundle'),
+  loadChangelog: () => ipcRenderer.invoke('changelog:load'),
   openExternal: (url) => ipcRenderer.invoke('docs:open-external', url),
   exportView: (payload) => ipcRenderer.invoke('view:export', payload),
   openExportInVSCode: (filePath) => ipcRenderer.invoke('view:export-open-vscode', filePath),

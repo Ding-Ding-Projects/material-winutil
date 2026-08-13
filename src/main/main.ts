@@ -43,6 +43,7 @@ import { AppearanceThemeService } from './appearance-theme-service';
 import { NotificationStore } from './notification-store';
 import { WorkspaceRuntimeService } from './workspace-runtime-service';
 import type { WorkspaceRuntimeState } from '../shared/tabs';
+import { validateChangelogEntries, type ChangelogEntry, type ChangelogEntryInput } from '../shared/changelog';
 
 const ROOT = path.join(__dirname, '..', '..');
 const CONFIG_DIR = path.join(__dirname, '..', 'config');
@@ -52,6 +53,7 @@ const HISTORY_FILE = () => path.join(USER_DIR(), 'history.jsonl');
 const RENDERER_FILE = path.join(__dirname, '..', 'renderer', 'index.html');
 const RENDERER_URL = pathToFileURL(RENDERER_FILE).href;
 const OFFLINE_DOCS_BUNDLE_FILE = path.join(__dirname, '..', 'offline-docs', 'bundle.json');
+const CHANGELOG_BUNDLE_FILE = path.join(__dirname, '..', 'config', 'changelog.json');
 
 let win: BrowserWindow | null = null;
 let catalogCache: WinutilCatalog | null = null;
@@ -64,6 +66,7 @@ let scheduledSettingsService: ScheduledSettingsService | null = null;
 let localHistoryService: LocalHistory | null = null;
 let lockService: LockService | null = null;
 let offlineDocsCache: OfflineDocsBundle | null = null;
+let changelogCache: readonly ChangelogEntry[] | null = null;
 let fileConverterService: FileConverterService | null = null;
 let appLogoService: AppLogoService | null = null;
 let ollamaSuiteService: OllamaSuiteService | null = null;
@@ -119,6 +122,22 @@ async function loadCatalog(): Promise<WinutilCatalog> {
   const raw = await fs.readFile(path.join(CONFIG_DIR, 'winutil.json'), 'utf8');
   catalogCache = validateCatalog(JSON.parse(raw) as unknown);
   return catalogCache;
+}
+
+async function loadChangelog(): Promise<readonly ChangelogEntry[]> {
+  if (changelogCache) return changelogCache;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await fs.readFile(CHANGELOG_BUNDLE_FILE, 'utf8'));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error('The bundled changelog is unavailable. Rebuild the application assets.');
+    }
+    throw new Error('The bundled changelog could not be read.');
+  }
+  if (!Array.isArray(raw)) throw new Error('The bundled changelog has an invalid root value.');
+  changelogCache = await validateChangelogEntries(raw as ChangelogEntryInput[], () => true);
+  return changelogCache;
 }
 
 async function loadOfflineDocs(): Promise<OfflineDocsBundle> {
@@ -745,6 +764,11 @@ ipcMain.handle('catalog:load', async (event): Promise<WinutilCatalog> => {
 ipcMain.handle('docs:bundle', async (event): Promise<OfflineDocsBundle> => {
   requireTrustedSender(event);
   return loadOfflineDocs();
+});
+
+ipcMain.handle('changelog:load', async (event): Promise<readonly ChangelogEntry[]> => {
+  requireTrustedSender(event);
+  return loadChangelog();
 });
 
 ipcMain.handle('docs:open-external', async (event, candidate: unknown) => {

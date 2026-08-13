@@ -910,9 +910,15 @@ function workspaceRuntimeState(): WorkspaceRuntimeState {
 }
 
 function applyWorkspaceRuntime(runtime: WorkspaceRuntimeState): boolean {
-  const workspace = runtime.schemaVersion === 1 && runtime.workspaces.length === 1 && runtime.workspaces[0];
-  const windowState = workspace?.windows.length === 1 && workspace.windows[0];
-  const strip = windowState?.strips.length === 1 && windowState.strips[0];
+  const workspace = runtime.schemaVersion === 1 && runtime.workspaces.length === 1
+    ? runtime.workspaces[0]
+    : undefined;
+  const windowState = workspace && workspace.windows.length === 1
+    ? workspace.windows[0]
+    : undefined;
+  const strip = windowState && windowState.strips.length === 1
+    ? windowState.strips[0]
+    : undefined;
   if (!workspace || !windowState || !strip || workspace.id !== runtime.activeWorkspaceId || windowState.id !== workspace.activeWindowId || strip.id !== windowState.activeStripId
     || !['left', 'right', 'top', 'bottom'].includes(runtime.dock) || strip.tabs.length === 0 || strip.tabOrder.length !== strip.tabs.length) return false;
   const groups = new Map(strip.groups.map((group) => [group.id, normalizeGroupName(group.label)]));

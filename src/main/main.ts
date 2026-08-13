@@ -11,6 +11,7 @@ import type {
   PersonalVocabularyState, PersonalVocabularyUploadResult, Preferences, RunKind, SchoolModeChangeResult,
   ScheduledSettingsState, SettingsSurfaceState, StructuredExportRequest, StructuredExportSaveResult, UpdateRestartRequest, UpdateRestartResult, UpdateStatus, WinutilCatalog, DimSumStartupPresentation, FileConverterSurfaceState, AppLogoRuntimeSnapshot,
   AppearanceThemeApplication, AppearanceThemeDocument, AppearanceThemeImportResult,
+  WorkspaceRuntimeState,
 } from '../shared/types';
 import type { NotificationInput, NotificationKind, NotificationReviewState } from '../shared/notifications';
 import type { OllamaCatalogSnapshot, OllamaChatAttachment, OllamaChatAttachmentPickResult, OllamaChatExportDocument, OllamaChatExportResult, OllamaChatExportSaveRequest, OllamaChatRequest, OllamaChatSessionCreateRequest, OllamaChatSessionCreateResult, OllamaChatSessionDeleteRequest, OllamaChatSessionDeleteResult, OllamaChatSessionGetRequest, OllamaChatSessionGetResult, OllamaChatSessionListRequest, OllamaChatSessionListResult, OllamaChatSessionRenameRequest, OllamaChatSessionRenameResult, OllamaChatSessionUpdateRequest, OllamaChatSessionUpdateResult, OllamaHardwareEvidence, OllamaHealthSnapshot, OllamaInstalledEnrichmentSnapshot, OllamaPullProgress, OllamaHarnessPlan, OllamaHarnessPreflightRequest, OllamaHarnessProfileId, OllamaHarnessRestoreResult, OllamaHarnessLaunchResult, OllamaHarnessExecutable } from '../shared/ollama-suite';
@@ -42,7 +43,6 @@ import { OllamaHarnessService } from './ollama-harness-service';
 import { AppearanceThemeService } from './appearance-theme-service';
 import { NotificationStore } from './notification-store';
 import { WorkspaceRuntimeService } from './workspace-runtime-service';
-import type { WorkspaceRuntimeState } from '../shared/tabs';
 import { validateChangelogEntries, type ChangelogEntry, type ChangelogEntryInput } from '../shared/changelog';
 
 const ROOT = path.join(__dirname, '..', '..');

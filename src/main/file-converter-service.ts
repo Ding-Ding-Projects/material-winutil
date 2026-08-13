@@ -9,6 +9,7 @@ import {
   parseCsvUtf8,
   serializeCsvRowsAsJson,
   validateAdapterRegistry,
+  type FileKind,
   type ConversionQueueIndex,
   type ConversionQueuePage,
   type ConversionQueueStore,
@@ -60,6 +61,25 @@ function deterministicUtf8PlainText(bytes: Uint8Array): string {
     if (error instanceof SyntaxError) return normalized.endsWith('\n') ? normalized : `${normalized}\n`;
     throw error;
   }
+}
+
+/**
+ * Canonical binary representation for the one bundled Binary Encodings
+ * adapter.  Buffer's hex encoder is deterministic lowercase ASCII: exactly
+ * two characters per source byte, with no MIME wrapping or guessed metadata.
+ */
+function canonicalLowercaseHex(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString('hex');
+}
+
+function isCanonicalLowercaseHex(bytes: Uint8Array, expectedBytes: number): boolean {
+  if (bytes.byteLength !== expectedBytes * 2) return false;
+  for (const byte of bytes) {
+    const decimal = byte >= 0x30 && byte <= 0x39;
+    const lowercase = byte >= 0x61 && byte <= 0x66;
+    if (!decimal && !lowercase) return false;
+  }
+  return true;
 }
 
 function sortJsonValue(value: unknown): unknown {
@@ -203,15 +223,12 @@ export class FileConverterService {
   async enqueue(adapterId: string): Promise<FileConverterSurfaceState> {
     const adapter = this.executableAdapter(adapterId);
     if (!this.selected.length) throw new Error('Choose at least one local source file before queueing.');
-    const incompatible = this.selected.find((source) => source.kind !== 'text'
-      || source.conflict
-      || source.bytes > adapter.limits.inputBytes
-      || (adapter.id === 'csv-to-json' && path.extname(source.name).toLocaleLowerCase('en-US') !== '.csv'));
-    if (incompatible) throw new Error(adapter.id === 'csv-to-json'
-      ? 'CSV-to-JSON accepts only bounded, conflict-free local .csv UTF-8 sources; malformed CSV is refused during full parsing.'
-      : 'The selected batch contains a source that is not a bounded, conflict-free text file for this adapter.');
+    const incompatible = this.selected.find((source) => !this.isSelectedSourceCompatible(adapter.id, source.kind, source.conflict, source.bytes, source.name));
+    if (incompatible) throw new Error(this.compatibilityFailure(adapter.id));
     const estimatedOutputBytes = (source: FileConverterSelectedSource): number => adapter.id === 'csv-to-json'
       ? Math.min(adapter.limits.outputBytes, source.bytes * 6 + 2)
+      : adapter.id === 'binary-to-lowercase-hex'
+        ? source.bytes * 2
       : source.bytes;
     const requiredBytes = this.selected.reduce((total, source) => total + estimatedOutputBytes(source), 0);
     await fs.mkdir(this.outputDirectory(), { recursive: true });
@@ -236,7 +253,9 @@ export class FileConverterService {
     await this.runQueue();
     this.lastMessage = adapter.id === 'csv-to-json'
       ? 'The local CSV-to-JSON queue completed with validated atomic outputs; source files were unchanged.'
-      : 'The local text/JSON queue completed with validated atomic outputs; source files were unchanged.';
+      : adapter.id === 'binary-to-lowercase-hex'
+        ? 'The local binary-to-lowercase-hex queue completed with validated atomic outputs; source files were unchanged.'
+        : 'The local text/JSON queue completed with validated atomic outputs; source files were unchanged.';
     return this.snapshot();
   }
 
@@ -252,7 +271,7 @@ export class FileConverterService {
     if (adapter.availability !== 'available' || adapter.bundledProof?.bundled !== true) {
       throw new Error(adapter.unavailableReason ?? 'The converter adapter has no packaged bundled proof.');
     }
-    if (adapter.id !== 'text-json-normalize' && adapter.id !== 'csv-to-json') {
+    if (adapter.id !== 'text-json-normalize' && adapter.id !== 'csv-to-json' && adapter.id !== 'binary-to-lowercase-hex') {
       throw new Error('This bundled adapter has no executable implementation in this build.');
     }
     return adapter;
@@ -295,7 +314,7 @@ export class FileConverterService {
         throw new Error('Source changed after preflight or exceeds the adapter limit.');
       }
       const detection = detectFileType(await boundedPrefix(item.sourcePath), path.basename(item.sourcePath));
-      if (detection.kind !== 'text' || detection.conflict || (adapter.id === 'csv-to-json' && path.extname(item.sourcePath).toLocaleLowerCase('en-US') !== '.csv')) {
+      if (!this.isSelectedSourceCompatible(adapter.id, detection.kind, detection.conflict, item.sourceBytes, path.basename(item.sourcePath))) {
         throw new Error('Persisted source is not compatible with its original bundled adapter.');
       }
       const sourceBytes = await fs.readFile(item.sourcePath);
@@ -304,28 +323,52 @@ export class FileConverterService {
       }
       const content = adapter.id === 'csv-to-json'
         ? serializeCsvRowsAsJson(parseCsvUtf8(sourceBytes, { inputBytes: adapter.limits.inputBytes }))
-        : deterministicUtf8PlainText(sourceBytes);
-      const outputBytes = Buffer.byteLength(content, 'utf8');
+        : adapter.id === 'binary-to-lowercase-hex'
+          ? canonicalLowercaseHex(sourceBytes)
+          : deterministicUtf8PlainText(sourceBytes);
+      const outputBytes = Buffer.byteLength(content, adapter.id === 'binary-to-lowercase-hex' ? 'ascii' : 'utf8');
       if (outputBytes > adapter.limits.outputBytes) throw new Error('Deterministic output exceeds the adapter limit.');
       const outputRoot = this.outputDirectory();
-      const destination = path.resolve(outputRoot, outputName(item.sourcePath, adapter.id === 'csv-to-json' ? '.json' : '.txt'));
+      const destination = path.resolve(outputRoot, outputName(item.sourcePath, adapter.id === 'csv-to-json' ? '.json' : adapter.id === 'binary-to-lowercase-hex' ? '.hex' : '.txt'));
       if (path.relative(outputRoot, destination).startsWith('..') || path.isAbsolute(path.relative(outputRoot, destination))) {
         throw new Error('Controlled output path escaped its application-data directory.');
       }
       await atomicUtf8Output(destination, content);
       const reopenedBytes = await fs.readFile(destination);
-      if (!Buffer.from(reopenedBytes).equals(Buffer.from(content, 'utf8'))) throw new Error('Output validation failed after atomic publication.');
+      if (!Buffer.from(reopenedBytes).equals(Buffer.from(content, adapter.id === 'binary-to-lowercase-hex' ? 'ascii' : 'utf8'))) throw new Error('Output validation failed after atomic publication.');
       if (adapter.id === 'csv-to-json') {
         const parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(reopenedBytes));
         if (!Array.isArray(parsed)) throw new Error('CSV JSON output is not a JSON table after reopening.');
       }
+      if (adapter.id === 'binary-to-lowercase-hex' && !isCanonicalLowercaseHex(reopenedBytes, sourceBytes.byteLength)) {
+        throw new Error('Binary hexadecimal output failed canonical lowercase reopen validation.');
+      }
+      if (adapter.id === 'binary-to-lowercase-hex' && !Buffer.from(reopenedBytes.toString('ascii'), 'hex').equals(sourceBytes)) {
+        throw new Error('Binary hexadecimal output failed decoded-byte reopen validation.');
+      }
       await this.queue.complete(item.id, adapter.id === 'csv-to-json'
         ? 'Converted CSV to validated deterministic JSON in the controlled local output location.'
-        : 'Converted to validated UTF-8 plain text in the controlled local output location.');
+        : adapter.id === 'binary-to-lowercase-hex'
+          ? 'Converted binary bytes to validated canonical lowercase hexadecimal in the controlled local output location.'
+          : 'Converted to validated UTF-8 plain text in the controlled local output location.');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Local conversion failed safely.';
       await this.queue.fail(item.id, message);
     }
+  }
+
+  private isSelectedSourceCompatible(adapterId: string, kind: FileKind, conflict: boolean, bytes: number, sourceName: string): boolean {
+    const adapter = this.executableAdapter(adapterId);
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > adapter.limits.inputBytes || !adapter.sourceKinds.includes(kind)) return false;
+    if (adapterId === 'binary-to-lowercase-hex') return true;
+    if (conflict || kind !== 'text') return false;
+    return adapterId !== 'csv-to-json' || path.extname(sourceName).toLocaleLowerCase('en-US') === '.csv';
+  }
+
+  private compatibilityFailure(adapterId: string): string {
+    if (adapterId === 'csv-to-json') return 'CSV-to-JSON accepts only bounded, conflict-free local .csv UTF-8 sources; malformed CSV is refused during full parsing.';
+    if (adapterId === 'binary-to-lowercase-hex') return 'Binary-to-lowercase-hex accepts any bounded regular local file within its explicit byte limit; ambiguous polyglot signatures are refused during inspection.';
+    return 'The selected batch contains a source that is not a bounded, conflict-free text file for this adapter.';
   }
 
   async snapshot(): Promise<FileConverterSurfaceState> {

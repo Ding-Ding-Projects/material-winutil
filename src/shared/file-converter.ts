@@ -19,6 +19,7 @@ export const FILE_CONVERTER_LIMITS = Object.freeze({
   csvRows: 250_000,
   csvColumns: 4_096,
   csvCellBytes: 1 * 1024 * 1024,
+  binaryEncodingInputBytes: 16 * 1024 * 1024,
 });
 
 export const FILE_CONVERTER_CATEGORIES = [
@@ -28,6 +29,13 @@ export const FILE_CONVERTER_CATEGORIES = [
 
 export type FileConverterCategory = (typeof FILE_CONVERTER_CATEGORIES)[number];
 export type AdapterAvailability = 'available' | 'unavailable';
+/**
+ * Binary encodings are deliberately explicit conversion targets.  A byte
+ * stream is never auto-classified as an encoding and the selected adapter id
+ * is the only route that enables an encoding transform.
+ */
+export const BINARY_ENCODING_TARGETS = ['lowercase-hex'] as const;
+export type BinaryEncodingTarget = (typeof BINARY_ENCODING_TARGETS)[number];
 export type QueueState = 'active' | 'paused' | 'cancelled';
 export type QueueItemState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 export type FileKind =
@@ -46,6 +54,8 @@ export interface ConverterAdapter {
   category: FileConverterCategory;
   sourceKinds: readonly FileKind[];
   targetFormat: string;
+  /** Present only for an enabled, explicitly selected binary encoding target. */
+  binaryEncodingTarget?: BinaryEncodingTarget;
   metadataBehavior: string;
   lossiness: 'lossless' | 'lossy' | 'opaque';
   sandbox: 'isolated-local';
@@ -68,6 +78,12 @@ const CSV_JSON_ADAPTER_PROOF: BundledAdapterProof = Object.freeze({
   artifactPath: 'electron-main:built-in-csv-json-converter-v1',
   artifactSha256: '6bc785ed41db7d755d47d1a9af9557749f6e4fd8c898850b1d1e2de88aed4c03',
   verifier: 'Electron main-process built-in adapter; it parses fatal UTF-8 CSV under fixed bounds and reopens byte-validated JSON output before completion.',
+});
+const BINARY_HEX_ADAPTER_PROOF: BundledAdapterProof = Object.freeze({
+  bundled: true,
+  artifactPath: 'electron-main:built-in-binary-lowercase-hex-v1',
+  artifactSha256: 'f4522340e7e438cc2d2deafc4ce2366f1cab3189a4a5c5cc50e4b12d14300b29',
+  verifier: 'Electron main-process built-in adapter; it reads bounded source bytes into canonical lowercase hexadecimal and reopens the atomically written ASCII output before completion.',
 });
 
 /** Known formats are shown even when the installed artifact has no safe adapter. */
@@ -95,6 +111,15 @@ export const FILE_CONVERTER_ADAPTERS: readonly ConverterAdapter[] = Object.freez
     availability: 'available', bundledProof: TEXT_JSON_ADAPTER_PROOF,
   },
   adapter('text-convert', 'Code/Text', ['text'], 'TXT/Markdown/JSON/YAML/XML', 'Encoding and newline changes are disclosed.', 'lossless'),
+  {
+    id: 'binary-to-lowercase-hex', category: 'Binary Encodings', sourceKinds: ['pdf', 'png', 'jpeg', 'gif', 'webp', 'zip', 'seven-zip', 'wav', 'mp3', 'ogg', 'mp4', 'text', 'unknown'], targetFormat: 'Canonical lowercase hexadecimal',
+    binaryEncodingTarget: 'lowercase-hex',
+    metadataBehavior: 'Every input byte becomes exactly two lowercase ASCII hexadecimal characters. No byte-order, text decoding, line ending, or metadata interpretation is performed; source bytes remain unchanged.',
+    lossiness: 'lossless', sandbox: 'isolated-local',
+    limits: { inputBytes: FILE_CONVERTER_LIMITS.binaryEncodingInputBytes, outputBytes: FILE_CONVERTER_LIMITS.binaryEncodingInputBytes * 2, memoryBytes: 64 * 1024 * 1024, cpuMs: 30 * 1000, tempBytes: FILE_CONVERTER_LIMITS.binaryEncodingInputBytes * 2 },
+    outputValidator: 'Reopens the atomically written ASCII file, requires even-length lowercase hexadecimal only, and verifies its decoded bytes equal the source bytes.',
+    availability: 'available', bundledProof: BINARY_HEX_ADAPTER_PROOF,
+  },
   adapter('binary-encode', 'Binary Encodings', ['unknown'], 'Base64/hex', 'Binary bytes are represented as text; source bytes are unchanged.', 'lossless'),
 ]);
 
@@ -117,11 +142,19 @@ export function validateAdapterRegistry(adapters: readonly ConverterAdapter[] = 
     if (!FILE_CONVERTER_CATEGORIES.includes(entry.category)) throw new Error(`Unknown converter category: ${entry.category}`);
     if (!/^[a-z0-9-]{3,80}$/u.test(entry.id) || ids.has(entry.id)) throw new Error(`Invalid or duplicate adapter id: ${entry.id}`);
     ids.add(entry.id);
+    if (entry.binaryEncodingTarget !== undefined) {
+      if (entry.category !== 'Binary Encodings' || !BINARY_ENCODING_TARGETS.includes(entry.binaryEncodingTarget)) {
+        throw new Error(`Invalid binary encoding target on adapter ${entry.id}`);
+      }
+    }
     if (entry.availability === 'available') {
       if (entry.bundledProof?.bundled !== true || !/^[a-f0-9]{64}$/iu.test(entry.bundledProof.artifactSha256) || entry.bundledProof.artifactPath.length === 0) {
         throw new Error(`Available adapter ${entry.id} requires bundled artifact proof`);
       }
       if (entry.unavailableReason !== undefined) throw new Error(`Available adapter ${entry.id} cannot have an unavailable reason`);
+      if (entry.category === 'Binary Encodings' && entry.binaryEncodingTarget === undefined) {
+        throw new Error(`Available binary adapter ${entry.id} must name an explicit encoding target`);
+      }
     } else if (!entry.unavailableReason || entry.bundledProof !== undefined) {
       throw new Error(`Unavailable adapter ${entry.id} requires an exact unavailable reason and no bundled proof`);
     }

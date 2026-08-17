@@ -201,6 +201,7 @@ const MAX_PERSONAL_VOCABULARY_BYTES = 64 * 1024;
 interface Prefs {
   theme: ThemeMode; density: Density; language: LanguageMode;
   narrator: 'English' | 'Yue' | 'Both'; narratorEnabled: boolean; narratorQuiet: boolean; narratorReducedSound: boolean;
+  narratorEnglishVoice: string | null; narratorYueVoice: string | null;
   enFunny: number; yueFunny: number; accent: string; font: string;
   scale: number; weight: number; radius: number; reducedMotion: boolean; exportFormat: string;
   tabDock: TabDock; activeAppearanceThemeId: string | null; appearanceOverrides: Record<string, AppearanceOverride>;
@@ -299,7 +300,7 @@ interface Bridge {
   narrationState(): Promise<{ platformSpeechAvailable: boolean; screenReaderActive: boolean }>;
   narrate(event: { category: string; English: string; Yue: string; kind?: 'event' | 'error' }): Promise<{ status: string; reason?: string; error?: string }>;
   stopNarration(): Promise<void>;
-  onNarrationSpeech(cb: (request: { id: number; text: string; language: 'English' | 'Yue' }) => void): void;
+  onNarrationSpeech(cb: (request: { id: number; text: string; language: 'English' | 'Yue'; voiceId: string | null }) => void): void;
   onNarrationCancel(cb: (request: { id: number }) => void): void;
   narrationSpeechResult(id: number, ok: boolean, error?: string): void;
   onNarrationState(cb: (state: { platformSpeechAvailable: boolean; screenReaderActive: boolean }) => void): void;
@@ -716,7 +717,7 @@ const CATEGORY_YUE: Record<string, string> = {
 
 const DEFAULT_PREFS: Prefs = {
   theme: 'dark', density: 'comfortable', language: 'English', narrator: 'English', narratorEnabled: false,
-  narratorQuiet: false, narratorReducedSound: false,
+  narratorQuiet: false, narratorReducedSound: false, narratorEnglishVoice: null, narratorYueVoice: null,
   enFunny: 3, yueFunny: 4, accent: '#6750A4', font: 'Segoe UI Variable', scale: 1, weight: 400, radius: 16,
   reducedMotion: false, exportFormat: 'md', tabDock: 'left',
   activeAppearanceThemeId: null,
@@ -814,7 +815,7 @@ const state = {
     data: { state: 'empty', entryCount: 0, mappings: {} } as PersonalVocabularyState,
     status: 'empty' as 'empty' | 'loaded' | 'invalid', loading: false,
   },
-  narration: { platformSpeechAvailable: true, screenReaderActive: false, activeSpeechId: 0 },
+  narration: { platformSpeechAvailable: true, screenReaderActive: false, activeSpeechId: 0, voices: [] as SpeechSynthesisVoice[], voicesReady: false },
   settingsSurface: null as SettingsSurfaceState | null,
   settingsDraft: { displayName: '', schoolLabel: '', password: '', confirmPassword: '', error: '', busy: false },
   externalEditors: { data: null as ExternalEditorState | null, busy: false, error: '' },
@@ -1271,11 +1272,16 @@ function bridge(): Bridge {
 
 const activeUtterances = new Map<number, SpeechSynthesisUtterance>();
 
-function platformVoice(language: 'English' | 'Yue'): SpeechSynthesisVoice | undefined {
-  const candidates = window.speechSynthesis?.getVoices() ?? [];
+function voiceMatchesLanguage(voice: SpeechSynthesisVoice, language: 'English' | 'Yue'): boolean {
   const locale = language === 'Yue' ? /^(yue|zh-HK)/i : /^en/i;
-  return candidates
-    .filter((voice) => locale.test(voice.lang))
+  return locale.test(voice.lang);
+}
+
+function platformVoice(language: 'English' | 'Yue', requestedId: string | null): SpeechSynthesisVoice | undefined {
+  const candidates = state.narration.voices;
+  const requested = requestedId ? candidates.find((voice) => voice.voiceURI === requestedId && voiceMatchesLanguage(voice, language)) : undefined;
+  return requested ?? candidates
+    .filter((voice) => voiceMatchesLanguage(voice, language))
     .sort((left, right) => {
       const natural = (voice: SpeechSynthesisVoice): number => /natural|online/i.test(voice.name) ? 2 : voice.localService ? 1 : 0;
       const exact = (voice: SpeechSynthesisVoice): number => language === 'Yue' && /^(yue|zh-HK)/i.test(voice.lang) ? 2 : 0;
@@ -1283,15 +1289,45 @@ function platformVoice(language: 'English' | 'Yue'): SpeechSynthesisVoice | unde
     })[0];
 }
 
+function refreshPlatformVoices(): void {
+  const voices = (window.speechSynthesis?.getVoices() ?? []).filter((voice) => voice.voiceURI.length > 0);
+  state.narration.voices = voices;
+  state.narration.voicesReady = true;
+}
+
+function narratorVoiceStatus(language: 'English' | 'Yue'): string {
+  const selectedId = language === 'English' ? state.prefs.narratorEnglishVoice : state.prefs.narratorYueVoice;
+  const selected = selectedId ? state.narration.voices.find((voice) => voice.voiceURI === selectedId && voiceMatchesLanguage(voice, language)) : undefined;
+  if (!state.narration.voicesReady) return narratorText('voicesLoading');
+  if (selected) return narratorText('voiceSelected', { name: selected.name });
+  if (selectedId) return narratorText('voiceMissing');
+  if (!state.narration.voices.some((voice) => voiceMatchesLanguage(voice, language))) return narratorText('voiceNone');
+  return narratorText('voiceAutomatic');
+}
+
+function narratorVoiceField(language: 'English' | 'Yue'): HTMLElement {
+  const key = language === 'English' ? 'narratorEnglishVoice' : 'narratorYueVoice';
+  const value = state.prefs[key];
+  const matching = state.narration.voices.filter((voice) => voiceMatchesLanguage(voice, language));
+  const select = h('select', {
+    'aria-label': language === 'English' ? narratorText('englishVoice') : narratorText('cantoneseVoice'),
+    onchange: (event: Event) => { state.prefs[key] = (event.target as HTMLSelectElement).value || null; savePrefs(); render(); },
+  }, h('option', { value: '', selected: value === null }, narratorText('chooseAutomatically')));
+  for (const voice of matching) select.appendChild(h('option', { value: voice.voiceURI, selected: value === voice.voiceURI }, `${voice.name} (${voice.lang})`));
+  return h('label', { class: 'field' }, language === 'English' ? narratorText('englishVoice') : narratorText('cantoneseVoice'), select, h('span', { class: 'feedback', role: 'status' }, narratorVoiceStatus(language)));
+}
+
 function bindPlatformNarration(): void {
-  bridge().onNarrationSpeech(({ id, text, language }) => {
+  refreshPlatformVoices();
+  window.speechSynthesis?.addEventListener('voiceschanged', () => { refreshPlatformVoices(); render(); });
+  bridge().onNarrationSpeech(({ id, text, language, voiceId }) => {
     if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') {
       bridge().narrationSpeechResult(id, false, 'Platform speech synthesis is unavailable.');
       return;
     }
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = language === 'Yue' ? 'zh-HK' : 'en-US';
-    utterance.voice = platformVoice(language) ?? null;
+    utterance.voice = platformVoice(language, voiceId) ?? null;
     utterance.rate = 1;
     utterance.pitch = 1;
     utterance.volume = 1;
@@ -3310,6 +3346,8 @@ function settingsPane(): HTMLElement {
     rangeField(narratorText('englishFunny'), 1, 5, 1, p.enFunny, (v) => { p.enFunny = v; savePrefs(); }),
     rangeField(narratorText('cantoneseFunny'), 1, 5, 1, p.yueFunny, (v) => { p.yueFunny = v; savePrefs(); }),
     switchField(narratorText('enabled'), p.narratorEnabled, () => { p.narratorEnabled = !p.narratorEnabled; savePrefs(); render(); if (p.narratorEnabled) narrateFact('settings', NARRATOR_COPY.English.settings, NARRATOR_COPY.Yue.settings); else void bridge().stopNarration(); }),
+    narratorVoiceField('English'),
+    narratorVoiceField('Yue'),
     switchField(narratorText('quiet'), p.narratorQuiet, () => { p.narratorQuiet = !p.narratorQuiet; savePrefs(); render(); }),
     switchField(narratorText('reducedSound'), p.narratorReducedSound, () => { p.narratorReducedSound = !p.narratorReducedSound; savePrefs(); render(); }),
     h('p', {}, narratorText('disclosure')),
@@ -5031,6 +5069,9 @@ const NARRATOR_COPY = {
   English: {
     section: 'Language and voice', displayLanguage: 'Display language', englishFunny: 'English funny level', cantoneseFunny: 'Cantonese funny level',
     enabled: 'Spoken narrator', language: 'Narrator language', quiet: 'Quiet hours (mute narration)',
+    englishVoice: 'English voice', cantoneseVoice: 'Cantonese voice', chooseAutomatically: 'Choose automatically',
+    voicesLoading: 'Finding installed voices…', voiceAutomatic: 'Choose automatically is active.', voiceSelected: 'Using {name}.',
+    voiceMissing: 'The chosen voice is not installed on this computer; its choice is kept and a compatible voice will be used when available.', voiceNone: 'No compatible voice is installed on this computer.',
     reducedSound: 'Reduce sound (mute narration)', active: 'Narration is ready and uses local platform speech.',
     disclosure: 'Funny levels style every spoken event, including errors and warnings. Exact facts and recovery steps are never removed.',
     off: 'Narration is off by default. Turn it on only when you want app events spoken.',
@@ -5044,6 +5085,9 @@ const NARRATOR_COPY = {
   Yue: {
     section: '語言同語音', displayLanguage: '顯示語言', englishFunny: '英文幽默程度', cantoneseFunny: '粵語幽默程度',
     enabled: '語音旁述', language: '旁述語言', quiet: '靜音時段（停止旁述）',
+    englishVoice: '英文語音', cantoneseVoice: '粵語語音', chooseAutomatically: '自動選擇',
+    voicesLoading: '搵緊已安裝語音…', voiceAutomatic: '而家用自動選擇。', voiceSelected: '而家用緊 {name}。',
+    voiceMissing: '揀咗嘅語音唔喺呢部電腦；選擇會保留，有相容語音時就會用。', voiceNone: '呢部電腦未安裝相容語音。',
     reducedSound: '減少聲音（停止旁述）', active: '旁述已準備好，會使用本機平台語音。',
     disclosure: '幽默程度會調整所有旁述，包括錯誤同警告；準確事實同復原步驟永遠唔會刪走。',
     off: '旁述預設關閉。只喺你想聽到應用程式事件時先開啟。',

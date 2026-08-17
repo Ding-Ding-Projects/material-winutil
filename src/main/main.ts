@@ -216,7 +216,7 @@ function defaultSchoolPreferences(preferences?: Preferences): import('../shared/
 function effectiveNarratorPreferences(preferences: Preferences): Preferences {
   const school = settingsSurfaceService?.snapshot().schoolMode;
   return school?.status === 'ready' && school.effective.enabled
-    ? { ...preferences, language: 'English', narrator: 'English', enFunny: 1 }
+    ? { ...preferences, language: 'English', narrator: 'English', narratorEnglishVoice: null, narratorYueVoice: null, enFunny: 1 }
     : preferences;
 }
 
@@ -334,7 +334,7 @@ function broadcastSettingsSurface(state: SettingsSurfaceState): void {
   if (state.schoolMode.status === 'ready' && state.schoolMode.effective.enabled && currentNarratorPreferences) {
     void narratorRuntime.stop();
     narrationTransport.stop();
-    narratorRuntime.configure({ ...currentNarratorPreferences, language: 'English', narrator: 'English', enFunny: 1 }, app.isAccessibilitySupportEnabled());
+    narratorRuntime.configure({ ...currentNarratorPreferences, language: 'English', narrator: 'English', narratorEnglishVoice: null, narratorYueVoice: null, enFunny: 1 }, app.isAccessibilitySupportEnabled());
   } else if (state.schoolMode.status === 'ready' && currentNarratorPreferences) {
     narratorRuntime.configure(currentNarratorPreferences, app.isAccessibilitySupportEnabled());
   }
@@ -429,6 +429,8 @@ function projectPreferences(value: unknown): Preferences | null {
     || typeof input.narratorEnabled !== 'boolean'
     || (input.narratorQuiet !== undefined && typeof input.narratorQuiet !== 'boolean')
     || (input.narratorReducedSound !== undefined && typeof input.narratorReducedSound !== 'boolean')
+    || (input.narratorEnglishVoice !== undefined && input.narratorEnglishVoice !== null && (typeof input.narratorEnglishVoice !== 'string' || input.narratorEnglishVoice.length > 512 || /[\u0000-\u001f\u007f]/u.test(input.narratorEnglishVoice)))
+    || (input.narratorYueVoice !== undefined && input.narratorYueVoice !== null && (typeof input.narratorYueVoice !== 'string' || input.narratorYueVoice.length > 512 || /[\u0000-\u001f\u007f]/u.test(input.narratorYueVoice)))
     || !isNumber('enFunny', 1, 5) || !isNumber('yueFunny', 1, 5)
     || typeof input.accent !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(input.accent)
     || typeof input.font !== 'string' || input.font.length < 1 || input.font.length > 120 || /[\u0000-\u001F\u007F]/.test(input.font)
@@ -441,6 +443,8 @@ function projectPreferences(value: unknown): Preferences | null {
     language: input.language as Preferences['language'], narrator: input.narrator as Preferences['narrator'],
     narratorEnabled: input.narratorEnabled, narratorQuiet: input.narratorQuiet === true,
     narratorReducedSound: input.narratorReducedSound === true,
+    narratorEnglishVoice: typeof input.narratorEnglishVoice === 'string' ? input.narratorEnglishVoice : null,
+    narratorYueVoice: typeof input.narratorYueVoice === 'string' ? input.narratorYueVoice : null,
     enFunny: Number(input.enFunny), yueFunny: Number(input.yueFunny),
     accent: input.accent, font: input.font, scale: Number(input.scale), weight: Number(input.weight),
     radius: Number(input.radius), reducedMotion: input.reducedMotion, exportFormat: input.exportFormat as ExportFormat,
@@ -1968,7 +1972,7 @@ app.whenReady().then(async () => {
   catch { persistedPreferences = undefined; }
   basePreferences = persistedPreferences ?? {
     theme: 'dark', density: 'comfortable', language: 'English', narrator: 'English', narratorEnabled: false,
-    narratorQuiet: false, narratorReducedSound: false, enFunny: 3, yueFunny: 4, accent: '#6750A4',
+    narratorQuiet: false, narratorReducedSound: false, narratorEnglishVoice: null, narratorYueVoice: null, enFunny: 3, yueFunny: 4, accent: '#6750A4',
     font: 'Segoe UI Variable', scale: 1, weight: 400, radius: 16, reducedMotion: false, exportFormat: 'md', tabDock: 'left', activeAppearanceThemeId: null, appearanceOverrides: {},
   };
   settingsSurfaceService = new SettingsSurfaceService({

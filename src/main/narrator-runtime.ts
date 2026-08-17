@@ -14,7 +14,7 @@ import type {
 } from '../shared/types';
 
 export interface NarrationTransport {
-  speak(request: NarrationSpeakRequest): Promise<void>;
+  speak(request: NarrationSpeakRequest & { voiceId: string | null }): Promise<void>;
   stop(): void;
 }
 
@@ -32,7 +32,7 @@ export class IpcNarrationTransport implements NarrationTransport {
     private readonly timeoutForText: (text: string) => number = (text) => Math.min(120_000, Math.max(10_000, text.length * 250)),
   ) {}
 
-  speak(request: NarrationSpeakRequest): Promise<void> {
+  speak(request: NarrationSpeakRequest & { voiceId: string | null }): Promise<void> {
     const target = this.sender();
     if (!target) return Promise.reject(new Error('The narration renderer is unavailable.'));
     const id = this.nextId++;
@@ -64,7 +64,7 @@ export class IpcNarrationTransport implements NarrationTransport {
         reject: (error) => { clearTimeout(timer); request.signal.removeEventListener('abort', abort); reject(error); },
       });
       request.signal.addEventListener('abort', abort, { once: true });
-      target.send('narration:speech', { id, text: request.text, language: request.language });
+      target.send('narration:speech', { id, text: request.text, language: request.language, voiceId: request.voiceId });
     });
   }
 
@@ -116,10 +116,11 @@ function clientResult(result: NarrationResult): NarrationClientResult {
 
 export class NarratorRuntime {
   private readonly narrator: SerializedNarrator;
+  private voiceIds: Readonly<Record<'English' | 'Yue', string | null>> = { English: null, Yue: null };
 
   constructor(transport: NarrationTransport, config: Partial<NarratorConfig> = {}) {
     this.narrator = new SerializedNarrator({
-      speak: (request) => transport.speak(request),
+      speak: (request) => transport.speak({ ...request, voiceId: this.voiceIds[request.language] }),
       formatter: ({ sourceText, language, funnyLevel }) => formatNarrationFact(sourceText, language, funnyLevel),
       config: {
         debounceMs: 180,
@@ -131,6 +132,7 @@ export class NarratorRuntime {
   }
 
   configure(prefs: Preferences, screenReaderActive: boolean): void {
+    this.voiceIds = { English: prefs.narratorEnglishVoice, Yue: prefs.narratorYueVoice };
     this.narrator.updateConfig({
       enabled: prefs.narratorEnabled,
       language: prefs.narrator,

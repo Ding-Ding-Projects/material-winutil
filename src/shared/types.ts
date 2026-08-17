@@ -138,6 +138,9 @@ export interface Preferences {
   narratorEnabled: boolean;
   narratorQuiet: boolean;
   narratorReducedSound: boolean;
+  /** Stable platform voice identifiers (SpeechSynthesisVoice.voiceURI), never display names. */
+  narratorEnglishVoice: string | null;
+  narratorYueVoice: string | null;
   enFunny: number;
   yueFunny: number;
   accent: string;
@@ -196,6 +199,7 @@ export interface NarrationSpeechRequest {
   id: number;
   text: string;
   language: 'English' | 'Yue';
+  voiceId: string | null;
 }
 
 export interface NarrationSpeechCancel {
